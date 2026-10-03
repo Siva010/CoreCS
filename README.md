@@ -50,6 +50,22 @@ Other scripts:
 
 See [CONTENT_GUIDE.md](CONTENT_GUIDE.md) for how to write or extend lessons, questions, case studies and walkthroughs.
 
+## Deployment
+
+Every route is prerendered, so `next build` (with `output: "export"`) writes the whole site to `out/` and it deploys to **Cloudflare Workers static assets** — no server, no Worker script:
+
+```bash
+npm run preview   # build + serve out/ locally through wrangler
+npm run deploy    # build + wrangler deploy
+```
+
+`wrangler.jsonc` pins the Worker name (`corecs`) and points at `out/`. Keeping it in the repo matters: without it, `wrangler deploy` generates a config during the build and names bindings
+after `package.json`, which fails with `WORKER_SELF_REFERENCE ... not found [10143]`.
+
+Because there's no Worker script, the 3 MiB compressed script limit on the Workers Free tier doesn't apply, and asset requests aren't billed as Worker invocations. Response headers live in
+[`public/_headers`](public/_headers) (`output: export` can't emit `headers()` from `next.config.ts`): a one-day revalidated cache for the 19 MB PGlite bundle, immutable caching for
+content-hashed `_next/static` files, and an explicit JSON content type for the extensionless route-handler exports under `/data/questions/*`.
+
 ## Content at a glance
 
 | Subject | Lessons | Levels |

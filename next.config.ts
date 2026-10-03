@@ -2,20 +2,12 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  // Content is read from /content at build time by server components.
-  outputFileTracingIncludes: {
-    "/**": ["./content/**/*"],
-  },
-  async headers() {
-    return [
-      {
-        // PGlite (Postgres compiled to WASM) is large. The path isn't versioned, so
-        // cache for a day and revalidate (cheap 304s) rather than marking it immutable.
-        source: "/vendor/pglite/:path*",
-        headers: [{ key: "Cache-Control", value: "public, max-age=86400, stale-while-revalidate=604800" }],
-      },
-    ];
-  },
+  // Every route is prerendered at build time (no SSR, no middleware, no image
+  // optimization, and both route handlers are force-static), so the site ships
+  // as plain files in /out and needs no server at runtime.
+  output: "export",
+  // Caching headers are a server feature and aren't emitted by `output: export`;
+  // they live in public/_headers, which Cloudflare applies to static assets.
 };
 
 export default nextConfig;

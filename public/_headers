@@ -1,0 +1,20 @@
+# Cloudflare static-asset headers (replaces next.config headers(), which
+# `output: export` cannot emit).
+
+# PGlite (PostgreSQL compiled to WASM) is ~19 MB and the path isn't versioned,
+# so cache for a day and revalidate rather than marking it immutable.
+/vendor/pglite/*
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+/vendor/sql-worker.js
+  Cache-Control: public, max-age=3600
+
+# Next.js emits content-hashed filenames here, so these are safe to pin.
+/_next/static/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Static route handlers exported without a file extension, so the asset server
+# can't infer their type (interview mode fetches these as JSON).
+/data/questions/*
+  Content-Type: application/json; charset=utf-8
+  Cache-Control: public, max-age=300

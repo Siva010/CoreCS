@@ -1,17 +1,21 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  // Must match the Worker this project deploys to. When this file is missing,
-  // wrangler generates one during the build and names the self-reference
-  // binding after package.json ("core-cs-interview-academy"), which doesn't
-  // exist as a Worker — that's the 10143 deploy error.
+  // Must match the Worker this project deploys to. Without this file, wrangler
+  // generates one at build time and names bindings after package.json, which
+  // is what caused the "WORKER_SELF_REFERENCE ... not found" (10143) failure.
   "name": "corecs",
-  "main": ".open-next/worker.js",
   "compatibility_date": "2026-10-01",
-  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+
+  // Static assets only: `next build` exports every route to /out, so there is
+  // no Worker script. That keeps the deploy inside the Workers Free tier (the
+  // 3 MiB compressed script limit doesn't apply when there is no script) and
+  // asset requests are served from the edge without a Worker invocation.
   "assets": {
-    "directory": ".open-next/assets",
-    "binding": "ASSETS"
+    "directory": "out",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
   },
+
   "observability": {
     "enabled": true
   }
