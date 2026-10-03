@@ -6,3 +6,8 @@ next-env.d.ts
 .DS_Store
 .env*.local
 public/vendor/pglite
+
+# Cloudflare (OpenNext) build output and local secrets
+.open-next
+.wrangler
+.dev.vars
