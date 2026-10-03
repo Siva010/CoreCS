@@ -123,7 +123,7 @@ export async function LessonPage({ subject, slug }: { subject: SubjectId; slug: 
 
   return (
     <div className="px-4 pb-16 sm:px-6 lg:px-10">
-      <LessonShell lessonId={meta.id}>
+      <LessonShell lessonId={meta.id} depthBlocks={meta.depthBlocks}>
         <div className="grid gap-10 xl:grid-cols-[minmax(0,1fr)_220px]">
           <article className="min-w-0 max-w-3xl">
             {/* Header */}

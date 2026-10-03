@@ -13,6 +13,7 @@ import {
   SECTION_ALIASES,
   SECTION_ORDER,
   SECTION_TITLES,
+  type Depth,
   type LessonFrontmatter,
   type LessonMeta,
   type PracticeData,
@@ -246,6 +247,16 @@ function loadLesson(file: string, subjectDir: SubjectId, diag: Diagnostic[]): Le
   if (!levelDef) diag.push({ level: "error", file: f, message: `Level ${fm.level} not defined for subject ${subjectDir}` });
 
   const tree = parseMarkdown(content);
+  const depthBlocks: Partial<Record<Depth, number>> = {};
+  visit(tree, "containerDirective", (node: { name: string; attributes?: Record<string, string | null | undefined> | null }) => {
+    if (node.name !== "depth") return;
+    const level = node.attributes?.level as Depth | undefined;
+    if (!level || !DEPTHS.includes(level)) {
+      diag.push({ level: "error", file: f, message: `:::depth needs a level of ${DEPTHS.join(" | ")} (got "${level ?? "nothing"}")` });
+      return;
+    }
+    depthBlocks[level] = (depthBlocks[level] ?? 0) + 1;
+  });
   const inlineWidgets: string[] = [];
   visit(tree, "leafDirective", (node: { name: string; attributes?: Record<string, string | null | undefined> | null }) => {
     const wid = node.attributes?.id;
@@ -306,6 +317,7 @@ function loadLesson(file: string, subjectDir: SubjectId, diag: Diagnostic[]): Le
     sectionKeys: sections.map((s) => s.key),
     questionCount: questions.length,
     inlineWidgets,
+    depthBlocks,
   };
   return { meta, intro, sections, questions, practice, plain, file: f };
 }

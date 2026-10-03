@@ -237,6 +237,11 @@ export interface LessonMeta extends Required<Omit<LessonFrontmatter, "tags">> {
   questionCount: number;
   /** Widget ids embedded inline with ::viz / ::lab anywhere in the lesson body. */
   inlineWidgets: string[];
+  /**
+   * How many :::depth blocks this lesson gates per level, e.g. { advanced: 2 }.
+   * The depth control only offers levels that actually hide something here.
+   */
+  depthBlocks: Partial<Record<Depth, number>>;
 }
 
 export type PracticeKind = "mcq" | "numeric" | "exercise";
