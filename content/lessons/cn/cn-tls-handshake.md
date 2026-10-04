@@ -31,7 +31,15 @@ TLS 1.3 overlaps these cleverly: the client *guesses* the key-exchange group and
 
 ## Why It Exists
 
-To stop eavesdropping, tampering and impersonation on untrusted networks — and, with HTTPS everywhere, to protect cookies, credentials and content integrity (no ISP ad injection, no tampered downloads).
+**The problem.** To stop eavesdropping, tampering and impersonation on untrusted networks — and, with HTTPS everywhere, to protect cookies, credentials and content integrity (no ISP ad injection, no tampered downloads).
+
+**What the handshake must achieve.** Before the first encrypted byte, two strangers must (1) agree on algorithms, (2) agree on a secret key nobody else can compute, and (3) prove the server is who it claims. The previous two lessons supply the tools — Diffie–Hellman for (2), certificates and signatures for (3). The handshake is the choreography that uses them.
+
+**The design goal of TLS 1.3.** Every round trip costs latency, so do as much as possible in the first message: the client *guesses* which key-exchange method the server will accept and sends its half immediately.
+
+:::callout[That's all it is]{type=insight}
+Client: "here are my options and my half of a key exchange". Server: "here's my half, my certificate, and a signature proving I own it". Both now compute the same key and everything after is encrypted. One round trip.
+:::
 
 ## How It Works
 
@@ -86,7 +94,7 @@ The (EC)DHE shared secret goes through **HKDF** together with transcript hashes 
 
 ### Resumption and 0-RTT
 
-After a full handshake, the server issues a **session ticket** (an encrypted pre-shared key). A returning client presents it:
+Most connections are from clients that visited recently. Re-doing certificate checks and signatures each time wastes CPU and bytes, so let them reuse what they established. After a full handshake, the server issues a **session ticket** (an encrypted pre-shared key). A returning client presents it:
 
 - **1-RTT resumption** skips certificate transfer/verification (cheaper CPU, smaller messages; still 1 RTT, with a fresh DH exchange for forward secrecy).
 - **0-RTT**: the client sends "early data" (e.g., a GET) in its first flight, encrypted with the PSK. Saves a round trip but is **replayable** — only idempotent requests belong in it; servers reply `425 Too Early` to reject.

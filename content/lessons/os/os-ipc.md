@@ -29,7 +29,13 @@ Everything in IPC is a trade-off between these two ideas: **copying through the 
 
 ## Why It Exists
 
-Process isolation is a feature — but real systems are built from cooperating processes: a shell pipeline, a web server and its workers, a database's postmaster and backends, a browser's renderer and GPU processes, microservices on one host. IPC restores communication *selectively* and under the kernel's control.
+**The problem.** Process isolation is a feature — but real systems are built from cooperating processes: a shell pipeline, a web server and its workers, a database's postmaster and backends, a browser's renderer and GPU processes, microservices on one host. **Without it.** Isolation would be total: two processes could not exchange a single byte, and every system would have to be one giant process — where one crash takes down everything.
+
+**The idea.** Keep the walls, but cut a door the kernel guards. IPC restores communication *selectively* and under the kernel's control. There are only two ways to build that door: the kernel *carries the data across* (pipes, sockets — safe, a copy each way), or the kernel *lets both sides see the same memory* (shared memory — no copy, but now they must coordinate).
+
+:::callout[That's all it is]{type=insight}
+Every IPC mechanism is either "hand the bytes to the kernel, which hands them to the other process" or "map the same RAM into both". The long table below is variations on those two.
+:::
 
 ## How It Works
 
@@ -48,7 +54,7 @@ Process isolation is a feature — but real systems are built from cooperating p
 
 ### Pipes
 
-`pipe(fds)` returns two file descriptors: `fds[1]` for writing, `fds[0]` for reading. The kernel holds a bounded buffer (64 KB by default on Linux):
+The simplest possible kernel-carried channel: a fixed-size buffer in the kernel with one end to write and one to read. `pipe(fds)` returns two file descriptors: `fds[1]` for writing, `fds[0]` for reading. The kernel holds a bounded buffer (64 KB by default on Linux):
 
 - writer blocks when the buffer is full (backpressure);
 - reader blocks when it's empty;
@@ -59,9 +65,11 @@ Writes of up to `PIPE_BUF` bytes (4096 on Linux) are **atomic** — they won't i
 
 ### Unix domain sockets
 
-Same API as network sockets (`socket(AF_UNIX, …)`, `bind` to a path, `listen`, `accept`, `connect`) but the data never touches the network stack — the kernel moves it between socket buffers directly. Bonus features: passing **file descriptors** between processes (`SCM_RIGHTS`) and learning the peer's UID/PID (`SO_PEERCRED`) for authentication. PostgreSQL local connections via `/var/run/postgresql/.s.PGSQL.5432` are Unix sockets — measurably faster than TCP loopback.
+Pipes are one-way and only work between related processes (the fds have to be inherited). A local *server* needs something unrelated clients can find by name and talk to in both directions. Same API as network sockets (`socket(AF_UNIX, …)`, `bind` to a path, `listen`, `accept`, `connect`) but the data never touches the network stack — the kernel moves it between socket buffers directly. Bonus features: passing **file descriptors** between processes (`SCM_RIGHTS`) and learning the peer's UID/PID (`SO_PEERCRED`) for authentication. PostgreSQL local connections via `/var/run/postgresql/.s.PGSQL.5432` are Unix sockets — measurably faster than TCP loopback.
 
 ### Shared memory
+
+When copying through the kernel is too slow (gigabytes per second, or millions of tiny messages), remove the kernel from the data path entirely:
 
 ```c
 int fd = shm_open("/ringbuf", O_CREAT | O_RDWR, 0600);

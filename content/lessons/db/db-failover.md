@@ -31,7 +31,15 @@ Safe failover therefore needs three things: a trustworthy decision about who is 
 
 ## Why It Exists
 
-Replicas provide availability only if someone reliably turns one into a primary when needed. Manual failover takes minutes to hours (someone must be paged, diagnose, act); automated failover takes seconds — but automation that gets it wrong can cause worse outages and data corruption than the original failure.
+**The problem.** Replicas provide availability only if someone reliably turns one into a primary when needed. Manual failover takes minutes to hours (someone must be paged, diagnose, act); automated failover takes seconds — but automation that gets it wrong can cause worse outages and data corruption than the original failure.
+
+**Why it's hard.** Over a network you can never be sure a server is dead — only that it hasn't answered. Promoting a new leader while the old one is merely slow creates two leaders accepting different writes.
+
+**The idea.** Don't trust any single observer. Let a majority agree on who leads (consensus), make sure the old leader *cannot* keep writing (fencing), and only then redirect clients.
+
+:::callout[That's all it is]{type=insight}
+Notice the primary is gone, agree (by majority) on the most up-to-date replica, stop the old primary for certain, promote the replica, and point clients at it. Skipping "stop the old one" is how split brain happens.
+:::
 
 ## How It Works
 
@@ -48,7 +56,7 @@ flowchart TD
 
 ### 1. Detection: the timeout dilemma
 
-Short timeouts → fast recovery but false positives (GC pauses, network blips, overload — a busy primary looks dead, and failing it over under load often makes things worse ([Overloaded Server](lesson:x-overloaded-server))). Long timeouts → longer outages. Typical: 10–30 s, with checks from several vantage points so one network partition doesn't trigger failover.
+"Dead" can only be inferred from silence, so the only knob is how long to wait. Short timeouts → fast recovery but false positives (GC pauses, network blips, overload — a busy primary looks dead, and failing it over under load often makes things worse ([Overloaded Server](lesson:x-overloaded-server))). Long timeouts → longer outages. Typical: 10–30 s, with checks from several vantage points so one network partition doesn't trigger failover.
 
 ### 2. Choosing the new leader
 
@@ -56,7 +64,7 @@ Pick the replica with the most WAL received/replayed (minimize lost writes). Wit
 
 ### 3. Fencing: the step people skip
 
-The old primary might only be partitioned from the monitor, still serving clients on its side. Options:
+Consensus decides who *should* be leader; it doesn't stop the old leader from *acting* like one. The old primary might only be partitioned from the monitor, still serving clients on its side. Options:
 
 - **STONITH**: power off / kill the node via out-of-band control (IPMI, cloud API).
 - **Resource fencing**: revoke its storage access, remove it from the load balancer/VIP, shut its network port.

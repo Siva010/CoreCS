@@ -30,18 +30,30 @@ That single difference — **separate kernels vs one shared kernel** — explain
 
 ## Why It Exists
 
+**The problem.** One physical server is too big for one application, but programs sharing a machine step on each other: conflicting library versions, one app eating all the memory, one compromise exposing the rest.
+
+**Two ideas, two levels.** You can isolate at the *hardware* level — fake a whole machine, so each tenant has its own kernel — or at the *kernel* level — keep one kernel but make it lie to each process about what exists and cap what it can use.
+
 - **VMs**: run many OSes on one server (consolidation), isolate tenants strongly, migrate running machines, snapshot entire systems. They made cloud computing possible.
 - **Containers**: package an application with its dependencies and run it anywhere with near-native performance and millisecond startup — without the overhead of a full guest OS per app. They made microservices and Kubernetes practical.
+
+:::callout[That's all it is]{type=insight}
+A VM is a fake computer with its own kernel. A container is a normal process that the shared kernel shows a private view of the system (namespaces) and a resource budget (cgroups). There's no "container" object in the kernel — just those two features combined.
+:::
 
 ## How It Works
 
 ### How VMs virtualize the CPU and memory
+
+The core problem: a guest kernel expects to own the hardware and run privileged instructions — but it must not actually control the real machine. So those instructions must be caught and faked.
 
 - **Hardware-assisted virtualization** (Intel VT-x, AMD-V): the CPU has a special mode for guests. Guest code runs natively; sensitive operations (I/O port access, certain privileged instructions) cause a **VM exit** to the hypervisor, which emulates them and resumes the guest.
 - **Memory**: guests have their own page tables; **nested/extended page tables** (EPT/NPT) let the hardware translate guest-virtual → guest-physical → host-physical, at the cost of longer page walks on TLB misses (huge pages help).
 - **I/O**: emulated devices are slow; **paravirtual** drivers (virtio) cooperate with the hypervisor; **SR-IOV** and device passthrough give a VM direct hardware access for near-native network/storage performance.
 
 ### How containers are built on Linux
+
+Two separate questions, answered by two separate features: *what can this process see?* (namespaces) and *how much can it use?* (cgroups).
 
 | Namespace | Isolates | Example effect |
 |---|---|---|

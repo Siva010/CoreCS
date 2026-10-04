@@ -26,7 +26,15 @@ A **socket** is an endpoint for communication created by `socket(domain, type, p
 
 ## Why It Exists
 
-The Berkeley sockets API (1983) gave Unix programs a uniform way to use networks: the same file-descriptor model as files and pipes, with a few extra calls for addressing. Nearly every language's networking library wraps it.
+**The problem.** TCP lives in the kernel; applications live in user space. Programs need a way to say "connect me to that host", "send these bytes", "give me what arrived" — without knowing anything about segments, retransmissions or windows.
+
+**The idea.** Reuse the interface programs already know: files. The Berkeley sockets API (1983) gave Unix programs a uniform way to use networks: the same file-descriptor model as files and pipes, with a few extra calls for addressing. Nearly every language's networking library wraps it.
+
+**Why buffers sit in the middle.** The application and the network run at different speeds and at different times — the app may be busy when a packet arrives, and the network may be slow when the app wants to write. Buffers in the kernel let each side work at its own pace.
+
+:::callout[That's all it is]{type=insight}
+A socket is a file descriptor backed by two kernel buffers. `write` puts bytes in the send buffer, `read` takes bytes from the receive buffer, and TCP moves data between those buffers and the network on its own.
+:::
 
 ## How It Works
 
@@ -50,6 +58,8 @@ close()                                   close()
 - The client usually doesn't `bind`: the kernel assigns an **ephemeral port** at `connect`.
 
 ### The two queues behind listen()
+
+The kernel finishes handshakes on its own so that a busy application doesn't make clients wait for the SYN-ACK. That means finished-but-not-yet-claimed connections need a place to wait:
 
 ```mermaid
 flowchart LR
@@ -79,7 +89,7 @@ A persistently non-zero `Recv-Q` on an established socket means the app isn't re
 
 ### Ephemeral ports
 
-Outgoing connections get a local port from `net.ipv4.ip_local_port_range` (Linux default 32768–60999, ~28K ports). The 4-tuple must be unique, so a single client IP can hold ~28K concurrent connections **to the same destination IP:port**. Combined with `TIME_WAIT` lingering after closes, high-rate short-lived connections to one backend can exhaust ephemeral ports (`EADDRNOTAVAIL: Cannot assign requested address`). See [TCP Termination](lesson:cn-tcp-termination) and case study [Connection Exhaustion](case:connection-exhaustion).
+A connection is identified by its 4-tuple, so two connections to the same server must differ somewhere — in practice, in the client's local port. Outgoing connections get a local port from `net.ipv4.ip_local_port_range` (Linux default 32768–60999, ~28K ports). The 4-tuple must be unique, so a single client IP can hold ~28K concurrent connections **to the same destination IP:port**. Combined with `TIME_WAIT` lingering after closes, high-rate short-lived connections to one backend can exhaust ephemeral ports (`EADDRNOTAVAIL: Cannot assign requested address`). See [TCP Termination](lesson:cn-tcp-termination) and case study [Connection Exhaustion](case:connection-exhaustion).
 
 ### Useful socket options
 

@@ -34,10 +34,20 @@ HTTP/3 is simply HTTP's semantics mapped onto QUIC streams.
 
 ## Why It Exists
 
+**The problems that remained after HTTP/2:**
+
 - HTTP/2 removed HTTP-level head-of-line blocking but not **TCP's** ([HTTP/2](lesson:cn-http2)).
 - TCP + TLS needs 2–3 RTTs before the first request; on mobile networks with 100+ ms RTTs, that's visible.
 - Mobile clients change networks constantly, breaking TCP connections (identified by IP/port).
 - Evolving TCP took a decade per feature because of kernels and middleboxes.
+
+**Why not just fix TCP?** Because TCP lives in every OS kernel and every middlebox expects its exact header layout. A new TCP feature needs the whole internet's kernels and boxes to cooperate.
+
+**The idea.** Build a new transport *on top of UDP* (which every network already passes), run it in the application rather than the kernel (so it can ship as fast as a browser update), and encrypt its headers (so middleboxes can't freeze it in place again). Then fix TCP's limitations inside it.
+
+:::callout[That's all it is]{type=insight}
+QUIC is TCP's job (reliability, congestion control) plus TLS, rebuilt on UDP in user space — with separate streams so one lost packet doesn't block the others. HTTP/3 is HTTP running over it.
+:::
 
 ## How It Works
 
@@ -66,7 +76,7 @@ QUIC also improves loss recovery: packet numbers are **never reused** (retransmi
 
 ### Connection migration
 
-TCP connections are identified by the 4-tuple; change your IP and the connection dies. QUIC connections are identified by **connection IDs** chosen by the endpoints. When a client's address changes (Wi-Fi → LTE, or a NAT rebinding), it keeps sending with the same connection ID; after **path validation** the server continues the connection. Downloads and calls survive network switches.
+The root cause of dropped mobile connections: TCP names a connection by addresses, and addresses change when you walk out of Wi-Fi range. TCP connections are identified by the 4-tuple; change your IP and the connection dies. QUIC connections are identified by **connection IDs** chosen by the endpoints. When a client's address changes (Wi-Fi → LTE, or a NAT rebinding), it keeps sending with the same connection ID; after **path validation** the server continues the connection. Downloads and calls survive network switches.
 
 ### Encryption everywhere
 

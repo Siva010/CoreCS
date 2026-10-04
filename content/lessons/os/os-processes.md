@@ -36,12 +36,20 @@ The kernel tracks all of this in a per-process data structure, the **Process Con
 
 ## Why It Exists
 
-Early machines ran one job at a time: load a program, run it to completion, load the next. Two problems made that intolerable:
+**The problem.** Early machines ran one job at a time: load a program, run it to completion, load the next. Two problems made that intolerable:
 
 1. **Idle CPU during I/O.** A job waiting for a disk or tape wasted the CPU for milliseconds — millions of instructions. Running another job during the wait needs a way to *pause* one computation and *resume* it later, which means saving its complete state somewhere.
 2. **Protection.** Once several jobs share one machine, a bug in one must not corrupt another or the OS itself.
 
-The process abstraction solves both at once. It gives every running program the illusion of **a private CPU** (the OS multiplexes the real one by saving and restoring state) and **a private memory** (the OS and hardware enforce separate address spaces). Every higher-level concept — threads, containers, even the database server you connect to — is built on this illusion.
+**Without it.** You either waste the CPU (it sits idle every time a job waits) or you run several jobs and let any one of them scribble over the others.
+
+**The idea.** Wrap each running program in a box the OS controls: the box records *where the program was* (so it can be paused and resumed) and *what it's allowed to touch* (so it can't reach outside). The process abstraction solves both at once. It gives every running program the illusion of **a private CPU** (the OS multiplexes the real one by saving and restoring state) and **a private memory** (the OS and hardware enforce separate address spaces). Every higher-level concept — threads, containers, even the database server you connect to — is built on this illusion.
+
+**From idea to mechanism.** "Pause and resume" needs somewhere to save the state → the **PCB**. "Run something else while one waits" needs to know who is waiting and who is ready → the **process states** and their queues. "Can't touch others" needs a private view of memory → the **address space**.
+
+:::callout[That's all it is]{type=insight}
+A process is a running program plus the kernel's notes about it: where it was, what memory it owns, what files it has open. Save the notes, and you can stop it; restore them, and it continues as if nothing happened.
+:::
 
 ## How It Works
 
@@ -99,6 +107,8 @@ The transitions carry real meaning:
 
 ### The PCB: what the kernel remembers
 
+The rule for what goes in the PCB is simple: *everything needed to resume this process later, and everything needed to check what it's allowed to do.* Each field answers one of those.
+
 | PCB field | Why the kernel needs it |
 |---|---|
 | PID, parent PID | Identity; parent/child relationships for `wait()` and signals |
@@ -115,7 +125,7 @@ The transitions carry real meaning:
 
 ### How the kernel organizes processes
 
-The kernel does not scan every PCB to find something to run. PCBs are linked into **queues** by state:
+The problem: with thousands of processes, "which one can run now?" and "who was waiting for this packet?" must be answered in microseconds. The kernel does not scan every PCB to find something to run. PCBs are linked into **queues** by state:
 
 - a **run queue** per CPU (on Linux, a red-black tree ordered by virtual runtime for the CFS/EEVDF scheduler);
 - **wait queues**, one per event source — each socket, each pipe, each disk request, each futex has its own list of processes blocked on it.

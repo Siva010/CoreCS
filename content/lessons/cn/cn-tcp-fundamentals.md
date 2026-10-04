@@ -37,7 +37,15 @@ TCP achieves this with a handful of mechanisms, each solving one problem:
 
 ## Why It Exists
 
-Most applications — web, databases, email, file transfer, RPC — need their data to arrive intact and in order. Implementing reliability in every application would be error-prone and wasteful; TCP does it once, in the kernel, for everyone.
+**The problem.** Most applications — web, databases, email, file transfer, RPC — need their data to arrive intact and in order. IP gives no such promise.
+
+**Without it.** Every application would have to number its messages, detect losses, resend, reorder, and slow down when the network is congested. Implementing reliability in every application would be error-prone and wasteful; TCP does it once, in the kernel, for everyone.
+
+**The idea.** Number every byte. The receiver says which bytes it has; the sender resends what's missing. With numbered bytes, all the other problems become bookkeeping: reorder by number, discard duplicates by number, and limit how many unacknowledged bytes are in flight (flow and congestion control).
+
+:::callout[That's all it is]{type=insight}
+TCP numbers every byte, the receiver acknowledges what arrived, and the sender retransmits what didn't. Everything else in TCP — windows, handshakes, timers — is built on those numbers.
+:::
 
 ## How It Works
 
@@ -73,7 +81,7 @@ Most applications — web, databases, email, file transfer, RPC — need their d
 
 ### Sequence numbers count bytes, not packets
 
-If the ISN is 1000 and the sender transmits 500 bytes, then 300 bytes:
+Why bytes: TCP may re-cut data into different-sized segments on a retransmit, so packet numbers would be ambiguous; byte numbers never are. If the ISN is 1000 and the sender transmits 500 bytes, then 300 bytes:
 
 - segment 1: `seq=1001, len=500` (the SYN consumed sequence number 1000)
 - segment 2: `seq=1501, len=300`
@@ -104,7 +112,7 @@ Details: [Handshake](lesson:cn-tcp-handshake), [Reliability](lesson:cn-tcp-relia
 
 ### The byte-stream trap
 
-TCP has **no message boundaries**. Two `send()` calls of 100 bytes may arrive as one `recv()` of 200 bytes, or as 150 + 50. Every application protocol over TCP must therefore do its own **framing**:
+A direct consequence of "number bytes, not messages": TCP has **no message boundaries**. Two `send()` calls of 100 bytes may arrive as one `recv()` of 200 bytes, or as 150 + 50. Every application protocol over TCP must therefore do its own **framing**:
 
 - delimiters (HTTP/1.1 headers end with `\r\n\r\n`; Redis RESP uses `\r\n`),
 - length prefixes (HTTP `Content-Length`, HTTP/2 frames, Kafka and PostgreSQL wire protocols: a length field then the payload),

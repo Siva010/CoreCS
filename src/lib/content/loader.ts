@@ -247,6 +247,7 @@ function loadLesson(file: string, subjectDir: SubjectId, diag: Diagnostic[]): Le
   if (!levelDef) diag.push({ level: "error", file: f, message: `Level ${fm.level} not defined for subject ${subjectDir}` });
 
   const tree = parseMarkdown(content);
+  checkUnparsedDirectives(tree, f, diag);
   const depthBlocks: Partial<Record<Depth, number>> = {};
   visit(tree, "containerDirective", (node: { name: string; attributes?: Record<string, string | null | undefined> | null }) => {
     if (node.name !== "depth") return;
@@ -339,18 +340,37 @@ function loadCaseStudies(diag: Diagnostic[]) {
       order: data.order ?? 99,
       href: `/case-studies/${id}`,
     };
-    return { meta, nodes: parseMarkdown(content).children as RootContent[] };
+    const tree = parseMarkdown(content);
+    checkUnparsedDirectives(tree, f, diag);
+    return { meta, nodes: tree.children as RootContent[] };
   }).sort((a, b) => a.meta.order - b.meta.order || a.meta.title.localeCompare(b.meta.title));
 }
 
 const STEP_HEADING = /^\[\s*([a-z0-9 -]+?)\s*\]\s*(.+)$/i;
+
+/**
+ * A directive the parser didn't recognise falls through as a plain paragraph
+ * starting with "::", and renders as literal text. The usual cause is writing
+ * the label after the attributes: remark-directive wants `:::name[Label]{attrs}`.
+ */
+function checkUnparsedDirectives(tree: { children: unknown[] }, file: string, diag: Diagnostic[]) {
+  visit(tree as never, "paragraph", (node: { children?: { type: string; value?: string }[] }) => {
+    const first = node.children?.[0];
+    const m = first?.type === "text" ? /^(:{2,}[a-z][\w-]*\S*)/i.exec(first.value ?? "") : null;
+    if (m) {
+      diag.push({ level: "error", file, message: `Unparsed directive "${m[1].slice(0, 60)}" — write the label before the attributes, e.g. :::callout[Title]{type=insight}` });
+    }
+  });
+}
 
 function loadWalkthroughs(diag: Diagnostic[]) {
   return listMarkdown(path.join(CONTENT_DIR, "under-the-hood")).map((file) => {
     const { data, content } = matter(fs.readFileSync(file, "utf8"));
     const id = path.basename(file, ".md");
     const f = rel(file);
-    const { intro, parts } = splitByHeading(parseMarkdown(content).children as RootContent[], 2);
+    const tree = parseMarkdown(content);
+    checkUnparsedDirectives(tree, f, diag);
+    const { intro, parts } = splitByHeading(tree.children as RootContent[], 2);
     const steps = parts.map((p) => {
       const m = STEP_HEADING.exec(p.heading);
       if (!m) diag.push({ level: "error", file: f, message: `Step heading must look like "## [kernel] Title": ${p.heading}` });
@@ -376,7 +396,9 @@ function loadTraps(diag: Diagnostic[]) {
   const file = path.join(CONTENT_DIR, "traps.md");
   if (!fs.existsSync(file)) return [];
   const { content } = matter(fs.readFileSync(file, "utf8"));
-  const { parts } = splitByHeading(parseMarkdown(content).children as RootContent[], 2);
+  const tree = parseMarkdown(content);
+  checkUnparsedDirectives(tree, "traps.md", diag);
+  const { parts } = splitByHeading(tree.children as RootContent[], 2);
   return parts.map((p) => {
     const m = TRAP_HEADING.exec(p.heading);
     if (!m) diag.push({ level: "error", file: "traps.md", message: `Trap heading must look like "## [os] Title": ${p.heading}` });

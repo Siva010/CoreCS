@@ -52,7 +52,13 @@ Index Scan using orders_customer_id_idx on orders o  (cost=0.43..152.10 rows=38 
 
 ## Why It Exists
 
-The planner's decisions are invisible from SQL. Without EXPLAIN, tuning is guesswork ("add an index and hope"). With it, you can see exactly which step is slow and why the planner chose it.
+**The problem.** The planner's decisions are invisible from SQL. Without EXPLAIN, tuning is guesswork ("add an index and hope").
+
+**The idea.** Ask the database to show its plan, and — with ANALYZE — to run it while counting rows and time at every step. With it, you can see exactly which step is slow and why the planner chose it. The most useful comparison is *estimated rows vs actual rows*: when they disagree wildly, the planner chose its algorithm for data that doesn't exist.
+
+:::callout[That's all it is]{type=insight}
+EXPLAIN shows the plan tree and the planner's guesses; EXPLAIN ANALYZE runs it and shows what really happened. Find the node where the time goes, then check whether its estimated and actual row counts disagree.
+:::
 
 ## How It Works
 

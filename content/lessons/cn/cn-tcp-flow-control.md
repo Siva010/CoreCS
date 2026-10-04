@@ -31,7 +31,15 @@ The allowed range slides forward over the byte stream as acknowledgments arrive:
 
 ## Why It Exists
 
-Senders and receivers run at different speeds: a server streaming a file to a slow phone, a producer feeding a busy consumer. Without flow control, the receiver would drop data it can't buffer, forcing retransmissions that waste the network.
+**The problem.** Senders and receivers run at different speeds: a server streaming a file to a slow phone, a producer feeding a busy consumer.
+
+**Without it.** Without flow control, the receiver would drop data it can't buffer, forcing retransmissions that waste the network.
+
+**The idea.** The receiver is the only one who knows how much room it has — so let it say so on every ACK, and forbid the sender from having more unacknowledged data in flight than that. The limit moves forward as data is acknowledged, which is why it's called a sliding window.
+
+:::callout[That's all it is]{type=insight}
+The receiver advertises "I have room for N more bytes"; the sender never has more than N unacknowledged bytes out. If the receiving app stops reading, N drops to zero and the sender waits.
+:::
 
 ## How It Works
 
@@ -52,13 +60,13 @@ Senders and receivers run at different speeds: a server streaming a file to a sl
 
 ### Zero windows and the persist timer
 
-If the receiving application stops reading, rwnd hits **0**. The sender stops sending data but starts a **persist timer** and periodically sends a tiny **window probe** — otherwise, if the receiver's "window reopened" update were lost, both sides would wait forever (a deadlock). When the app reads, the receiver advertises a non-zero window and transfer resumes.
+An edge case the basic rule doesn't handle. If the receiving application stops reading, rwnd hits **0**. The sender stops sending data but starts a **persist timer** and periodically sends a tiny **window probe** — otherwise, if the receiver's "window reopened" update were lost, both sides would wait forever (a deadlock). When the app reads, the receiver advertises a non-zero window and transfer resumes.
 
 This is backpressure in action: a slow consumer → full socket receive buffer → zero window → sender's send buffer fills → sender's `write()` blocks → the producing application slows down.
 
 ### Throughput is bounded by window / RTT
 
-At most one window of data can be in flight per round trip:
+A consequence of "only N bytes in flight" that surprises people: the window, not the link speed, can be the limit. At most one window of data can be in flight per round trip:
 
 ```text
 max throughput ≈ window / RTT
@@ -71,6 +79,8 @@ A 64 KB window on a 100 ms RTT path: 65,535 B / 0.1 s ≈ **5.2 Mb/s** — no ma
 The original 16-bit window field (max 65,535 bytes) is far too small; **window scaling** (RFC 7323) negotiated in the SYN fixes that. Linux also **autotunes** socket buffers (`tcp_rmem`/`tcp_wmem` max values) — which is why transfers across oceans can still be slow on hosts with small buffer limits.
 
 ### Nagle's algorithm and delayed ACKs
+
+Two separate optimisations, each sensible alone, that both try to avoid sending tiny packets — and that can wait on each other.
 
 - **Nagle's algorithm** (sender): if there's unacknowledged data in flight, buffer small writes until either a full segment accumulates or an ACK arrives. Prevents floods of tiny packets (the "silly" 41-byte packets of interactive typing).
 - **Delayed ACK** (receiver): wait briefly (up to ~40 ms on Linux) to piggyback the ACK on data.

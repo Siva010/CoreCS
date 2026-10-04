@@ -42,7 +42,13 @@ Latency numbers are orders of magnitude, not benchmarks; the ratio between level
 
 ## Why It Exists
 
-The **memory hierarchy** is a fact of physics and economics: faster storage is smaller and more expensive per byte. Locality — recently used data is likely reused (temporal), nearby data is likely used next (spatial) — means a small fast level can serve most accesses. Average access time = hit time + miss rate × miss penalty; with a 1,000× miss penalty, going from 95% to 99% hits makes a large difference.
+**The problem.** The **memory hierarchy** is a fact of physics and economics: faster storage is smaller and more expensive per byte. Locality — recently used data is likely reused (temporal), nearby data is likely used next (spatial) — means a small fast level can serve most accesses. Average access time = hit time + miss rate × miss penalty; with a 1,000× miss penalty, going from 95% to 99% hits makes a large difference.
+
+**Why one lesson for all caches.** CPU caches, the TLB, the page cache, buffer pools, Redis, browsers and CDNs look unrelated, but each exists for the same reason and must answer the same five questions. Learn the questions once and every new cache is familiar.
+
+:::callout[That's all it is]{type=insight}
+Every cache is a small fast copy of a slow source. The design is always the same five choices: what to keep, what to evict, how to handle writes, how to learn about changes, and what happens on a miss.
+:::
 
 ## How It Works
 

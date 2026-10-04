@@ -34,13 +34,19 @@ The decision rule is not "SQL vs NoSQL"; it's: **what questions will I ask of th
 
 ## Why It Exists
 
-Around 2005–2012, web companies hit limits of single-server relational databases (write throughput, dataset size, global availability) and of rigid schemas for rapidly changing products. Systems like Bigtable, Dynamo, Cassandra and MongoDB traded joins, multi-row transactions and sometimes strong consistency for **horizontal scalability, high availability and flexible schemas**. Since then the line has blurred: relational databases gained JSON, sharding (Citus, Vitess) and distributed SQL; many NoSQL systems gained transactions and SQL-like languages.
+**The problem.** Around 2005–2012, web companies hit limits of single-server relational databases (write throughput, dataset size, global availability) and of rigid schemas for rapidly changing products. Systems like Bigtable, Dynamo, Cassandra and MongoDB traded joins, multi-row transactions and sometimes strong consistency for **horizontal scalability, high availability and flexible schemas**. Since then the line has blurred: relational databases gained JSON, sharding (Citus, Vitess) and distributed SQL; many NoSQL systems gained transactions and SQL-like languages.
+
+**The idea.** A relational database is general: it can answer any question, at the cost of coordination (joins, multi-row transactions) that is hard to spread across machines. If you know your questions in advance, you can give up that generality and shape the data so each question is one cheap lookup that scales out easily.
+
+:::callout[That's all it is]{type=insight}
+Each NoSQL family makes one access pattern cheap — get by key, fetch a whole document, append to a partition, follow edges, scan a time range, search text — by giving up the relational ability to answer anything. Pick by the questions you'll ask.
+:::
 
 ## How It Works
 
 ### Design by access pattern (query-first modeling)
 
-Relational modeling: normalize the data, then write any query. NoSQL modeling (especially key-value and wide-column): **list the queries first**, then shape the data so each query is a single-key or single-partition read — often duplicating data per query ([Wide-Column Stores](lesson:db-wide-column)).
+The consequence of giving up joins: data must already be in the shape each query needs. Relational modeling: normalize the data, then write any query. NoSQL modeling (especially key-value and wide-column): **list the queries first**, then shape the data so each query is a single-key or single-partition read — often duplicating data per query ([Wide-Column Stores](lesson:db-wide-column)).
 
 ```text
 Query: "latest 20 messages in conversation X"

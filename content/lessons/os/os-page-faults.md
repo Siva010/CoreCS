@@ -31,10 +31,18 @@ Most faults are cheap (the book is already in the building — a **minor fault**
 
 ## Why It Exists
 
+**The problem.** Programs reserve far more memory than they touch, and most of a binary is never executed in a given run. Loading everything up front wastes time and RAM.
+
+**The idea.** Don't load anything until it's actually used — and let the *hardware* tell the OS when that happens. The page table already has a "present" bit; if it's off, the MMU stops and calls the kernel. So the kernel can leave pages missing on purpose and fill them in on first touch. That "stop and call the kernel" is a page fault. It gives:
+
 - **Fast startup**: a program starts without reading its whole binary.
 - **Memory efficiency**: pages never touched (error-handling code, unused features, reserved heap) never consume RAM.
 - **Overcommitment**: the sum of virtual memory can exceed physical RAM; only the actively used pages (the working set) need to be resident.
 - **Enables COW, mmap and swapping**: all built on "mark the PTE not-present or read-only, handle the fault lazily".
+
+:::callout[That's all it is]{type=insight}
+A page fault is the hardware saying "this page isn't mapped yet — kernel, fix it". The kernel finds or loads the page, updates the table, and the instruction runs again. A fault isn't an error; it's how lazy loading works.
+:::
 
 ## How It Works
 
@@ -87,11 +95,11 @@ With NVMe (F ≈ 50–100 µs) the penalty is smaller but still ~1,000× a memor
 
 ### Restartable instructions
 
-The CPU must be able to restart a faulting instruction precisely — or resume it. Instructions that modify several locations (x86 `rep movs`, block moves) are designed to be restartable (they update registers as they progress, so a restart continues correctly). This hardware support is a prerequisite for demand paging.
+Demand paging only works if the program can't tell a fault happened — so the interrupted instruction has to run again cleanly. The CPU must be able to restart a faulting instruction precisely — or resume it. Instructions that modify several locations (x86 `rep movs`, block moves) are designed to be restartable (they update registers as they progress, so a restart continues correctly). This hardware support is a prerequisite for demand paging.
 
 ### Prefetching / read-ahead
 
-Faulting one page at a time is slow for sequential access. The kernel's **read-ahead** fetches following pages of a file on a fault (fault-around maps several already-cached neighbor pages at once), and `madvise(MADV_SEQUENTIAL/WILLNEED)` gives hints. For random access, `MADV_RANDOM` disables read-ahead.
+Laziness has a cost when you *will* need everything: faulting one page at a time is slow for sequential access. The kernel's **read-ahead** fetches following pages of a file on a fault (fault-around maps several already-cached neighbor pages at once), and `madvise(MADV_SEQUENTIAL/WILLNEED)` gives hints. For random access, `MADV_RANDOM` disables read-ahead.
 
 :::depth{level=advanced}
 ### Overcommit and the OOM killer

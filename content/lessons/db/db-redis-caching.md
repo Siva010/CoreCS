@@ -33,7 +33,13 @@ The price is **staleness and complexity**: two copies of data can disagree, and 
 
 ## Why It Exists
 
-Read-heavy workloads repeatedly compute the same results (product pages, user profiles, feed fragments, permission checks). Serving them from memory reduces latency, database CPU and I/O — often by 10–100× for the hottest data — and absorbs traffic spikes that would otherwise overload the database ([Overloaded Server](lesson:x-overloaded-server)).
+**The problem.** Read-heavy workloads repeatedly compute the same results (product pages, user profiles, feed fragments, permission checks). Serving them from memory reduces latency, database CPU and I/O — often by 10–100× for the hottest data — and absorbs traffic spikes that would otherwise overload the database ([Overloaded Server](lesson:x-overloaded-server)).
+
+**The idea.** Remember answers you've already computed, in memory, close to the app — and accept that the remembered copy can be briefly out of date. Every cache pattern is a different answer to "when do we refresh the copy, and who does it?"
+
+:::callout[That's all it is]{type=insight}
+Check the cache; on a miss, read the database and store the result with a TTL. On writes, update the database and delete the cache entry. TTLs bound staleness; coalescing and jitter stop a popular key's expiry from flooding the database.
+:::
 
 ## How It Works
 
@@ -86,7 +92,7 @@ Mitigations: always set a **TTL** (bounds staleness), delay a second delete ("de
 
 ### Stampedes and hot keys
 
-When a hot key expires, thousands of requests miss simultaneously and all query the database:
+A cache's danger is that the database gets sized for the *cached* load. The moment a popular entry disappears, the uncached load returns all at once. When a hot key expires, thousands of requests miss simultaneously and all query the database:
 
 - **Request coalescing / single-flight**: one request recomputes; others wait for its result (in-process, or with a short Redis lock `SET lock:key NX PX 3000`).
 - **Stale-while-revalidate**: serve the stale value while one worker refreshes (store a soft expiry inside the value) — the same idea as HTTP's `stale-while-revalidate` ([HTTP Caching](lesson:cn-http-caching)).

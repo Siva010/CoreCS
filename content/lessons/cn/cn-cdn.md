@@ -32,9 +32,17 @@ The handshake and the bytes travel a few milliseconds instead of hundreds, and y
 
 ## Why It Exists
 
+**The problem.** Light in fiber takes ~100 ms to cross half the planet and back, and an HTTPS page load needs several round trips. Users far from your servers wait seconds no matter how fast the servers are.
+
+**The idea.** You can't make light faster, so shorten the distance: keep copies of your content — and a place to finish TLS handshakes — near every user. Only the first request in each region has to travel all the way to your origin.
+
 - **Latency**: shorter RTTs for TCP/TLS handshakes and every request (see [Latency & Bandwidth](lesson:cn-latency-bandwidth)).
 - **Offload**: absorb read traffic (often 90%+ of bytes for static-heavy sites).
 - **Resilience and security**: absorb traffic spikes and DDoS attacks at a network far larger than yours; WAF rules at the edge.
+
+:::callout[That's all it is]{type=insight}
+A CDN is a worldwide set of HTTP caches. Users are sent to the nearest one; it answers from its copy or fetches once from your origin and keeps it. Your cache headers decide what it may keep and for how long.
+:::
 
 ## How It Works
 
@@ -69,6 +77,8 @@ The origin's headers ([HTTP Caching](lesson:cn-http-caching)): `Cache-Control: p
 - Personalized/authenticated responses: **bypass** (or carefully keyed).
 
 ### Invalidation
+
+Copies in hundreds of cities make "change the content" hard: every copy must be found or made irrelevant.
 
 - **Versioned URLs** (best): new content → new URL, nothing to purge.
 - **Purge by URL/prefix**: propagates across PoPs in seconds.

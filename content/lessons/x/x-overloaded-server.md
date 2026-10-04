@@ -33,7 +33,13 @@ Overload is dangerous because it **feeds itself**: slow responses cause timeouts
 
 ## Why It Exists
 
-Capacity is always finite, and traffic spikes, slow dependencies, bad deploys and failovers regularly push some component past it. Systems that degrade gracefully (serve fewer requests, but serve them) stay up; systems that queue unboundedly and retry blindly collapse — often long after the original trigger is gone (metastable failure).
+**The problem.** Capacity is always finite, and traffic spikes, slow dependencies, bad deploys and failovers regularly push some component past it. Systems that degrade gracefully (serve fewer requests, but serve them) stay up; systems that queue unboundedly and retry blindly collapse — often long after the original trigger is gone (metastable failure).
+
+**The idea.** When you can't do all the work, decide *which* work not to do — early, cheaply and on purpose — instead of letting queues and retries decide for you. Every defense below (bounded queues, shedding, rate limits, timeouts, circuit breakers) is a different place to make that decision.
+
+:::callout[That's all it is]{type=insight}
+An overloaded server is a queue growing faster than it drains. Keep queues bounded, reject excess early, time out and retry sparingly, and cut off failing dependencies — so the server keeps doing *some* work well instead of all work badly.
+:::
 
 ## How It Works
 
@@ -61,7 +67,7 @@ An unbounded queue converts overload into unbounded latency and memory growth (a
 
 ### Load shedding
 
-Reject early and cheaply — at the edge, before doing expensive work:
+Once a request is going to time out anyway, every bit of work spent on it is wasted — and that wasted work is what slows the requests that could have succeeded. Reject early and cheaply — at the edge, before doing expensive work:
 
 - Return 503/429 when queue length or in-flight count exceeds a threshold (concurrency limits, adaptive limits that track latency).
 - Prioritize: shed low-value traffic (analytics beacons, prefetches) before checkout requests.
@@ -94,6 +100,8 @@ Tell clients what happened: **429 Too Many Requests** with `Retry-After`, and he
 - Retry at one layer only: if 3 layers each retry 3 times, one user request becomes 27 calls to the bottom service.
 
 ### Circuit breakers and bulkheads
+
+When a dependency is failing, calling it again only adds load to it and ties up your own threads waiting. A circuit breaker remembers recent failures and stops calling for a while; a bulkhead caps how much of your capacity any one dependency can occupy.
 
 ```mermaid
 stateDiagram-v2

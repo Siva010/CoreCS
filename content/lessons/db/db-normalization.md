@@ -39,13 +39,19 @@ The normal forms are progressively stricter checks of "does every non-key column
 
 ## Why It Exists
 
-A single wide table `orders_flat(order_id, order_date, customer_id, customer_name, customer_city, product_id, product_name, qty, price)` shows all three **anomalies**:
+**The problem.** A single wide table `orders_flat(order_id, order_date, customer_id, customer_name, customer_city, product_id, product_name, qty, price)` shows all three **anomalies**:
 
 - **Update anomaly**: a customer moves city → update every one of their order rows; miss one and the data disagrees with itself.
 - **Insert anomaly**: you can't record a new customer until they place an order (no order_id to form the key).
 - **Delete anomaly**: delete a customer's only order and you lose the customer entirely.
 
-Decomposing into `customers`, `orders`, `products`, `order_items` removes all three: each fact lives in one row.
+**The root cause.** All three anomalies have one cause: a table stores facts about *two different things* (customers and orders) in the same row. The customer's city is a fact about the customer, but it's being stored per order.
+
+**The idea.** Decomposing into `customers`, `orders`, `products`, `order_items` removes all three: each fact lives in one row. The normal forms are just increasingly careful checklists for spotting "this column is really a fact about something other than this table's key".
+
+:::callout[That's all it is]{type=insight}
+Store each fact once, in the table whose key it's about. 2NF: no column depends on part of the key. 3NF: no column depends on another non-key column. BCNF: anything that determines something must be a key.
+:::
 
 ## How It Works
 
@@ -80,7 +86,7 @@ Final: Students, Courses, Departments, Enrollment — each non-key attribute dep
 
 ### 3NF vs BCNF: the one case where they differ
 
-`Teaching(student, subject, teacher)`: each teacher teaches one subject (teacher → subject); for each subject, a student has one teacher ((student, subject) → teacher).
+Usually 3NF and BCNF give the same tables. They disagree only when a non-key column determines part of a key — and then you must choose between removing all redundancy and keeping every rule enforceable in one table. `Teaching(student, subject, teacher)`: each teacher teaches one subject (teacher → subject); for each subject, a student has one teacher ((student, subject) → teacher).
 
 - Candidate keys: (student, subject) and (student, teacher).
 - teacher → subject: teacher is not a super key, but subject is **prime** → allowed by 3NF, **violates BCNF**.

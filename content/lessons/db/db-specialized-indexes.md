@@ -40,7 +40,13 @@ Each specialized index trades generality for a much better fit to one question.
 
 ## Why It Exists
 
-Without these, the options for such queries are sequential scans (slow) or external systems (a search engine, a spatial service). The right index often turns a 30-second scan into a 5-ms lookup inside the same database, with transactional consistency.
+**The problem.** A B+ tree can only help a question that maps to "a contiguous range in one sort order". "Contains this word", "overlaps this rectangle" and "only the failed rows" don't.
+
+**The idea.** Build a different structure whose shape matches the question: a map from each word to its rows (inverted index), a tree of bounding regions (GiST), a coarse min/max summary of physical blocks (BRIN), or an ordinary index restricted to the rows or values you actually ask about (partial, expression). Without these, the options for such queries are sequential scans (slow) or external systems (a search engine, a spatial service). The right index often turns a 30-second scan into a 5-ms lookup inside the same database, with transactional consistency.
+
+:::callout[That's all it is]{type=insight}
+Each specialized index fits one question shape: GIN for "contains", GiST for "overlaps/nearest", BRIN for "this range of naturally ordered data", partial for "only these rows", expression for "this computed value".
+:::
 
 ## How It Works
 

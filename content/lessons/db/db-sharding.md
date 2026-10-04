@@ -34,15 +34,21 @@ Sharding trades one hard problem (vertical limits of a single machine) for sever
 
 ## Why It Exists
 
-Replication scales reads, but **every replica applies every write** ([Replication](lesson:db-replication)). Beyond the write throughput, storage, memory or connection capacity of the largest practical machine, the only way to scale is to split the data so each machine handles a fraction.
+**The problem.** Replication scales reads, but **every replica applies every write** ([Replication](lesson:db-replication)). Beyond the write throughput, storage, memory or connection capacity of the largest practical machine, the only way to scale is to split the data so each machine handles a fraction.
+
+**The idea.** Give each server a *different* slice of the data, chosen by a key, so each handles only its slice's reads and writes. The cost is that anything spanning slices — joins, transactions, uniqueness, global queries — now crosses machines.
 
 Before sharding, exhaust the cheaper options: query and index optimization, caching, read replicas, vertical scaling (a much larger server), archiving old data, and moving specific workloads (search, analytics) elsewhere. Sharding is a one-way door in complexity.
+
+:::callout[That's all it is]{type=insight}
+Sharding splits rows across independent databases by a key. Queries that include the key go to one shard and stay simple; anything that doesn't becomes a multi-shard problem. Choosing that key is the whole design.
+:::
 
 ## How It Works
 
 ### Choosing a shard key
 
-A good shard key:
+Everything that crosses shards is expensive, so the goal is a key that keeps each request — and each transaction — inside one shard, while spreading load evenly. A good shard key:
 
 1. **Appears in almost every query** (so each query goes to one shard).
 2. **Groups data that's accessed or transacted together** (a tenant's users, orders, invoices on one shard → local joins and ACID transactions).

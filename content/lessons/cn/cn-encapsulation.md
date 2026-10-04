@@ -30,7 +30,13 @@ Routers in the middle open only the outer two dolls: they throw away the Etherne
 
 ## Why It Exists
 
-Layer independence requires each layer to carry its own control information (addresses, sequence numbers, checksums) without understanding the others'. Headers are that information.
+**The problem.** Layering says each layer works independently. But each layer still needs its *own* information to travel with the data: IP needs addresses, TCP needs sequence numbers, Ethernet needs the next device's MAC.
+
+**The idea.** Layer independence requires each layer to carry its own control information (addresses, sequence numbers, checksums) without understanding the others'. Headers are that information. Each layer treats everything from above as an opaque payload, sticks its own label on the front, and hands it down. On the other side, each layer peels off only its own label.
+
+:::callout[That's all it is]{type=insight}
+Going down the stack, each layer adds a header; going up, each layer removes its own. A router only peels off and replaces the outermost (link) header — the inner parts travel unchanged.
+:::
 
 ## How It Works
 
@@ -65,6 +71,8 @@ What each header contains that matters:
 
 ### At a router
 
+The router's job is only to move the packet one hop, so it touches only what one hop needs: it replaces the link-layer wrapper and updates the hop count. 
+
 1. Receive the frame, verify the FCS, strip the Ethernet header.
 2. Validate the IP header, **decrement TTL** (drop and send ICMP "time exceeded" if it hits 0), update the IPv4 header checksum.
 3. Longest-prefix-match the destination IP in the forwarding table → next hop + interface.
@@ -82,7 +90,7 @@ The NIC receives the frame, checks the CRC, DMAs it into a ring buffer, raises a
 
 ### Size limits: MTU and MSS
 
-A 1 MB HTTP response is not sent as one packet: TCP cuts it into ~719 segments of 1,460 bytes each (on a 1,500 MTU path). During the TCP handshake each side announces its MSS. If a tunnel or VPN adds headers, the effective MTU shrinks (e.g., 1,450 for VXLAN), and mismatches cause the infamous **PMTU black holes** ([MTU & Network Bottlenecks](lesson:cn-mtu-congestion)).
+Links can't carry unlimited-size frames (big frames hog the wire and make every error cost a large resend), so every layer has to fit inside a maximum. A 1 MB HTTP response is not sent as one packet: TCP cuts it into ~719 segments of 1,460 bytes each (on a 1,500 MTU path). During the TCP handshake each side announces its MSS. If a tunnel or VPN adds headers, the effective MTU shrinks (e.g., 1,450 for VXLAN), and mismatches cause the infamous **PMTU black holes** ([MTU & Network Bottlenecks](lesson:cn-mtu-congestion)).
 
 :::depth{level=advanced}
 ### Offloads blur the picture

@@ -49,7 +49,13 @@ What the major engines actually do:
 
 ## Why It Exists
 
-Serializable everywhere is the easiest to reason about but historically costly (locking) or abort-prone under contention (optimistic). Weaker levels let most workloads run with little coordination, trusting the developer to handle the specific anomalies that matter.
+**The problem.** Serializable everywhere is the easiest to reason about but historically costly (locking) or abort-prone under contention (optimistic).
+
+**The idea.** Make isolation a dial instead of a switch. Weaker levels let most workloads run with little coordination, trusting the developer to handle the specific anomalies that matter. Each level is a promise: "these anomalies can't happen; those still can".
+
+:::callout[That's all it is]{type=insight}
+Read Committed: each statement sees committed data. Repeatable Read: the whole transaction sees one snapshot. Serializable: the result equals some one-at-a-time order. Stronger = fewer surprises, more waiting or retries.
+:::
 
 ## How It Works
 
@@ -74,6 +80,8 @@ The application must **retry the whole transaction**. This "first updater wins" 
 Plain `SELECT`s read from a transaction-wide snapshot. But `UPDATE`, `DELETE` and locking reads (`SELECT … FOR UPDATE / FOR SHARE`) operate on the **latest committed** version and take row + **gap locks** (next-key locks) to prevent phantoms for those ranges. Consequences: a transaction can read a value from its snapshot, then update based on it while another transaction's newer committed value is overwritten — a lost update — unless it used a locking read.
 
 ### Serializable
+
+Snapshots alone can't stop write skew, because the conflict is between what one transaction *read* and what another *wrote*. To get full serializability you must track reads too — either by locking them (blocking) or by watching for dangerous patterns (aborting).
 
 - **PostgreSQL SSI**: runs on snapshots, additionally tracks read sets with lightweight predicate "SIREAD" locks (they never block), and aborts a transaction when it detects a pattern of rw-dependencies that could form a cycle (two consecutive rw anti-dependencies with a particular commit order). Some false positives: aborts even when no anomaly would occur.
 - **Lock-based (MySQL, SQL Server default Serializable)**: reads take shared locks on rows and ranges held to commit — writers block readers and vice versa; deadlocks are more common.

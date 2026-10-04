@@ -36,13 +36,21 @@ Because TCP must deliver bytes **in order**, a single missing segment holds back
 
 ## Why It Exists
 
-IP loses packets routinely (congested router buffers are the main cause). TCP must detect loss quickly without mistaking delay for loss (spurious retransmissions waste bandwidth and can worsen congestion).
+**The problem.** IP loses packets routinely (congested router buffers are the main cause). The sender can't see the loss — it only sees that some acknowledgment hasn't come back.
+
+**The dilemma.** TCP must detect loss quickly without mistaking delay for loss (spurious retransmissions waste bandwidth and can worsen congestion). Wait too long and every loss costs seconds; resend too eagerly and you flood an already-congested network with copies.
+
+**The idea.** Use two signals with different speeds. The fast one: if the receiver keeps saying "still missing byte N" while later data arrives, N is almost certainly lost — resend now. The slow, safe one: if nothing at all comes back for longer than a typical round trip plus a margin, assume loss and resend.
+
+:::callout[That's all it is]{type=insight}
+Keep a copy of everything until it's acknowledged. Resend when a timer runs out, or sooner when three duplicate ACKs say a gap exists. SACK just tells the sender exactly which gaps to fill.
+:::
 
 ## How It Works
 
 ### Retransmission on timeout
 
-The sender starts a timer for the oldest unacknowledged segment. If it expires, it retransmits and **doubles** the RTO (exponential backoff).
+The hard part is choosing *how long* to wait: RTTs vary from 0.1 ms in a datacenter to 300 ms across the planet, and change over time. So TCP measures them and adapts. The sender starts a timer for the oldest unacknowledged segment. If it expires, it retransmits and **doubles** the RTO (exponential backoff).
 
 **Computing the RTO** (RFC 6298): keep a smoothed RTT and its variation:
 
@@ -74,7 +82,7 @@ Why **3** duplicates? One or two duplicate ACKs can result from mild **reorderin
 
 ### SACK
 
-With cumulative ACKs alone, after multiple losses in one window the sender knows only the first gap. With SACK, the receiver says "ACK 1001; I also have 2001–5000 and 6001–7000", so the sender retransmits exactly 1001–2000 and 5001–6000 in one round trip. SACK is negotiated in the handshake and is on by default in modern stacks.
+Cumulative ACKs can only describe the *first* gap. If several packets in one window are lost, the sender discovers them one round trip at a time. With cumulative ACKs alone, after multiple losses in one window the sender knows only the first gap. With SACK, the receiver says "ACK 1001; I also have 2001–5000 and 6001–7000", so the sender retransmits exactly 1001–2000 and 5001–6000 in one round trip. SACK is negotiated in the handshake and is on by default in modern stacks.
 
 ### Delayed ACKs
 

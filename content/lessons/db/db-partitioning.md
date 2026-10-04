@@ -33,12 +33,18 @@ Partitioning happens **inside one database server**. Spreading partitions across
 
 ## Why It Exists
 
-Very large tables (billions of rows) create operational problems more than query problems:
+**The problem.** Very large tables (billions of rows) create operational problems more than query problems:
 
 - Deleting old data with `DELETE` is slow, generates massive WAL and bloat; **dropping a partition** is instant.
 - Vacuum, index rebuilds and backups operate on the whole table; per-partition maintenance is incremental.
 - Recent data is hot and old data cold; partitions let the hot part (and its indexes) stay small and cached.
 - Queries constrained by the partition key touch only relevant partitions.
+
+**The idea.** If data naturally falls into chunks (months, regions), store each chunk as its own table behind one name. Operations on a chunk — drop, vacuum, cache — then cost the size of the chunk, not the size of the whole.
+
+:::callout[That's all it is]{type=insight}
+Partitioning is one table stored as many smaller tables chosen by a column's value. Queries that filter on that column skip the irrelevant pieces, and old data is removed by dropping a piece instead of deleting rows.
+:::
 
 ## How It Works
 

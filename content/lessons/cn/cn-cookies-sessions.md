@@ -29,7 +29,13 @@ HTTP forgets you after every request. A **cookie** is a **wristband** the server
 
 ## Why It Exists
 
-Logins, carts and preferences need continuity across stateless HTTP requests.
+**The problem.** Logins, carts and preferences need continuity across stateless HTTP requests. HTTP's statelessness is what lets any server handle any request — but it also means the server can't tell that request #2 came from the same person who logged in with request #1.
+
+**The idea.** Since the server can't remember the client, make the client carry something on every request that identifies it. The browser stores it and attaches it automatically (cookies). The only real design question is *what* to carry: a pointer to state the server keeps (session ID), or the state itself, signed so it can't be forged (token).
+
+:::callout[That's all it is]{type=insight}
+The server gives the browser a value; the browser sends it back on every request. Either it's a random ID the server looks up, or it's signed data the server just verifies. Cookie attributes control when the browser is allowed to send it.
+:::
 
 ## How It Works
 
@@ -50,6 +56,8 @@ Set-Cookie: sid=5c1f...9e; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=86400
 | `__Host-` prefix | Forces Secure, Path=/, no Domain | Hardened session cookies |
 
 ### Server-side sessions vs self-contained tokens
+
+The trade-off is "where does the state live?" — on the server (easy to change and revoke, but needs a lookup) or inside the token (no lookup, but hard to take back once issued).
 
 | | Server-side session (opaque ID) | Self-contained token (JWT) |
 |---|---|---|

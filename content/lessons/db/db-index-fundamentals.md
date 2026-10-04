@@ -36,7 +36,15 @@ Two consequences shape everything:
 
 ## Why It Exists
 
-Without an index, `WHERE email = 'a@x.com'` on 100 million rows reads every page — seconds to minutes. With a B+ tree index, it's ~3–4 page reads, microseconds to a millisecond ([B+ Trees](lesson:db-btree)). Indexes are the single biggest lever on read performance.
+**The problem.** Tables are stored in no useful order (heaps) or in one order only (clustered). Without an index, `WHERE email = 'a@x.com'` on 100 million rows reads every page — seconds to minutes.
+
+**The idea.** Keep a second copy of just the column you search by, *sorted*, with a pointer back to each row. Sorted data can be searched by jumping instead of scanning. With a B+ tree index, it's ~3–4 page reads, microseconds to a millisecond ([B+ Trees](lesson:db-btree)). Indexes are the single biggest lever on read performance.
+
+**The bill.** That second copy must be updated on every write and kept in memory — and following its pointers to scattered rows is only cheap when there are few of them.
+
+:::callout[That's all it is]{type=insight}
+An index is a sorted copy of some columns with pointers to the rows. It helps when the query can jump to a spot in that sorted order and read a small range; it costs extra work on every write.
+:::
 
 ## How It Works
 
@@ -76,7 +84,7 @@ Step 2 is why an index isn't always a win.
 
 ### Why the planner sometimes ignores your index
 
-If a predicate matches many rows, following thousands of pointers to random table pages costs more than reading the whole table sequentially. Rough rule: when a query needs more than a few percent of a table's rows (the exact threshold depends on row width, caching and storage), a **sequential scan** is cheaper.
+The index makes *finding* matches cheap, but each match still needs its row fetched — and each fetch can be a random page read. If a predicate matches many rows, following thousands of pointers to random table pages costs more than reading the whole table sequentially. Rough rule: when a query needs more than a few percent of a table's rows (the exact threshold depends on row width, caching and storage), a **sequential scan** is cheaper.
 
 | Query on 10M-row `orders` | Rows matched | Likely plan |
 |---|---|---|

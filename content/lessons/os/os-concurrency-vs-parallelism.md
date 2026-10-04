@@ -29,10 +29,16 @@ You can have concurrency without parallelism (one core interleaving threads, a N
 
 ## Why It Exists
 
-Two different pressures:
+**The problem.** The two words get mixed up because they're answers to two *different* problems that look alike from far away. Two different pressures:
 
 1. **Waiting is everywhere** — for disks, networks, users. Concurrency lets a program make progress on other tasks while one waits, even on a single core. This is why servers handle thousands of clients.
 2. **Single cores stopped getting much faster** (~2005, the end of Dennard scaling). Performance growth moved to more cores. Parallelism is the only way a single job can use them.
+
+The first is about *not sitting idle while waiting*; the second is about *doing more work per second*. Confusing them leads to the classic mistakes: adding cores to a program that's just waiting on a database (no help), or adding threads to a CPU-bound job on 4 cores (no help past 4).
+
+:::callout[That's all it is]{type=insight}
+Concurrency: many tasks started, taking turns — useful when tasks wait. Parallelism: many tasks running at the same instant — useful when tasks compute. One is how you organise the work; the other is how much hardware runs it.
+:::
 
 ## How It Works
 
@@ -47,7 +53,7 @@ A useful sizing heuristic for a pool doing mixed work: `threads ≈ cores × (1 
 
 ### Amdahl's Law — the ceiling on speedup
 
-If a fraction **p** of a job can be parallelized and **(1 − p)** is inherently serial:
+The intuition before the formula: adding workers only speeds up the part of the job that *can* be split. The part that can't is done by one worker regardless, so it eventually becomes the whole wait. If a fraction **p** of a job can be parallelized and **(1 − p)** is inherently serial:
 
 ```text
 S(N) = 1 / ((1 − p) + p / N)          and as N → ∞,  S → 1 / (1 − p)

@@ -42,7 +42,13 @@ Everything else follows: queries must supply the partition key; you design **one
 
 ## Why It Exists
 
-Some workloads are huge and write-heavy with simple, known read patterns: messaging, activity feeds, IoT telemetry, metrics, fraud signals. They need linear horizontal scale, multi-datacenter availability, no single leader to fail over, and predictable latency — at the cost of joins, ad-hoc queries and (by default) strong consistency. Bigtable (2006) and Dynamo (2007) inspired Cassandra (2008), which combined Bigtable's data model with Dynamo's leaderless distribution.
+**The problem.** Some workloads are huge and write-heavy with simple, known read patterns: messaging, activity feeds, IoT telemetry, metrics, fraud signals. They need linear horizontal scale, multi-datacenter availability, no single leader to fail over, and predictable latency — at the cost of joins, ad-hoc queries and (by default) strong consistency. Bigtable (2006) and Dynamo (2007) inspired Cassandra (2008), which combined Bigtable's data model with Dynamo's leaderless distribution.
+
+**The idea.** Make the key do two jobs: one part chooses *which machines* hold the data (the partition key), and the rest decides *the sort order inside* (clustering columns). If every query names a partition and reads a sorted slice of it, every query is one sequential read on a few machines — no matter how big the cluster grows.
+
+:::callout[That's all it is]{type=insight}
+A wide-column table is a giant sorted map split across machines by partition key. Design one table per query so each query reads one partition's sorted slice; writes are cheap appends; consistency is chosen per query by how many replicas must answer.
+:::
 
 ## How It Works
 
@@ -81,7 +87,7 @@ Sending a message writes to both tables (a *logged batch* can make multi-table w
 
 ### Bounding partition size
 
-A partition lives on RF nodes and is read/compacted as a unit. Unbounded partitions (all messages of a conversation forever, all readings of a sensor) grow to gigabytes → slow reads, compaction pain, hot nodes. **Time bucketing** — adding `day` or `month` to the partition key — caps them; queries spanning buckets read several partitions.
+The design's weak spot: everything for one partition key lives together forever, so a partition can grow without limit. A partition lives on RF nodes and is read/compacted as a unit. Unbounded partitions (all messages of a conversation forever, all readings of a sensor) grow to gigabytes → slow reads, compaction pain, hot nodes. **Time bucketing** — adding `day` or `month` to the partition key — caps them; queries spanning buckets read several partitions.
 
 ### Tunable consistency
 

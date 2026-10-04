@@ -29,7 +29,17 @@ Routing is **asking for directions at every intersection** — no one gives you 
 
 ## Why It Exists
 
-No single entity knows the whole internet topology, and it changes constantly (links fail, networks appear). Distributed, hop-by-hop forwarding with independently maintained tables lets the network scale and route around failures.
+**The problem.** A packet must cross dozens of independently owned networks to reach its destination. No single entity knows the whole internet topology, and it changes constantly (links fail, networks appear).
+
+**Without it.** A central planner computing every route would be a single point of failure and could never keep up with millions of changes.
+
+**The idea.** Nobody needs the whole route. Each router only needs to answer "which neighbor is one step closer?" for each destination prefix. If every router answers that locally, packets reach their destinations anyway. Distributed, hop-by-hop forwarding with independently maintained tables lets the network scale and route around failures.
+
+**Two separate jobs.** Using the table (look up each packet — must be nanoseconds fast) is different from *building* it (talk to neighbors, compute paths — can take seconds). That's the data plane / control plane split.
+
+:::callout[That's all it is]{type=insight}
+Each router looks up the destination in its table, picks the most specific matching prefix, and sends the packet to that next hop. Routing protocols are just the way routers fill in those tables by talking to each other.
+:::
 
 ## How It Works
 
@@ -48,6 +58,8 @@ $ ip route get 93.184.215.14
 - Everything else goes to the default gateway.
 
 ### Longest-prefix match on a router
+
+Because prefixes can overlap (a /8 contains a /16 which contains a /24), one address can match several entries. The rule is "most specific wins" — it lets a general route and an exception to it coexist.
 
 | Prefix | Next hop | Interface |
 |---|---|---|
@@ -72,6 +84,8 @@ $ ip route get 93.184.215.14
 ::viz{id=routing}
 
 ### Where routes come from (control plane)
+
+Typing every route by hand works for 5 routers, not 5,000 — and hand-typed routes don't react when a link breaks. So routers tell each other what they can reach, and compute routes automatically.
 
 | Source | How | Used where |
 |---|---|---|

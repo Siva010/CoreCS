@@ -50,7 +50,15 @@ Tools:
 
 ## Why It Exists
 
-Real data has gaps: a customer without a phone, an employee without a manager, an order not yet shipped. Codd introduced NULL so that missing information wouldn't be encoded as fake values like `0` or `'N/A'` that silently corrupt averages and comparisons. The cost is three-valued logic, which surprises nearly everyone.
+**The problem.** Real data has gaps: a customer without a phone, an employee without a manager, an order not yet shipped.
+
+**Without it.** People invent placeholder values — `0`, `''`, `'N/A'`, `1900-01-01`. Then `AVG(salary)` counts the zeros, two "unknown" phones compare as equal, and reports go quietly wrong.
+
+**The idea.** Codd introduced NULL so that missing information wouldn't be encoded as fake values like `0` or `'N/A'` that silently corrupt averages and comparisons. Once "unknown" is a real value, logic has to be honest about it: comparing with something unknown gives an unknown answer. The cost is three-valued logic, which surprises nearly everyone.
+
+:::callout[That's all it is]{type=insight}
+NULL means "I don't know". Anything compared with "I don't know" is also "I don't know", and WHERE only keeps rows that are definitely true. Every NULL surprise follows from those two sentences.
+:::
 
 ## How It Works
 
@@ -79,6 +87,8 @@ SELECT count(*) FROM employees;                             -- 100 — five rows
 Rows with NULL salary evaluate to UNKNOWN in both queries.
 
 ### The NOT IN trap
+
+The most expensive consequence of three-valued logic in real code:
 
 ```sql
 -- Customers who never placed an order?

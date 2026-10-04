@@ -30,7 +30,15 @@ Algorithms are evaluated on a **reference string** (sequence of page numbers acc
 
 ## Why It Exists
 
-Demand paging lets programs use more memory than exists, but only if evicting pages rarely hurts. A bad choice (evicting a page that's needed right away) doubles the I/O. Page-fault costs are huge ([Page Faults](lesson:os-page-faults)), so replacement quality directly determines performance under memory pressure.
+**The problem.** Demand paging lets programs use more memory than exists, but only if evicting pages rarely hurts. When RAM is full and a new page must come in, an old one must go out.
+
+**Without a good policy.** A bad choice (evicting a page that's needed right away) doubles the I/O. A bad choice (evicting a page that's needed right away) doubles the I/O. Page-fault costs are huge ([Page Faults](lesson:os-page-faults)), so replacement quality directly determines performance under memory pressure.
+
+**The idea.** The perfect choice (evict the page needed furthest in the future) needs the future. The past is the next-best predictor: what hasn't been used for a while probably won't be used soon. Every practical algorithm is a cheaper and cheaper approximation of that guess.
+
+:::callout[That's all it is]{type=insight}
+When memory is full, throw out whatever you haven't used in the longest time. LRU is that rule; Clock is a cheap way of guessing it with one bit per page.
+:::
 
 ## How It Works
 
@@ -81,7 +89,7 @@ Exact LRU must update an ordering on **every memory access** — billions per se
 
 ### Clock (second chance)
 
-Arrange frames in a circle with a "hand":
+The goal: get close to LRU using only the one bit the hardware gives us for free. Arrange frames in a circle with a "hand":
 
 1. On eviction, look at the page under the hand.
 2. If its reference bit is **1**, clear it (give a second chance) and advance.

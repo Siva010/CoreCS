@@ -29,7 +29,13 @@ A **column store** keeps each column's values together. That query reads just `o
 
 ## Why It Exists
 
-Analytical workloads are dominated by **scanning and aggregating** a few columns of huge tables. I/O and memory bandwidth are the bottlenecks, so reading less data — and processing it in CPU-friendly batches — is the whole game.
+**The problem.** Analytical workloads are dominated by **scanning and aggregating** a few columns of huge tables. In a row store, reading two columns means reading all thirty, because they share pages.
+
+**The idea.** I/O and memory bandwidth are the bottlenecks, so reading less data — and processing it in CPU-friendly batches — is the whole game. Flip the layout: store each column on its own, so a query reads only the columns it names. A side effect turns out to be just as valuable — a column of similar values compresses enormously well.
+
+:::callout[That's all it is]{type=insight}
+Store each column separately instead of each row together. Analytical queries then read only the columns they need, those columns compress 5–20×, and the CPU can process them in tight batches. Single-row writes become the expensive part.
+:::
 
 ## How It Works
 
@@ -71,7 +77,7 @@ Each chunk stores min/max per column (**zone maps** / min-max indexes). A filter
 :::depth{level=advanced}
 ### Writes are the weak spot
 
-Inserting one row means appending to 30 separate column files; updating one value means rewriting a compressed block. Column stores therefore:
+The layout that makes scans cheap makes small writes expensive — every row is now spread across many files. Inserting one row means appending to 30 separate column files; updating one value means rewriting a compressed block. Column stores therefore:
 
 - Batch writes: buffer incoming rows (a row-oriented delta store or in-memory part) and periodically convert them into compressed column segments — structurally an LSM tree ([LSM Trees](lesson:db-lsm-trees)). ClickHouse "parts" are merged in the background exactly like SSTables.
 - Implement updates/deletes as delete markers (bitmaps) plus rewrites during merges.

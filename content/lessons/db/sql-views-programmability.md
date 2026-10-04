@@ -41,9 +41,15 @@ REFRESH MATERIALIZED VIEW CONCURRENTLY monthly_revenue;  -- needs a unique index
 
 ## Why It Exists
 
+Each object solves a different problem that appears once many people and programs share one database:
+
 - **Views**: encapsulation and security — give an analyst or service a stable interface (`active_customers`) or a restricted subset of columns/rows, while the underlying tables evolve.
 - **Materialized views**: expensive aggregations queried often but tolerable when minutes stale (dashboards).
 - **Database-side code**: keep invariants next to the data (audit logs, derived columns), or cut round trips for multi-statement operations.
+
+:::callout[That's all it is]{type=insight}
+A view is a named query, re-run on every use. A materialized view is a stored result, refreshed when you say. Functions run your code inside the database; triggers run it automatically on every write.
+:::
 
 ## How It Works
 

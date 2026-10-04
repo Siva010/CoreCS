@@ -30,13 +30,19 @@ Every RAID level is a mix of these, trading **capacity**, **performance**, and *
 
 ## Why It Exists
 
-Individual disks are slow and fail regularly (annualized failure rates of ~1–2% for HDDs). RAID lets a server keep running through disk failures and aggregate the throughput of many drives.
+**The problem.** Individual disks are slow and fail regularly (annualized failure rates of ~1–2% for HDDs). With 100 disks, you lose one or two a year — and losing a disk without redundancy means losing data.
+
+**The idea.** One disk is a single point of failure and a single lane of traffic. Several disks can fix both: spread data across them (more lanes), and store enough extra information that a missing disk can be rebuilt (survive a failure). RAID lets a server keep running through disk failures and aggregate the throughput of many drives.
+
+:::callout[That's all it is]{type=insight}
+Spread blocks across disks for speed; keep a copy (mirror) or a XOR (parity) so a dead disk can be recomputed. Each RAID level is just a different mix of those, paying for safety with capacity or write speed.
+:::
 
 ## How It Works
 
 ### Parity with XOR
 
-For data blocks D1, D2, D3: `P = D1 ⊕ D2 ⊕ D3`. If D2 is lost: `D2 = D1 ⊕ D3 ⊕ P`. XOR is its own inverse, so any single missing block (data or parity) can be reconstructed.
+Mirroring survives a failure by storing everything twice — expensive. Parity asks: what's the *least* extra data that lets me rebuild any one missing block? One XOR of all the blocks is enough. For data blocks D1, D2, D3: `P = D1 ⊕ D2 ⊕ D3`. If D2 is lost: `D2 = D1 ⊕ D3 ⊕ P`. XOR is its own inverse, so any single missing block (data or parity) can be reconstructed.
 
 ### Levels compared (n disks of equal size)
 
@@ -50,7 +56,7 @@ For data blocks D1, D2, D3: `P = D1 ⊕ D2 ⊕ D3`. If D2 is lost: `D2 = D1 ⊕ 
 
 ### The RAID-5 small-write penalty
 
-Updating one data block requires keeping parity correct:
+Parity's cheap capacity comes with a bill on writes: the parity depends on every block in the stripe, so changing one block means updating the parity too. Updating one data block requires keeping parity correct:
 
 1. Read old data block.
 2. Read old parity block.

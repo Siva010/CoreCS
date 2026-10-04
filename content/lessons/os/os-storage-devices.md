@@ -32,7 +32,18 @@ tags: [hdd, ssd, nvme, seek time, rotational latency, iops, throughput, write am
 
 ## Why It Exists
 
-Storage is where data survives power loss. Its performance characteristics — mechanical for HDDs, erase-before-write for flash — shape filesystems, databases (B-trees vs LSM trees), and OS I/O scheduling. You can't reason about database performance without them.
+**The problem.** RAM forgets everything when power goes off. Storage is where data survives power loss — but the technologies that can remember without power are physically awkward.
+
+**Why the details matter.** Each technology has one physical quirk, and that quirk leaks all the way up the stack:
+
+- HDDs have a **moving arm**: jumping around is slow, streaming is fast → sequential I/O, elevator scheduling, B-trees with big nodes.
+- Flash **can't overwrite in place** and erases in big blocks → the FTL, garbage collection, write amplification, LSM trees.
+
+Its performance characteristics — mechanical for HDDs, erase-before-write for flash — shape filesystems, databases (B-trees vs LSM trees), and OS I/O scheduling. You can't reason about database performance without them.
+
+:::callout[That's all it is]{type=insight}
+Disks are slow because an arm has to move; SSDs are odd because flash can't be overwritten, only erased in big chunks. Almost every storage design decision is working around one of those two facts.
+:::
 
 ## How It Works
 
@@ -51,6 +62,8 @@ access time = seek + rotational latency + transfer
 Sequential read: after one seek, stream at 150 MB/s → 1 GB in ~7 s. Random 4 KB reads of the same 1 GB (262,144 reads × 8.2 ms): **~36 minutes**. That 300× gap is why HDD-era databases obsessed over sequential I/O.
 
 ### SSD internals
+
+Every piece of SSD firmware follows from one physical rule: *a flash page can be written once, then must be erased — and erasing works only on large blocks.* So updates can't happen in place; they must be redirected somewhere fresh, and someone has to clean up later.
 
 - Flash is organized in **pages** (4–16 KB, the unit of read/write) grouped into **erase blocks** (hundreds of pages, several MB — the unit of erase).
 - Pages can't be overwritten in place: an update writes the new data to a fresh page and marks the old one **stale**. The FTL remaps the logical address.
@@ -74,7 +87,7 @@ NVMe SSDs attach via PCIe with up to 64K queues × 64K commands each, designed f
 
 ### Disk scheduling algorithms (for HDDs)
 
-Given a queue of cylinder requests, the order matters because seeks dominate. Head at cylinder **53**, queue: **98, 183, 37, 122, 14, 124, 65, 67** (cylinders 0–199):
+On an HDD, the expensive part of a request is moving the arm, not reading the data. So if several requests are waiting, serving them in a clever order can save most of the travel. Given a queue of cylinder requests, the order matters because seeks dominate. Head at cylinder **53**, queue: **98, 183, 37, 122, 14, 124, 65, 67** (cylinders 0–199):
 
 | Algorithm | Order | Total head movement |
 |---|---|---|

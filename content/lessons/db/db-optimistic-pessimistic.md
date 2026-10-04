@@ -33,7 +33,13 @@ It's the same choice as a mutex vs a compare-and-swap loop in concurrent program
 
 ## Why It Exists
 
-Many updates are **read → think → write**, where "think" happens in application code or even in a human's browser tab for minutes. Holding a database lock across a user's editing session is impossible; holding one across a fast in-request computation is fine. The two strategies fit those two situations.
+**The problem.** Many updates are **read → think → write**, where "think" happens in application code or even in a human's browser tab for minutes. Holding a database lock across a user's editing session is impossible; holding one across a fast in-request computation is fine. The two strategies fit those two situations.
+
+**The underlying trade.** Locking pays a cost *every time* (bookkeeping and waiting) to avoid conflicts. Checking pays nothing up front and pays only when a conflict actually happens (redo the work). Which is cheaper depends on how often conflicts really happen.
+
+:::callout[That's all it is]{type=insight}
+Pessimistic: lock the row first, so others wait. Optimistic: remember the version you read and update only if it's unchanged; if it changed, retry. Pick by how often conflicts happen and how long the "think" step takes.
+:::
 
 ## How It Works
 

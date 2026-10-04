@@ -29,11 +29,19 @@ Every process gets a **private map of a huge imaginary city** — its virtual ad
 
 ## Why It Exists
 
-Before virtual memory, programs used physical addresses directly: they had to be loaded at specific locations, a bug could overwrite another program or the OS, and a program couldn't be larger than physical RAM. Virtual address spaces provide:
+**The problem.** RAM is one shared array of bytes. If every program uses real RAM addresses, every program has to know where the others live.
+
+**Without it.** Before virtual memory, programs used physical addresses directly: they had to be loaded at specific locations, a bug could overwrite another program or the OS, and a program couldn't be larger than physical RAM. Virtual address spaces provide:
 
 1. **Isolation** — a process can't even *name* another process's memory.
 2. **Simplicity** — every program sees the same clean layout, starting at fixed addresses; linkers and compilers can assume it.
 3. **Flexibility** — the OS can place pages anywhere in RAM, share them (libraries), or not load them at all (demand paging), and give processes more virtual memory than physical RAM.
+
+**The idea.** Add one level of indirection. Programs use *made-up* addresses; hardware translates each one to a real address using a table the OS controls. Because the program never sees real addresses, it can't reach memory that isn't in its table — and the OS can rearrange real memory behind its back.
+
+:::callout[That's all it is]{type=insight}
+Each process gets its own private numbering of memory, and the hardware looks up every address in a per-process table to find the real location. Isolation, a tidy layout and "more memory than RAM" all come from that lookup.
+:::
 
 ## How It Works
 
@@ -80,7 +88,7 @@ In Java/Python/Go: local primitive variables and references live on the stack (o
 
 ### How the stack works
 
-Each function call pushes a **stack frame**: return address, saved registers, the caller's frame pointer, local variables. Returning pops it by moving the stack pointer — allocation and deallocation are just arithmetic on one register, which is why stack memory is extremely fast.
+Why a separate stack at all: function calls nest and return in strict last-in-first-out order, so their memory can be managed with a single pointer — no searching, no free lists. Each function call pushes a **stack frame**: return address, saved registers, the caller's frame pointer, local variables. Returning pops it by moving the stack pointer — allocation and deallocation are just arithmetic on one register, which is why stack memory is extremely fast.
 
 ```text
 higher addresses
@@ -99,7 +107,7 @@ Every thread has its own stack; the stacks of all threads live in the same addre
 
 ### Mappings, not memory
 
-An address space is a list of **mappings** (Linux: VMAs — virtual memory areas), each with a range, permissions (r/w/x), and a backing: a file (code, libraries, mmap'd files) or anonymous memory (heap, stack). You can see them:
+The address space is mostly empty — 128 TiB of numbers, a few hundred MB used. Storing it as "a table entry per address" would be absurd, so the kernel stores *descriptions of ranges* instead. An address space is a list of **mappings** (Linux: VMAs — virtual memory areas), each with a range, permissions (r/w/x), and a backing: a file (code, libraries, mmap'd files) or anonymous memory (heap, stack). You can see them:
 
 ```bash
 $ cat /proc/self/maps | head -5

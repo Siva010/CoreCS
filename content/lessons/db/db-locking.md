@@ -40,7 +40,15 @@ Compatibility:
 
 ## Why It Exists
 
-Isolation requires preventing conflicting operations from interleaving badly ([Anomalies](lesson:db-anomalies)). Locks are the pessimistic way: make the second transaction **wait** until the first finishes, turning a potential anomaly into a delay.
+**The problem.** Isolation requires preventing conflicting operations from interleaving badly ([Anomalies](lesson:db-anomalies)).
+
+**The idea.** Borrow the oldest tool in concurrency: a mutex. Before touching a piece of data, take its lock; anyone who wants a conflicting lock waits. Locks are the pessimistic way: make the second transaction **wait** until the first finishes, turning a potential anomaly into a delay.
+
+**Why hold locks until commit.** If a transaction released a row's lock mid-way, another could change the row and the first might then read or overwrite a different value than it decided on. Holding locks to the end (strict two-phase locking) is what makes the interleaving equivalent to a serial order.
+
+:::callout[That's all it is]{type=insight}
+Writers lock the rows they change until commit; readers can share, writers can't. Conflicts wait in a queue, and when two transactions wait on each other the database kills one. Everything else is about what exactly gets locked (rows, ranges, tables).
+:::
 
 ## How It Works
 
@@ -89,7 +97,7 @@ Every statement takes a table-level lock of some mode: `SELECT` takes ACCESS SHA
 
 ### Gap and next-key locks (InnoDB)
 
-To prevent phantoms for locking reads and writes, InnoDB locks not only index records but the **gaps** between them. A next-key lock = record lock + the gap before it.
+Locking rows can't stop phantoms — the problem row doesn't exist yet, so there's nothing to lock. The fix is to lock the *space* where it would go. To prevent phantoms for locking reads and writes, InnoDB locks not only index records but the **gaps** between them. A next-key lock = record lock + the gap before it.
 
 ```text
 index on age: 20, 30, 40

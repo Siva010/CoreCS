@@ -34,7 +34,15 @@ Consistent hashing puts **both servers and keys on the same circle** of hash val
 
 ## Why It Exists
 
-Distributed caches (memcached clusters), Dynamo-style databases (Cassandra, Riak, DynamoDB's partitioning heritage), CDNs and load balancers with sticky routing all need to map keys to a changing set of nodes. Every node change under `mod N` would invalidate most caches or move most data; consistent hashing makes membership changes cheap and incremental.
+**The problem.** Distributed caches (memcached clusters), Dynamo-style databases (Cassandra, Riak, DynamoDB's partitioning heritage), CDNs and load balancers with sticky routing all need to map keys to a changing set of nodes. Every node change under `mod N` would invalidate most caches or move most data; consistent hashing makes membership changes cheap and incremental.
+
+**Why `mod N` breaks.** The answer depends on N itself, so changing N changes the answer for almost every key.
+
+**The idea.** Make each key's owner depend on *which nodes are nearby* rather than *how many nodes there are*. Put keys and nodes on the same circle; each key goes to the next node clockwise. Adding or removing a node only affects the keys in its own stretch of circle.
+
+:::callout[That's all it is]{type=insight}
+Hash nodes and keys onto a circle; each key belongs to the next node clockwise. Changing the node set only moves the keys next to the change (~1/N of them). Virtual nodes give each server many small slices so load stays even.
+:::
 
 ## How It Works
 
@@ -55,7 +63,7 @@ Distributed caches (memcached clusters), Dynamo-style databases (Cassandra, Riak
 
 ### Why virtual nodes
 
-With one point per node, arc lengths are random and uneven — one node may own 3× another's share; and when a node leaves, its entire load lands on a single neighbour. With many virtual points per node:
+The basic ring has a fairness problem: random positions give random-sized arcs. With one point per node, arc lengths are random and uneven — one node may own 3× another's share; and when a node leaves, its entire load lands on a single neighbour. With many virtual points per node:
 
 - each node owns many small arcs → load evens out (standard deviation shrinks roughly with 1/√vnodes);
 - a departing node's arcs are spread over **many** other nodes;

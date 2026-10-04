@@ -34,7 +34,13 @@ Two rules keep you honest:
 
 ## Why It Exists
 
-Modern requests cross many components owned by different teams. Without a method, each team proves its component is "fine" while users wait. A shared, layered approach — following the request — finds the actual bottleneck quickly and avoids fixes that move the problem elsewhere.
+**The problem.** Modern requests cross many components owned by different teams. Without a method, each team proves its component is "fine" while users wait. A shared, layered approach — following the request — finds the actual bottleneck quickly and avoids fixes that move the problem elsewhere.
+
+**The idea.** Latency is additive: total time is the sum of the times of the steps. So you never need to understand the whole system at once — measure the split, take the biggest piece, and split *it* again, until what's left is one mechanism you can name and fix.
+
+:::callout[That's all it is]{type=insight}
+Measure first, then binary-search the request path: split the time by layer, zoom into the biggest part, repeat until you reach a named mechanism. Fix it, then check the latency distribution actually moved.
+:::
 
 ## How It Works
 

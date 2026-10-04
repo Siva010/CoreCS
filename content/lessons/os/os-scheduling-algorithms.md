@@ -39,7 +39,21 @@ Real schedulers ([next lesson](lesson:os-mlfq-real-schedulers)) combine these id
 
 ## Why It Exists
 
-Each algorithm optimizes a different metric from [Scheduling Fundamentals](lesson:os-scheduling-basics). Studying them separately exposes the trade-offs cleanly, and interviews test them with numericals because the computation reveals whether you understand preemption and waiting.
+**The problem.** The scheduler must pick "who next?", and different goals give different answers. Each algorithm optimizes a different metric from [Scheduling Fundamentals](lesson:os-scheduling-basics).
+
+**How each one was born from the previous one's flaw.** Read the algorithms as a chain of fixes rather than a list:
+
+1. **FCFS** is the obvious first answer — serve in order. Flaw: one long job makes every short job behind it wait (the convoy).
+2. **SJF** fixes the convoy by serving short jobs first. Flaw: a short job arriving *just after* a long one starts still waits for all of it.
+3. **SRTF** fixes that by allowing preemption. Flaw: long jobs can starve, and both SJF and SRTF need to know the future.
+4. **Round Robin** gives up on predicting and just takes turns. Flaw: worse average waiting, more switches — but nobody waits long for a first response.
+5. **Priority** lets humans say what matters. Flaw: starvation again — fixed by **aging**.
+
+Studying them separately exposes the trade-offs cleanly, and interviews test them with numericals because the computation reveals whether you understand preemption and waiting.
+
+:::callout[That's all it is]{type=insight}
+Each algorithm is one rule for "who next?": first to arrive, shortest, shortest remaining, take turns, or most important. Real schedulers mix these and guess job lengths from past behaviour.
+:::
 
 ## How It Works
 
@@ -135,7 +149,7 @@ Proof sketch (exchange argument): if a longer job runs immediately before a shor
 
 ### The catch: nobody knows burst lengths
 
-The OS can't see the future. It **predicts** the next CPU burst from past bursts with **exponential averaging**:
+SJF's optimality is useless if you can't run it. The OS can't see the future. It **predicts** the next CPU burst from past bursts with **exponential averaging**:
 
 ```text
 τ(n+1) = α · t(n) + (1 − α) · τ(n)        0 ≤ α ≤ 1
@@ -145,7 +159,7 @@ The OS can't see the future. It **predicts** the next CPU burst from past bursts
 
 ### Starvation and aging
 
-Under SJF/SRTF, a long job can wait indefinitely if short jobs keep arriving; under priority scheduling, low-priority jobs can starve. **Aging**: increase a waiting job's priority over time (e.g., +1 every 15 minutes in the classic example), so every job eventually becomes the highest priority. Modern schedulers achieve the same effect by tracking accumulated runtime (a job that has waited has used less CPU, so it's favored).
+Any rule that always favours one kind of job ("short", "important") has a dark side: the other kind may *never* be picked. Under SJF/SRTF, a long job can wait indefinitely if short jobs keep arriving; under priority scheduling, low-priority jobs can starve. **Aging**: increase a waiting job's priority over time (e.g., +1 every 15 minutes in the classic example), so every job eventually becomes the highest priority. Modern schedulers achieve the same effect by tracking accumulated runtime (a job that has waited has used less CPU, so it's favored).
 
 :::depth{level=advanced}
 ### Round Robin quantum math

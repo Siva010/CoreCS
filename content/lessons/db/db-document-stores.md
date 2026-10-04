@@ -31,7 +31,13 @@ The design question is always: **what goes inside the document (embed) and what 
 
 ## Why It Exists
 
-Object-oriented applications naturally hold aggregates (an order object with a list of items). Mapping them to normalized tables and back requires joins and ORMs; the document model stores them as the application sees them. Since a single-document write is atomic and a document lives on one shard, aggregates also shard cleanly by their id or owner.
+**The problem.** Object-oriented applications naturally hold aggregates (an order object with a list of items). Mapping them to normalized tables and back requires joins and ORMs; the document model stores them as the application sees them. Since a single-document write is atomic and a document lives on one shard, aggregates also shard cleanly by their id or owner.
+
+**The idea.** If the application always loads and saves an order together with its items, store them together — one read, one atomic write, no joins. The trade: data that's shared between aggregates must be copied or referenced, and queries across aggregates get harder.
+
+:::callout[That's all it is]{type=insight}
+A document store saves each "thing the app loads together" as one JSON document. Embed what belongs to the parent and is read with it; reference what's shared, big or changes on its own.
+:::
 
 ## How It Works
 

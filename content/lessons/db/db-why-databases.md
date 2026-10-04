@@ -29,7 +29,7 @@ The easiest way to understand every part of a DBMS is to start without one and w
 
 ## Why It Exists
 
-Imagine an online store keeping orders in `orders.csv`. Each new requirement breaks the file approach:
+**The problem.** Imagine an online store keeping orders in `orders.csv`. Each new requirement breaks the file approach:
 
 | Requirement | What goes wrong with plain files | DBMS mechanism that fixes it |
 |---|---|---|
@@ -44,6 +44,12 @@ Imagine an online store keeping orders in `orders.csv`. Each new requirement bre
 | Data grows beyond one disk / machine | Manual splitting | **Partitioning, replication** |
 
 Every row of that table is a lesson later in this track. A DBMS is the accumulated answer to these problems — solved once, carefully, instead of badly in every application.
+
+**The idea.** Stop letting every program touch the data file directly. Put *one* program in charge of the data, and make everyone else *ask* it. Because all reads and writes go through that one owner, it can index, lock, log and check constraints for everyone at once.
+
+:::callout[That's all it is]{type=insight}
+A database is the single program allowed to touch your data files. Everyone else sends it requests. Indexes, transactions, logs and constraints are the tricks it uses to answer fast, stay correct under concurrency, and survive crashes.
+:::
 
 ## How It Works
 

@@ -37,7 +37,15 @@ Terminology varies between textbooks ("trap" sometimes means any synchronous ker
 
 ## Why It Exists
 
-User programs must not access devices, other processes' memory or kernel data directly — yet they need I/O and services. Controlled entry points let the kernel validate every request. Hardware events must interrupt whatever is running so devices are serviced promptly and the scheduler can preempt tasks.
+**The problem.** User programs must not access devices, other processes' memory or kernel data directly — yet they need I/O and services. And separately, the kernel must regain control when something happens *outside* the program — a packet arrives, a timer fires — even if the program never asks.
+
+**Without it.** Either programs get full access to hardware (no protection at all), or they're sealed off with no way to do I/O (useless). And without hardware interrupts, the kernel would only run when a program happened to call it.
+
+**The idea.** Make the *only* ways into privileged mode go through doors the kernel installed in advance. Controlled entry points let the kernel validate every request. Hardware events must interrupt whatever is running so devices are serviced promptly and the scheduler can preempt tasks. Program asks → system call. Program trips → exception. World knocks → interrupt. Same door mechanism, three reasons to use it.
+
+:::callout[That's all it is]{type=insight}
+There are exactly three ways into the kernel — ask (syscall), stumble (exception), or get interrupted (device/timer) — and all three jump to an address the kernel chose. That one rule is what keeps user programs from taking over the machine.
+:::
 
 ## How It Works
 
@@ -58,7 +66,7 @@ ssize_t n = read(fd, buf, 4096);
 
 ### Interrupt handling: top half and bottom half
 
-When a NIC receives packets:
+The tension: an interrupt must be answered *immediately* (or the device's buffer overflows), but processing the data properly (running TCP) takes a while — and while one handler runs, other interrupts wait. The solution is to split the work in two. When a NIC receives packets:
 
 1. The device raises an interrupt; the CPU finishes the current instruction, saves minimal state, switches to kernel mode and jumps through the **IDT** (interrupt descriptor table) to the handler for that vector.
 2. **Top half (hard IRQ handler)**: runs with that interrupt line masked, must be **very fast** — acknowledge the device, grab minimal data, schedule deferred work.
@@ -79,7 +87,7 @@ Why split? While the top half runs, further interrupts on that line (sometimes a
 
 ### The vDSO: system calls without the kernel
 
-Some calls are frequent and read-only, like `clock_gettime()` and `gettimeofday()`. The kernel maps a small shared library, the **vDSO**, into every process, containing code and a data page the kernel keeps updated (current time, clock parameters). Calling `clock_gettime` then costs ~20 ns with no mode switch. That's why timing calls are cheap on Linux.
+If crossing into the kernel costs ~100 ns+, the cheapest syscall is one you never make. Some calls are frequent and read-only, like `clock_gettime()` and `gettimeofday()`. The kernel maps a small shared library, the **vDSO**, into every process, containing code and a data page the kernel keeps updated (current time, clock parameters). Calling `clock_gettime` then costs ~20 ns with no mode switch. That's why timing calls are cheap on Linux.
 
 :::depth{level=advanced}
 ### Cost of the boundary and ways around it

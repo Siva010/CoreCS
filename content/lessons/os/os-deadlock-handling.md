@@ -34,7 +34,13 @@ There are four attitudes toward deadlock, like four ways to handle traffic gridl
 
 ## Why It Exists
 
-Each strategy fits a different environment. Kernels and embedded systems can enforce lock ordering (prevention). Systems with known maximum demands (some batch or real-time systems) can use avoidance. Databases can't predict which rows transactions will lock but can abort and retry transactions, so they detect and recover. Desktop OSes can't abort arbitrary application threads safely and deadlocks are rare, so they ignore it.
+**The problem.** Deadlock can't be fixed after the fact by the stuck threads themselves — they're all waiting. Someone has to decide, ahead of time or after the fact, how it gets handled.
+
+**Why four answers instead of one.** Each strategy fits a different environment. The deciding question is always: *what do you know in advance, and what can you safely undo?* Kernels and embedded systems can enforce lock ordering (prevention). Systems with known maximum demands (some batch or real-time systems) can use avoidance. Databases can't predict which rows transactions will lock but can abort and retry transactions, so they detect and recover. Desktop OSes can't abort arbitrary application threads safely and deadlocks are rare, so they ignore it.
+
+:::callout[That's all it is]{type=insight}
+Make deadlock impossible by design (prevention), refuse requests that could lead to it (avoidance), or let it happen and break it by killing someone (detection). Which one you pick depends on whether you can know demands in advance and whether you can undo work.
+:::
 
 ## How It Works
 
@@ -51,7 +57,7 @@ Lock ordering is by far the most common technique in real code: order locks by a
 
 ### Avoidance: the Banker's algorithm
 
-Data structures for n processes and m resource types:
+The idea comes from a cautious banker: never lend money if, in the worst case (every customer asks for their full credit line), you couldn't satisfy them in *some* order. Applied to resources: grant a request only if, afterwards, there's still an order in which every process could finish. Data structures for n processes and m resource types:
 
 - `Available[m]` — free instances of each type.
 - `Max[n][m]` — maximum demand of each process.
@@ -108,7 +114,7 @@ Safety check, Work = (3,3,2):
 
 ### Detection
 
-For single-instance resources: maintain a **wait-for graph**, detect cycles with DFS in O(n + e).
+When you can't predict demands (databases can't know which rows a transaction will touch), stop trying to prevent and instead *notice*: look for a cycle in "who waits for whom". For single-instance resources: maintain a **wait-for graph**, detect cycles with DFS in O(n + e).
 
 For multi-instance resources: a variant of the safety algorithm using **current Request** instead of Need:
 
@@ -123,6 +129,8 @@ deadlocked processes = those with Finish[i] == false at the end
 **When to run detection?** On every blocked request (immediate but costly), periodically, or when CPU utilization drops / throughput stalls. PostgreSQL checks only after a lock wait exceeds `deadlock_timeout` (default 1 s) — most waits resolve on their own, so it avoids running the detector constantly.
 
 ### Recovery
+
+Once a cycle exists, waiting won't fix it — someone has to give something up. The only questions are who, and how much work is lost.
 
 - **Process/transaction termination**: abort all deadlocked processes (simple, expensive) or abort one at a time until the cycle breaks. Choose a **victim** by cost: least work done, fewest resources held, lowest priority, youngest transaction.
 - **Resource preemption / rollback**: take resources away and roll the victim back to a safe point (databases roll back the transaction).

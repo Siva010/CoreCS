@@ -59,11 +59,15 @@ export interface RoadmapDef {
   extras?: { title: string; body: string }[];
 }
 
-/** Canonical concept-page sections, in display order. */
+/**
+ * Canonical concept-page sections, in display order. The problem comes before
+ * the vocabulary: "Why It Exists" precedes "Definition" so a reader meets the
+ * problem a concept solves before the terms it introduces.
+ */
 export const SECTION_ORDER = [
   "mental-model",
-  "definition",
   "why-it-exists",
+  "definition",
   "how-it-works",
   "internal-mechanism",
   "example",
@@ -138,7 +142,7 @@ export type RevisionMode = "5" | "15" | "30" | "deep";
 
 export const REVISION_MODES: { id: RevisionMode; label: string; blurb: string }[] = [
   { id: "5", label: "5 min", blurb: "Only the essential mental model and the revision sheet." },
-  { id: "15", label: "15 min", blurb: "Key mechanisms, the definition and the diagrams." },
+  { id: "15", label: "15 min", blurb: "Why it exists, the key mechanisms, the definition and the diagrams." },
   { id: "30", label: "30 min", blurb: "Mechanisms, trade-offs, pitfalls and the interview questions." },
   { id: "deep", label: "Deep Dive", blurb: "The complete treatment, including advanced material." },
 ];
@@ -146,6 +150,7 @@ export const REVISION_MODES: { id: RevisionMode; label: string; blurb: string }[
 export const SECTION_MIN_MODE: Record<SectionKey, RevisionMode> = {
   "mental-model": "5",
   "quick-revision": "5",
+  "why-it-exists": "15",
   definition: "15",
   "how-it-works": "15",
   visualization: "15",
@@ -154,7 +159,6 @@ export const SECTION_MIN_MODE: Record<SectionKey, RevisionMode> = {
   "failure-modes": "30",
   misconceptions: "30",
   "interview-questions": "30",
-  "why-it-exists": "deep",
   example: "deep",
   performance: "deep",
   "in-production": "deep",

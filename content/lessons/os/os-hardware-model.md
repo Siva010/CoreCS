@@ -35,12 +35,20 @@ Almost every design decision in operating systems and databases — caching, pre
 
 ## Why It Exists
 
-Physics and economics. Fast memory (SRAM) is expensive, power-hungry and must sit physically close to the core; big memory (DRAM, flash) is cheap but farther away and slower. No single technology is fast, large, cheap and persistent at once, so systems combine several and exploit **locality**:
+**The problem.** We want memory that is fast, huge, cheap and survives power loss — all at once.
+
+**Without it.** No such memory exists. Physics and economics. Fast memory (SRAM) is expensive, power-hungry and must sit physically close to the core; big memory (DRAM, flash) is cheap but farther away and slower. No single technology is fast, large, cheap and persistent at once. Pick one and you get either a tiny machine (all SRAM) or a slow one (every access at DRAM or disk speed).
+
+**The idea.** Programs don't touch all their data evenly — at any moment they hammer a small part of it. So keep a *small fast copy* of the part in use, and most accesses never reach the slow level. That pattern has a name, **locality**, and it comes in two flavours:
 
 - **Temporal locality**: data used recently will likely be used again soon.
 - **Spatial locality**: data near recently used data will likely be used soon.
 
-Caches exploit both automatically. The OS exploits them with the page cache and read-ahead; databases with buffer pools and pages.
+**From idea to mechanism.** Caches exploit both automatically. The OS exploits them with the page cache and read-ahead; databases with buffer pools and pages. Same trick, applied at every level.
+
+:::callout[That's all it is]{type=insight}
+Fast memory is small; big memory is slow. Keep what you're using right now in the small fast place. Nearly every performance technique in this course is that sentence applied to a different pair of levels.
+:::
 
 ## How It Works
 
@@ -84,13 +92,13 @@ Key registers:
 
 ### Caches and cache lines
 
-Caches move data in fixed chunks called **cache lines** (typically 64 bytes). Reading one byte loads its whole line; the next 63 bytes are then almost free. That is why iterating an array sequentially is dramatically faster than chasing linked-list pointers scattered across memory.
+Why chunks instead of single bytes: tracking every byte separately would cost more bookkeeping than the data itself, and spatial locality says the neighbours will be wanted next anyway. Caches move data in fixed chunks called **cache lines** (typically 64 bytes). Reading one byte loads its whole line; the next 63 bytes are then almost free. That is why iterating an array sequentially is dramatically faster than chasing linked-list pointers scattered across memory.
 
-On multicore machines each core has private caches, and a **cache-coherence protocol** (e.g., MESI) keeps them consistent: when one core writes a line, other cores' copies are invalidated. This invisible traffic is behind **false sharing** and much of the cost of contended locks — see [CPU Caches & Contention](lesson:os-cpu-caches-contention).
+A new problem appears with several cores: each has its *own* copy of a line, so if core A writes and core B keeps reading its old copy, B sees a stale value. On multicore machines each core has private caches, and a **cache-coherence protocol** (e.g., MESI) keeps them consistent: when one core writes a line, other cores' copies are invalidated. This invisible traffic is behind **false sharing** and much of the cost of contended locks — see [CPU Caches & Contention](lesson:os-cpu-caches-contention).
 
 ### Devices, interrupts and DMA
 
-A device such as an NVMe SSD or a network card is a small computer of its own. The kernel's driver:
+The problem: devices are slow compared to the CPU (an SSD read is ~50,000 L1 hits). If the CPU had to babysit each request — moving every byte and repeatedly asking "done yet?" — it would spend its life waiting. So the work is split: the device does the slow part on its own, and only taps the CPU on the shoulder when it's finished. A device such as an NVMe SSD or a network card is a small computer of its own. The kernel's driver:
 
 1. writes a **command** into a queue in RAM (e.g., "read 8 blocks at LBA 1000 into physical address X") and pokes a device register ("doorbell");
 2. the device performs the work and uses **DMA** to copy data directly into RAM;
@@ -121,7 +129,7 @@ Without DMA the CPU would copy every byte itself (**programmed I/O**), wasting c
 
 ### Persistent storage is block-oriented
 
-Disks and SSDs read and write **blocks** (512 B–4 KB), not bytes. SSDs internally read in pages (~4–16 KB) and erase in much larger blocks, which leads to write amplification and garbage collection. That block orientation is why filesystems and databases think in **pages**. See [Storage Devices](lesson:os-storage-devices).
+Disks and SSDs read and write **blocks** (512 B–4 KB), not bytes — addressing and error-correcting every byte individually would waste most of the device on bookkeeping, and the expensive part of a disk access (seek, command overhead) is the same whether you want 1 byte or 4 KB. SSDs internally read in pages (~4–16 KB) and erase in much larger blocks, which leads to write amplification and garbage collection. That block orientation is why filesystems and databases think in **pages**. See [Storage Devices](lesson:os-storage-devices).
 
 :::depth{level=advanced}
 ### Endianness and word size

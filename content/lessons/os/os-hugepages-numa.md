@@ -29,8 +29,16 @@ tags: [huge pages, transparent huge pages, thp, hugetlbfs, numa, numa node, loca
 
 ## Why It Exists
 
+Both features exist because hardware scaled unevenly — one part grew much faster than another, and the old design stopped fitting.
+
 - Huge pages: memory sizes grew a million-fold while the TLB grew only modestly. With 4 KB pages, a 256 GB buffer pool needs 67 million PTEs and suffers constant TLB misses ([TLB](lesson:os-tlb)). One 2 MB entry replaces 512 small ones.
 - NUMA: a single shared memory bus can't feed dozens of cores; giving each socket its own memory controller scales bandwidth — at the price of non-uniform latency.
+
+**The ideas.** For huge pages: if the translation cache can't grow, make each translation cover more memory. For NUMA: if one memory path can't feed every core, give each group of cores its own — and then try to keep each thread near its data.
+
+:::callout[That's all it is]{type=insight}
+Huge pages: one TLB entry covers 2 MB instead of 4 KB, so the TLB covers 512× more memory. NUMA: each CPU socket has its own nearby RAM, and the other socket's RAM is slower — so where memory gets allocated matters.
+:::
 
 ## How It Works
 
@@ -67,7 +75,7 @@ Hence common advice: THP `madvise` mode (only regions that ask for it via `madvi
 local access ≈ 80–100 ns          remote access ≈ 1.3–2× slower, lower bandwidth
 ```
 
-Linux's default policy is **first touch**: a page is allocated on the node of the CPU that first writes it. Consequences:
+Since memory has a "home" node, the OS must decide where to put each page — and it can't know which thread will use it most. The simplest guess is "whoever touches it first". Linux's default policy is **first touch**: a page is allocated on the node of the CPU that first writes it. Consequences:
 
 - A thread that initializes a big array on node 0, then worker threads on node 1 process it → all remote accesses.
 - The scheduler may migrate threads away from their memory; **automatic NUMA balancing** tries to move pages or tasks back together (with some overhead from sampling faults).

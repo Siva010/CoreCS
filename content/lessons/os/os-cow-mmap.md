@@ -33,8 +33,16 @@ Both are the same trick: **manipulate page tables and let page faults do the wor
 
 ## Why It Exists
 
+**The problems.** Two expensive operations kept showing up: *copying a whole address space* (every `fork`) and *copying file data into user buffers* (every `read`). Both copy memory that is often never modified.
+
+**The idea.** Don't copy until you must — and let the MMU tell you when you must. Map the same physical pages in two places, mark them read-only, and let the first write fault into the kernel. Copy-on-write is that trick applied to `fork`; `mmap` is the same trick applied to files.
+
 - **COW** makes `fork` cheap, enables instant snapshots (Redis persistence, filesystem snapshots in Btrfs/ZFS), and lets `MAP_PRIVATE` mappings of executables share code pages while keeping writable data private.
 - **mmap** avoids copying file data between the page cache and user buffers (one copy, the page-cache page, is mapped directly), gives random access with pointer arithmetic, lets many processes share one copy of a file in memory, and loads programs and libraries lazily.
+
+:::callout[That's all it is]{type=insight}
+Point two page tables at the same RAM and mark it read-only; copy a page only when someone writes to it. `mmap` uses the same machinery to make a file's cached pages appear directly in your address space.
+:::
 
 ## How It Works
 
@@ -82,7 +90,7 @@ Each first touch of a page is a page fault: minor if the page is in the page cac
 
 ### Durability of mmap writes
 
-Writes to a `MAP_SHARED` mapping dirty page-cache pages; the kernel writes them back eventually (writeback thresholds, dirty expiry ~30 s by default). For durability you must call **`msync(MS_SYNC)`** (or `fsync` on the fd). Worse: you can't control *when* dirty pages are written — the kernel may flush a half-updated data structure before you're ready, which breaks crash-consistency protocols like WAL ordering ("the data page must not reach disk before its log record").
+The convenience of mmap — "the kernel moves the data for you" — becomes a liability when *you* need to decide when data reaches disk. Writes to a `MAP_SHARED` mapping dirty page-cache pages; the kernel writes them back eventually (writeback thresholds, dirty expiry ~30 s by default). For durability you must call **`msync(MS_SYNC)`** (or `fsync` on the fd). Worse: you can't control *when* dirty pages are written — the kernel may flush a half-updated data structure before you're ready, which breaks crash-consistency protocols like WAL ordering ("the data page must not reach disk before its log record").
 
 :::depth{level=advanced}
 ### Why many databases avoid mmap for their data

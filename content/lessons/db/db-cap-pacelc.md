@@ -34,7 +34,13 @@ That's CAP: during a partition, choose C or A. And PACELC adds the part that mat
 
 ## Why It Exists
 
-Engineers needed a way to reason about why distributed databases behave so differently under failure — why one returns errors during a network split while another keeps accepting writes that later conflict. CAP names the unavoidable choice; PACELC explains the performance differences you see even when nothing is broken.
+**The problem.** Engineers needed a way to reason about why distributed databases behave so differently under failure — why one returns errors during a network split while another keeps accepting writes that later conflict.
+
+**The root fact.** A replica can't know about a write it never received. If the network between two replicas breaks, the one without the write must either answer anyway (possibly wrong) or refuse (unavailable). There's no third option. CAP names the unavoidable choice; PACELC explains the performance differences you see even when nothing is broken — because confirming with other replicas costs round trips every single time.
+
+:::callout[That's all it is]{type=insight}
+CAP: when replicas can't talk, each request either waits/fails (consistent) or answers from local data (available). PACELC: even when they can talk, staying consistent costs a round trip, so you trade latency for consistency on every request.
+:::
 
 ## How It Works
 
@@ -72,7 +78,7 @@ Labels are simplifications; real systems mix behaviors per operation and failure
 
 ### PACELC in numbers
 
-A write acknowledged after a majority of three replicas in three availability zones pays one inter-zone round trip (~1–2 ms). Across three continents it pays ~100+ ms. Asynchronous replication pays nothing — but a region failure can lose acknowledged writes, and remote reads are stale. That latency-vs-consistency decision is made on **every request**, not just during rare partitions — which is why PACELC is the more practical lens.
+Partitions are rare; the latency of coordination is paid all the time. A write acknowledged after a majority of three replicas in three availability zones pays one inter-zone round trip (~1–2 ms). Across three continents it pays ~100+ ms. Asynchronous replication pays nothing — but a region failure can lose acknowledged writes, and remote reads are stale. That latency-vs-consistency decision is made on **every request**, not just during rare partitions — which is why PACELC is the more practical lens.
 
 ## Internal Mechanism
 

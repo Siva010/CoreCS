@@ -40,7 +40,13 @@ Two consequences follow directly:
 
 ## Why It Exists
 
-Normalized schemas store each fact once — customers in one table, orders in another ([Normalization](lesson:db-normalization)). Joins reassemble related facts at query time. They're the price, and the power, of the relational model: any relationship can be queried, including ones nobody anticipated.
+**The problem.** Normalized schemas store each fact once — customers in one table, orders in another ([Normalization](lesson:db-normalization)). But questions cross those tables: "which customers in Pune spent the most?" needs both.
+
+**The idea.** Since related rows share a value (`orders.customer_id = customers.id`), put rows side by side wherever those values match. Joins reassemble related facts at query time. They're the price, and the power, of the relational model: any relationship can be queried, including ones nobody anticipated.
+
+:::callout[That's all it is]{type=insight}
+A join pairs every left row with every right row that satisfies ON. Inner joins keep only the pairs; outer joins also keep rows that found no partner, filling the missing side with NULLs.
+:::
 
 ## How It Works
 
@@ -114,6 +120,8 @@ WHERE e.salary > m.salary;
 ```
 
 ### Fan-out: why totals double
+
+The direct consequence of "a join pairs rows": if each order has 3 items, each order row is repeated 3 times — and so is its total.
 
 ```sql
 -- ✗ Wrong: orders.total is repeated once per item row

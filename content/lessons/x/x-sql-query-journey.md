@@ -45,7 +45,13 @@ The stations, in order:
 
 ## Why It Exists
 
-Performance and reliability problems rarely respect subject boundaries. "The UPDATE is slow" may mean pool exhaustion (app), packet loss (network), CPU saturation (OS), a sequential scan (planner), a lock wait (concurrency), slow fsync (storage) or synchronous replication to a distant replica (distributed). Seeing the whole path is what lets you locate the problem.
+**The problem.** Performance and reliability problems rarely respect subject boundaries. "The UPDATE is slow" may mean pool exhaustion (app), packet loss (network), CPU saturation (OS), a sequential scan (planner), a lock wait (concurrency), slow fsync (storage) or synchronous replication to a distant replica (distributed). Seeing the whole path is what lets you locate the problem.
+
+**The idea.** Each station on the path exists to solve one problem — reuse connections (pool), move bytes (TCP/kernel), choose a method (planner), find the row fast (B+ tree, buffer pool), keep concurrent users apart (locks, MVCC), survive crashes (WAL), survive machine loss (replication). Know which problem each station solves and you know what it looks like when it fails.
+
+:::callout[That's all it is]{type=insight}
+A query borrows a connection, crosses the network, gets planned, finds its row through an index and the cache, takes a lock and writes a new version, flushes the log at commit, ships the log to replicas, and returns. A slow query is one of those steps taking longer than usual.
+:::
 
 ## How It Works
 

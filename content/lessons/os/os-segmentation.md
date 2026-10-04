@@ -26,11 +26,19 @@ Translation: if `offset < limit[s]`, physical address = `base[s] + offset`; othe
 
 ## Why It Exists
 
-Early systems gave each process one contiguous region defined by a base and limit register. That wastes the free space between the heap and stack and makes sharing parts of a program impossible. Segmentation generalizes base+limit to many regions:
+**The problem.** Early systems gave each process one contiguous region defined by a base and limit register. That wastes the free space between the heap and stack and makes sharing parts of a program impossible. Segmentation generalizes base+limit to many regions:
 
 - each logical unit grows independently,
 - sharing is natural (map the same code segment into two processes),
 - protection per unit (no-execute data, read-only code).
+
+**The idea.** A program isn't one blob — it's a few distinct pieces with different jobs and different rules. So translate *per piece*: each piece gets its own start address and length.
+
+**Why it matters today even though it lost.** Segmentation is the natural first answer to "how do I divide memory?", and seeing exactly why it fails (variable sizes → fragmentation) is what makes paging's "everything the same size" choice obvious.
+
+:::callout[That's all it is]{type=insight}
+Segmentation = a few (base, length) pairs, one per logical part of the program. Check the offset against the length, add the base. Its only real flaw is that variable-sized pieces leave awkward gaps in RAM — which is the problem paging was invented to fix.
+:::
 
 ## How It Works
 
@@ -64,7 +72,7 @@ Segments vary in size, so physical memory allocation is the dynamic storage-allo
 
 ### Segmentation with paging
 
-The fix combines both: segments provide the *logical* structure and protection; each segment is itself **paged**, so physical allocation is in fixed-size frames with no external fragmentation.
+Each scheme had something the other lacked: segments match how programs are organised; pages fit RAM without gaps. The fix combines both: segments provide the *logical* structure and protection; each segment is itself **paged**, so physical allocation is in fixed-size frames with no external fragmentation.
 
 ```text
 logical (segment, offset) → linear address (segment base + offset) → page tables → physical

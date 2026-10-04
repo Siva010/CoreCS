@@ -33,7 +33,13 @@ Webhooks flip the direction: the **server calls you** when something happens.
 
 ## Why It Exists
 
-Different consumers have different needs: public APIs value simplicity, cacheability and universal tooling (REST); internal microservices value performance, strict contracts and streaming (gRPC); UI-heavy clients with many views value fetching exactly the data needed in one round trip (GraphQL).
+**The problem.** Two programs need to talk over HTTP, but HTTP only says "send a request, get a response". It doesn't say how to name operations, shape data, or evolve the interface without breaking callers.
+
+**Why three styles.** Each style is optimised for a different kind of caller. Different consumers have different needs: public APIs value simplicity, cacheability and universal tooling (REST); internal microservices value performance, strict contracts and streaming (gRPC); UI-heavy clients with many views value fetching exactly the data needed in one round trip (GraphQL).
+
+:::callout[That's all it is]{type=insight}
+REST: nouns at URLs, HTTP verbs on them. gRPC: typed function calls over HTTP/2. GraphQL: one endpoint where the client describes the exact data shape it wants. Webhooks: the server calls you.
+:::
 
 ## How It Works
 

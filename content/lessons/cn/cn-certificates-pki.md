@@ -28,7 +28,15 @@ Diffie–Hellman gives you a secret shared with *someone* — but who? A certifi
 
 ## Why It Exists
 
-Without authentication, an attacker in the middle can run separate encrypted sessions with you and with the server, reading everything. Certificates, validated against a trusted root, let a client verify the server's identity without having met it before.
+**The problem.** Key exchange gives you an encrypted channel — but encryption with the wrong party is useless. Without authentication, an attacker in the middle can run separate encrypted sessions with you and with the server, reading everything.
+
+**Why you can't just ask.** The server can *say* "this is my public key", but so can the attacker. You need someone you already trust to vouch for the key.
+
+**The idea.** Pre-install a short list of trusted vouchers (root CAs) in every browser. They sign statements "key K belongs to this name". Since you can verify a signature with a public key you already have, you can trust a key from a server you've never met. Certificates, validated against a trusted root, let a client verify the server's identity without having met it before.
+
+:::callout[That's all it is]{type=insight}
+A certificate is "this public key belongs to this domain", signed by someone your browser already trusts. The browser checks the chain of signatures, the name, the dates — and then makes the server prove it has the matching private key.
+:::
 
 ## How It Works
 
@@ -76,11 +84,11 @@ Certificates are short-lived (Let's Encrypt: 90 days; the CA/Browser Forum has v
 
 ### Revocation is hard
 
-If a private key leaks, the certificate must be revoked before it expires. **CRLs** (lists of revoked serials) grow large; **OCSP** (real-time status queries) adds latency and leaks browsing to the CA, and clients usually "soft-fail" (treat unreachable OCSP as OK). **OCSP stapling** lets servers attach a signed, recent OCSP response in the handshake. Browsers increasingly rely on their own pushed revocation sets and on **short certificate lifetimes** as the practical fix.
+A signature can't be "un-signed": once a certificate is out, it stays valid until it expires. If a private key leaks, the certificate must be revoked before it expires. **CRLs** (lists of revoked serials) grow large; **OCSP** (real-time status queries) adds latency and leaks browsing to the CA, and clients usually "soft-fail" (treat unreachable OCSP as OK). **OCSP stapling** lets servers attach a signed, recent OCSP response in the handshake. Browsers increasingly rely on their own pushed revocation sets and on **short certificate lifetimes** as the practical fix.
 
 ### Certificate Transparency
 
-All publicly trusted certificates must be logged in append-only, publicly auditable Merkle-tree logs. Domain owners monitor logs (crt.sh, CT monitors) to detect certificates issued for their names without permission — catching CA mistakes and attacks.
+The weak point of the whole system is that *any* of ~100 trusted CAs can sign for *any* domain — so a single careless or compromised CA can fake your certificate. The fix is to make every issuance public. All publicly trusted certificates must be logged in append-only, publicly auditable Merkle-tree logs. Domain owners monitor logs (crt.sh, CT monitors) to detect certificates issued for their names without permission — catching CA mistakes and attacks.
 
 :::depth{level=advanced}
 ### mTLS and private PKI

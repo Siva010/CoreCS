@@ -31,7 +31,17 @@ The retailer's hardest problem is **fragmentation**: after many allocations and 
 
 ## Why It Exists
 
-Programs need memory whose size and lifetime are only known at runtime (a request body, a growing list, a cache). The stack can't hold data that outlives a function, and asking the kernel for every tiny object would cost a syscall and a whole page each. A user-space allocator amortizes kernel calls and packs small objects densely.
+**The problem.** Programs need memory whose size and lifetime are only known at runtime (a request body, a growing list, a cache).
+
+**Without it.** The stack can't hold data that outlives a function, and asking the kernel for every tiny object would cost a syscall and a whole page each — a 24-byte object would occupy 4,096 bytes and take ~1 µs to get.
+
+**The idea.** Buy in bulk, sell retail. A user-space allocator amortizes kernel calls and packs small objects densely. Everything inside `malloc` — headers, free lists, splitting, coalescing — is just the bookkeeping a shopkeeper needs to remember which pieces of the bulk purchase are sold and which are back on the shelf.
+
+**The catch that drives the rest of the lesson.** Objects are freed in a different order from how they were allocated, so free space ends up scattered in holes (fragmentation). Placement policies, size classes and garbage collectors are each a different answer to "how do we keep the holes useful?"
+
+:::callout[That's all it is]{type=insight}
+`malloc` gets big chunks from the kernel and hands out small pieces, keeping a list of which pieces are free. The hard part isn't giving memory out; it's reusing the gaps after things are freed.
+:::
 
 ## How It Works
 
@@ -44,7 +54,7 @@ Either way, the kernel only reserves address space; physical pages arrive on fir
 
 ### Inside malloc: blocks, headers and free lists
 
-Each block carries a small **header** (size, in-use flag). Free blocks are linked into **free lists**. On `malloc(n)`:
+`free(p)` receives only a pointer — not a size. So the allocator must be able to find "how big is this block?" from the pointer alone, and "where are the free blocks?" quickly. Each block carries a small **header** (size, in-use flag). Free blocks are linked into **free lists**. On `malloc(n)`:
 
 1. Round `n` up to alignment (16 bytes on x86-64) plus header → **internal fragmentation**.
 2. Search the free lists for a suitable block (by size class or policy).
@@ -55,7 +65,7 @@ On `free(p)`: read the header, mark the block free, **coalesce** with adjacent f
 
 ### Placement policies
 
-Free holes (in address order): **[100 KB] [500 KB] [200 KB] [300 KB] [600 KB]**. Requests arrive: 212 KB, 417 KB, 112 KB, 426 KB.
+When several holes are big enough, which one should you use? Using one changes which holes are left for future requests, so the choice decides how bad fragmentation gets. Free holes (in address order): **[100 KB] [500 KB] [200 KB] [300 KB] [600 KB]**. Requests arrive: 212 KB, 417 KB, 112 KB, 426 KB.
 
 | Policy | 212 KB | 417 KB | 112 KB | 426 KB |
 |---|---|---|---|---|
@@ -70,7 +80,7 @@ Here best fit satisfies all four requests. In general, simulations show first fi
 
 ### Modern allocators: size classes and per-thread caches
 
-Real allocators don't do a linear search:
+The textbook allocator has two real-world problems: searching lists is slow, and one global lock serialises every thread's `malloc`. Real allocators don't do a linear search:
 
 - **Segregated free lists / size classes**: separate lists for 16, 32, 48, … bytes. Small allocations take the head of the right list — O(1) — with some internal fragmentation from rounding.
 - **Thread caches / arenas**: glibc uses multiple arenas; tcmalloc and jemalloc keep **per-thread (or per-CPU) caches** so most mallocs take no lock at all.
@@ -85,7 +95,7 @@ Real allocators don't do a linear search:
 
 ### Garbage collection
 
-Managed languages replace `free` with a collector that finds unreachable objects:
+The problem GC solves isn't speed — it's *people*. Manual `free` produces two classic bugs: forgetting it (leak) and doing it too early (use-after-free, a top security bug). Managed languages replace `free` with a collector that finds unreachable objects:
 
 - **Reference counting** (Python's primary mechanism, Swift, `shared_ptr`): free when the count hits zero. Immediate reclamation; can't collect cycles alone (Python adds a cycle detector); counts are write-heavy and contended across threads.
 - **Tracing (mark-sweep, mark-compact, copying)**: from roots (stacks, globals, registers), mark everything reachable; everything else is garbage. **Compacting/copying** collectors move live objects together, **eliminating external fragmentation** and enabling bump-pointer allocation (just increment a pointer — as fast as a stack).

@@ -48,7 +48,15 @@ A solution to the **critical-section problem** must satisfy:
 
 ## Why It Exists
 
-Every lock you'll ever use implements an entry and exit section. The three requirements are the specification. Knowing them lets you evaluate any synchronization mechanism — including database lock managers and distributed locks — by asking: *can two holders coexist? can the system stall with nobody holding? can someone starve?*
+**The problem.** Two threads must take turns on shared data — but the only tools are ordinary reads and writes of shared variables, which can themselves interleave.
+
+**Why study a "solved" problem.** Every lock you'll ever use implements an entry and exit section. The three requirements are the specification. Knowing them lets you evaluate any synchronization mechanism — including database lock managers and distributed locks — by asking: *can two holders coexist? can the system stall with nobody holding? can someone starve?*
+
+**The idea.** Before building any lock, write down what "works" means — the three requirements. Then each failed attempt below teaches which requirement is easy to break, and Peterson's algorithm shows the smallest design that satisfies all three.
+
+:::callout[That's all it is]{type=insight}
+A lock has to do three things: keep a second thread out, let someone in when it's free, and not make anyone wait forever. Every attempt below is judged on just those three questions.
+:::
 
 ## How It Works
 
@@ -107,7 +115,7 @@ flag[i] = false;              // I'm done
 
 ### Why Peterson's algorithm fails on modern hardware
 
-Peterson's proof assumes **sequential consistency**: every process sees reads and writes in program order, interleaved. Real CPUs don't provide that by default ([Race Conditions](lesson:os-race-conditions)). On x86, a core's store to `flag[i]` can sit in its **store buffer** while its subsequent load of `flag[j]` reads memory — both processes can read the other's flag as `false` and both enter the critical section. Compilers may also reorder or cache the loads.
+A correct proof can still fail in practice if it assumes something the hardware doesn't promise. Peterson's proof assumes **sequential consistency**: every process sees reads and writes in program order, interleaved. Real CPUs don't provide that by default ([Race Conditions](lesson:os-race-conditions)). On x86, a core's store to `flag[i]` can sit in its **store buffer** while its subsequent load of `flag[j]` reads memory — both processes can read the other's flag as `false` and both enter the critical section. Compilers may also reorder or cache the loads.
 
 Fix: insert a full **memory barrier** (`atomic_thread_fence(memory_order_seq_cst)`) after the writes, or declare the variables as sequentially-consistent atomics. At that point you're relying on hardware support anyway — so practical locks use atomic read-modify-write instructions directly ([Atomic Instructions](lesson:os-atomic-instructions)).
 
@@ -120,6 +128,8 @@ For N processes: each process "takes a number" one greater than the maximum numb
 :::
 
 ### Hardware-assisted solutions
+
+The lesson of Peterson and Bakery: doing this with plain reads and writes is possible but slow, limited and fragile. The easier path is to have the hardware provide one operation that reads *and* writes in a single indivisible step.
 
 - **Disabling interrupts** on a uniprocessor makes a critical section atomic (no preemption) — used inside kernels for very short sections; useless on multiprocessors and forbidden in user mode.
 - **Atomic instructions** (test-and-set, compare-and-swap, fetch-and-add) give simple, correct locks on any number of cores. A spinlock with test-and-set satisfies mutual exclusion and progress but **not bounded waiting** — a thread can lose the race repeatedly. A **ticket lock** (fetch-and-add a ticket, wait for your number) adds FIFO fairness and bounded waiting.

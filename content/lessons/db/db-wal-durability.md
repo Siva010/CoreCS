@@ -34,9 +34,17 @@ If the machine crashes, the log contains everything needed to redo committed cha
 
 ## Why It Exists
 
+**The problem.** COMMIT must guarantee the change survives a crash — but the changed rows are scattered over many pages, and writing them all synchronously is slow and can be interrupted halfway.
+
+**The idea.** Separate *remembering* a change from *applying* it. Remembering is cheap: append a small note to the end of one file and flush that. Applying (updating the real pages) can happen later at leisure — if a crash interrupts it, the notes say exactly what to redo. The reasons this wins:
+
 - **Sequential beats random**: appending to one file is far cheaper than updating scattered pages, especially on disks — and even on SSDs it reduces write amplification.
 - **Small beats big**: a log record describing a 20-byte change is much smaller than the 8 KB page it modifies.
 - **Crash consistency**: the log orders all changes; recovery can deterministically reconstruct state.
+
+:::callout[That's all it is]{type=insight}
+Write what you're about to change to an append-only log, flush the log at COMMIT, and update the real data pages later. After a crash, replay the log. The only rule: a page may not reach disk before the log entry that describes its change.
+:::
 
 ## How It Works
 
@@ -67,7 +75,7 @@ A flush takes ~0.1–2 ms on SSDs (more with network storage). While one flush i
 
 ### Checkpoints
 
-Without checkpoints, recovery would replay the log from the beginning of time and the log would grow forever. A checkpoint:
+The log grows forever, and recovery would have to replay all of it. Checkpoints answer "how far back must recovery start?" Without checkpoints, recovery would replay the log from the beginning of time and the log would grow forever. A checkpoint:
 
 1. Writes all dirty pages (spread over time to avoid I/O bursts — `checkpoint_completion_target`).
 2. Records the checkpoint's redo start position.

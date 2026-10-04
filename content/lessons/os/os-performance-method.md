@@ -32,7 +32,15 @@ At low load, queues are empty and latency ≈ service time. As a resource approa
 
 ## Why It Exists
 
-Without a method, performance debugging becomes guesswork ("add more threads", "it's probably the database"). The vocabulary lets you ask precise questions; the laws let you check answers with arithmetic before touching production.
+**The problem.** "The system is slow" has hundreds of possible causes, and during an incident you can't try them all.
+
+**Without it.** Without a method, performance debugging becomes guesswork ("add more threads", "it's probably the database") — and the fix for the wrong guess often makes things worse.
+
+**The idea.** Every slowdown is some request waiting in some queue in front of some resource. So you don't need to understand the whole system — only to *list the resources* and check each one for the same three signs (busy, queued, failing). The vocabulary lets you ask precise questions; the laws let you check answers with arithmetic before touching production.
+
+:::callout[That's all it is]{type=insight}
+Latency = time being served + time waiting in line. Lines grow sharply as a resource nears 100% busy. Find the resource with the growing line, and make it faster, give it less work, or add more of it.
+:::
 
 ## How It Works
 
@@ -52,7 +60,7 @@ It's a checklist that quickly rules resources in or out.
 
 ### Little's Law in practice
 
-`L = λ × W` holds for any stable system regardless of distribution:
+The intuition: if 2,000 people arrive per second and each stays 50 ms, then at any instant about 100 of them are inside. That's all the law says — and it's enough to size pools and catch impossible numbers. `L = λ × W` holds for any stable system regardless of distribution:
 
 - A service handles **λ = 2,000 req/s** with average latency **W = 50 ms** → on average **L = 100** requests in flight → you need at least 100 concurrent workers (threads, connections, async slots).
 - A DB connection pool of 20 with average query time 10 ms supports at most **λ = L/W = 20 / 0.01 = 2,000 queries/s**. Beyond that, requests queue for connections.
@@ -60,7 +68,7 @@ It's a checklist that quickly rules resources in or out.
 
 ### Utilization and queueing delay
 
-For a simple single-server queue with random arrivals (M/M/1), average time in system:
+Why "80% busy" is already dangerous: arrivals are random, so they bunch up. At low utilization a burst finds the server idle and clears quickly; near 100%, there's no idle time left to absorb bursts, so each one adds to a backlog that never drains. For a simple single-server queue with random arrivals (M/M/1), average time in system:
 
 ```text
 W = S / (1 − ρ)        S = service time, ρ = utilization

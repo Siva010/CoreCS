@@ -30,7 +30,7 @@ Linux takes a different angle: rather than guessing burst lengths, it tracks how
 
 ## Why It Exists
 
-Real workloads mix interactive, server, batch and real-time tasks whose burst lengths are unknown and change over time. A good general-purpose scheduler must:
+**The problem.** Real workloads mix interactive, server, batch and real-time tasks whose burst lengths are unknown and change over time. A good general-purpose scheduler must:
 
 - keep interactive/I/O-bound tasks responsive,
 - give CPU-bound tasks good throughput,
@@ -38,7 +38,13 @@ Real workloads mix interactive, server, batch and real-time tasks whose burst le
 - respect priorities and administrator-defined shares,
 - scale to hundreds of cores.
 
-No single classic algorithm does all of this.
+No single classic algorithm does all of this. SJF needs the future; Round Robin ignores what it has learned; Priority starves.
+
+**The idea.** The future is unknown, but the *past* is visible. A job that used its whole slice last time will probably do so again; a job that blocked quickly is probably interactive. So let the scheduler *learn* each job's nature from its behaviour (MLFQ), or sidestep prediction entirely by tracking who is owed CPU time (CFS/EEVDF).
+
+:::callout[That's all it is]{type=insight}
+MLFQ: start everyone at top priority and demote whoever hogs the CPU. CFS: always run whoever has had the least CPU so far. Both make interactive programs fast without anyone telling the OS which programs are interactive.
+:::
 
 ## How It Works
 
@@ -69,7 +75,7 @@ Lower levels typically get **longer quanta** — CPU-bound jobs benefit from few
 
 ### Linux CFS: fair share via virtual runtime
 
-Each runnable task accumulates **vruntime** — actual runtime scaled inversely by its weight (derived from the nice value; each nice step ≈ 10% CPU share difference, weight ratio ≈ 1.25 per step):
+A different philosophy from MLFQ: instead of guessing burst lengths with a pile of tunable rules, define "fair" precisely — each task should get CPU in proportion to its weight — and always run whoever is furthest behind. Each runnable task accumulates **vruntime** — actual runtime scaled inversely by its weight (derived from the nice value; each nice step ≈ 10% CPU share difference, weight ratio ≈ 1.25 per step):
 
 ```text
 vruntime += delta_exec × (weight_of_nice_0 / weight_of_task)
@@ -87,7 +93,7 @@ EEVDF keeps weighted fair sharing but schedules by **virtual deadline**: each ta
 
 ### Scheduling classes and real-time
 
-Linux checks classes in strict priority order:
+Fairness is the wrong goal for some tasks: an audio thread that misses a 5 ms deadline produces a glitch no matter how "fair" the schedule was. Those tasks need *guarantees*, not shares, so they live in separate classes that always win over fair tasks. Linux checks classes in strict priority order:
 
 | Class | Policies | Behavior |
 |---|---|---|

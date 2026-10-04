@@ -33,7 +33,18 @@ A client wants to know when something happens on the server (a chat message, a p
 
 ## Why It Exists
 
-Chat, notifications, collaborative editing, dashboards, trading screens, multiplayer games and live feeds need low-latency server-initiated updates that request/response HTTP doesn't naturally support.
+**The problem.** Chat, notifications, collaborative editing, dashboards, trading screens, multiplayer games and live feeds need low-latency server-initiated updates that request/response HTTP doesn't naturally support. In HTTP the server can only answer — it can never speak first.
+
+**The progression of ideas.** Each technique is a smarter way around that rule:
+
+1. Ask repeatedly (polling) — works, but wasteful and late.
+2. Ask once and let the server *delay its answer* until it has news (long polling) — timely, but one request per event.
+3. Never finish the answer — keep the response open and keep writing to it (SSE) — cheap, but one-way.
+4. Leave HTTP behind after the first request and switch to a two-way channel (WebSocket).
+
+:::callout[That's all it is]{type=insight}
+All four techniques solve "the server can't speak first". Polling and long polling fake it with requests; SSE keeps one response open forever; WebSocket turns the connection into a two-way pipe.
+:::
 
 ## How It Works
 
@@ -93,7 +104,7 @@ If the connection drops, `EventSource` reconnects (respecting a server-suggested
 
 ### Running millions of persistent connections
 
-Each open connection costs a socket, kernel buffers, TLS state and application state — but, with an event-loop or lightweight-thread server, **no thread** ([epoll & Event Loops](lesson:os-epoll-event-loops)). Engineering concerns:
+Push changes the server's cost model: instead of short requests, you hold one connection per online user, all the time. Each open connection costs a socket, kernel buffers, TLS state and application state — but, with an event-loop or lightweight-thread server, **no thread** ([epoll & Event Loops](lesson:os-epoll-event-loops)). Engineering concerns:
 
 - **File-descriptor and memory limits** (tune `ulimit -n`, socket buffers).
 - **Load balancers**: must support long-lived connections and upgrades; idle timeouts must exceed heartbeat intervals; L4 balancing distributes connections, not messages ([Proxies & Load Balancers](lesson:cn-proxies-load-balancers)).

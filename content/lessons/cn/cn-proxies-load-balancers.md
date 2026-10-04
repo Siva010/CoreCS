@@ -31,10 +31,18 @@ A **load balancer** is a reverse proxy whose main job is spreading traffic acros
 
 ## Why It Exists
 
+**The problem.** One server eventually can't take all the traffic, and any server can fail or be redeployed. But clients only know one address.
+
+**The idea.** Put something in front that *owns* the public address and decides, per connection or per request, which real server should answer. Clients see a stable endpoint; behind it, servers come and go freely. Once that middle box exists, it's also the natural place for everything that should happen once for all servers:
+
 - **Scale**: no single server handles all traffic.
 - **Availability**: route around failed or deploying instances.
 - **Security and policy**: one place for TLS, WAF rules, authentication, rate limiting; backends aren't exposed directly.
 - **Flexibility**: blue/green and canary deploys, path-based routing to different services.
+
+:::callout[That's all it is]{type=insight}
+A load balancer is a stable front door that forwards each connection (L4) or each request (L7) to one of many healthy backends. The algorithm picks which one; health checks decide who's eligible.
+:::
 
 ## How It Works
 
@@ -51,6 +59,8 @@ A **load balancer** is a reverse proxy whose main job is spreading traffic acros
 
 ### Balancing algorithms
 
+All of these answer "which backend next?" — they differ in how much they know about the backends' current load, and how much bookkeeping they're willing to do to know it.
+
 | Algorithm | How | Good for | Weakness |
 |---|---|---|---|
 | Round robin | Rotate through backends | Uniform requests & servers | Ignores load differences |
@@ -62,6 +72,8 @@ A **load balancer** is a reverse proxy whose main job is spreading traffic acros
 | Latency-aware (EWMA) | Prefer fastest backends | Heterogeneous latency | Oscillation if naive |
 
 ### Health checks
+
+Spreading traffic is pointless if some of it goes to a dead server. The balancer needs to know who can actually answer.
 
 - **Active**: the LB probes `GET /healthz` every few seconds; N failures → remove, M successes → re-add.
 - **Passive / outlier detection**: eject backends returning errors or timeouts on real traffic.

@@ -37,7 +37,13 @@ The **planner** is the brain: among many equivalent ways to compute the result, 
 
 ## Why It Exists
 
-SQL is declarative: it says *what*, not *how* ([Relational Model](lesson:db-relational-model)). Someone must decide *how* — which index, which join order, which algorithm — and the right answer depends on data sizes and distributions that change over time. Separating planning from execution lets the database re-decide as data evolves, without application changes.
+**The problem.** SQL is declarative: it says *what*, not *how* ([Relational Model](lesson:db-relational-model)). Someone must decide *how* — which index, which join order, which algorithm — and the right answer depends on data sizes and distributions that change over time.
+
+**The idea.** Treat SQL like source code and the database like a compiler: check the text, resolve names, then *choose* a program (the plan) based on what the data currently looks like, and run it. Separating planning from execution lets the database re-decide as data evolves, without application changes.
+
+:::callout[That's all it is]{type=insight}
+Parse the text, check names and types, expand views, pick the cheapest plan using statistics, then run that plan as a tree of operators that pass rows upward. The planner's guess about row counts decides almost everything.
+:::
 
 ## How It Works
 
@@ -69,7 +75,7 @@ The cheapest total cost wins. Cardinality estimation is the weak point — most 
 
 ### 5. Execution: the iterator model
 
-The plan is a tree; each node implements `next()` — "give me your next row". The root pulls from its children, which pull from theirs:
+The executor needs one uniform way to connect dozens of operator types (scans, joins, sorts) in any shape the planner chooses. The answer is a single interface every operator implements. The plan is a tree; each node implements `next()` — "give me your next row". The root pulls from its children, which pull from theirs:
 
 ```mermaid
 flowchart BT
@@ -83,6 +89,8 @@ flowchart BT
 Rows flow up one at a time (pipelining), so `LIMIT 10` can stop the whole tree after 10 rows. **Blocking** operators (sort, hash build, aggregation) must consume all their input before emitting anything. Analytical engines use vectorized batches instead of single rows ([Column Stores](lesson:db-column-stores)).
 
 ### Prepared statements and plan caching
+
+Parsing and planning cost time on every call; for a query run 10,000 times a second with only the parameter changing, that's wasted work.
 
 ```sql
 PREPARE by_customer(bigint) AS SELECT * FROM orders WHERE customer_id = $1;

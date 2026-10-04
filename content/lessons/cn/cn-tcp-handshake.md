@@ -38,9 +38,15 @@ The SYN (and FIN) flag **consumes one sequence number**, hence `+1`. Options are
 
 ## Why It Exists
 
+**The problem.** TCP's reliability depends on sequence numbers, and both sides pick their own starting number. Before any data moves, each side must learn the other's starting number and confirm the path works *both ways*. The handshake does exactly three jobs:
+
 - **Synchronize sequence numbers** in both directions — each side must learn the other's ISN before reliability can work.
 - **Confirm bidirectional reachability**: the SYN-ACK proves client→server works; the final ACK proves server→client works.
 - **Reject stale or duplicate connection attempts**: an old delayed SYN from a previous connection could otherwise create a bogus connection.
+
+:::callout[That's all it is]{type=insight}
+SYN: "here's my starting number". SYN-ACK: "got yours, here's mine". ACK: "got yours". Three messages is the minimum for both sides to hear the other's number *and* know they were heard.
+:::
 
 ### Why not two messages?
 
@@ -87,7 +93,7 @@ The client can't send the request until the SYN-ACK arrives → **1 RTT** of set
 
 ### SYN floods and SYN cookies
 
-An attacker sends many SYNs from spoofed addresses and never completes the handshake, filling the server's **SYN queue** so legitimate clients can't connect. **SYN cookies** defend without state: when the queue is full, the server encodes the connection's essential info (MSS, a timestamp, a keyed hash of the 4-tuple) **into its ISN** and keeps nothing. If the final ACK arrives with `ack = cookie + 1`, the server validates the hash and reconstructs the connection. Trade-off: some options (e.g., large window scaling in older implementations) are limited when cookies are used. Large-scale floods are absorbed by DDoS protection at the edge (SYN proxies at load balancers, anycast scrubbing).
+The handshake has a built-in weakness: the server must *remember* every half-open connection while waiting for the final ACK, and remembering costs memory. An attacker sends many SYNs from spoofed addresses and never completes the handshake, filling the server's **SYN queue** so legitimate clients can't connect. **SYN cookies** defend without state: when the queue is full, the server encodes the connection's essential info (MSS, a timestamp, a keyed hash of the 4-tuple) **into its ISN** and keeps nothing. If the final ACK arrives with `ack = cookie + 1`, the server validates the hash and reconstructs the connection. Trade-off: some options (e.g., large window scaling in older implementations) are limited when cookies are used. Large-scale floods are absorbed by DDoS protection at the edge (SYN proxies at load balancers, anycast scrubbing).
 
 :::depth{level=advanced}
 ### TCP Fast Open and simultaneous open

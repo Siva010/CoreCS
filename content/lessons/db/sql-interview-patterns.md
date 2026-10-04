@@ -48,7 +48,13 @@ Schema used below: `employees(id, name, department_id, manager_id, salary, hired
 
 ## Why It Exists
 
-Interviewers use SQL problems to test whether you can think in sets and handle edge cases, not whether you remember syntax. Knowing the patterns frees your attention for the edge cases — which is where most candidates lose points.
+**The problem.** SQL questions look endless, and solving each from scratch under time pressure leaves no attention for the traps.
+
+**The idea.** Interviewers use SQL problems to test whether you can think in sets and handle edge cases, not whether you remember syntax. Underneath, almost every question is one of a dozen shapes. Knowing the patterns frees your attention for the edge cases — which is where most candidates lose points.
+
+:::callout[That's all it is]{type=insight}
+Decide what one output row means, name the pattern (rank, anti-join, islands, running total…), write it in CTE steps, then check ties, NULLs, duplicates and missing periods. That's the whole method.
+:::
 
 ## How It Works
 
@@ -108,7 +114,7 @@ Never use `NOT IN` against a nullable column ([Semi & Anti Joins](lesson:sql-sem
 
 ### 6. Gaps and islands: consecutive days
 
-"Users who logged in on at least 3 consecutive days." Trick: for consecutive dates, `login_date − row_number` is constant within a streak.
+The hard part is that SQL has no built-in "streak" concept — you need a value that stays the same for every row in one streak and changes between streaks. "Users who logged in on at least 3 consecutive days." Trick: for consecutive dates, `login_date − row_number` is constant within a streak.
 
 ```text
 login_date   row_number   login_date - rn

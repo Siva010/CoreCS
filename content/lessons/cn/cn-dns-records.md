@@ -36,11 +36,19 @@ A DNS zone is a small **key-value table** where the key is (name, type) and the 
 
 ## Why It Exists
 
-Different protocols need different lookups: browsers need addresses, mail servers need to know where to deliver mail, certificate authorities need to check issuance policy, service discovery needs ports. One extensible system of typed records serves them all.
+**The problem.** Different protocols need different lookups: browsers need addresses, mail servers need to know where to deliver mail, certificate authorities need to check issuance policy, service discovery needs ports.
+
+**The idea.** Don't build a separate directory per question. Keep one distributed, cached system and add a *type* to the key: (name, type) → answers. A new kind of question just needs a new type. One extensible system of typed records serves them all.
+
+:::callout[That's all it is]{type=insight}
+DNS is a lookup on (name, type). A asks for IPv4, AAAA for IPv6, CNAME says "look up this other name instead", MX says where mail goes, NS says who answers for a zone. Each has its own TTL.
+:::
 
 ## How It Works
 
 ### CNAME chains
+
+The problem CNAME solves: your site is hosted by a CDN whose IP addresses change often. You don't want to edit your zone every time — you want to say "whatever the CDN says". A CNAME is that pointer.
 
 ```text
 www.shop.com.          300  CNAME  shop.cdn-provider.net.
@@ -57,6 +65,8 @@ The resolver follows the chain and returns all records; each hop can have its ow
 - CNAME chains add lookups (latency) and dependencies.
 
 ### DNS-based load balancing and failover
+
+Since every connection starts with a DNS lookup, the answer itself is a cheap steering wheel: give different clients different addresses.
 
 - **Multiple A records**: the resolver returns a list; clients usually try the first and may fall back to others. Order is often rotated (round-robin DNS). Crude: no health awareness unless the DNS provider removes dead IPs.
 - **Health-checked failover**: the authoritative provider stops returning unhealthy endpoints — effective only as fast as TTLs expire.

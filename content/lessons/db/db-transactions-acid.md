@@ -41,7 +41,17 @@ Consistency is the odd one out: it's mostly the application's responsibility. Th
 
 ## Why It Exists
 
-Without transactions every application would need to handle partial failure (crash after the first of five writes) and concurrency (another request interleaving its writes) by itself — with compensation logic, retries and locking scattered through the code. Transactions move that burden into the database, where it's implemented once, carefully.
+**The problem.** Real operations are several writes that only make sense together — debit *and* credit, order *and* its items. Two things can break that togetherness: a failure halfway through, and another request interleaving its own writes.
+
+**Without it.** Every application would need to handle partial failure (crash after the first of five writes) and concurrency (another request interleaving its writes) by itself — with compensation logic, retries and locking scattered through the code.
+
+**The idea.** Let the application draw a boundary — BEGIN … COMMIT — and promise that everything inside behaves as a single step: it happens entirely or not at all, nobody sees it half-done, and once confirmed it stays. Transactions move that burden into the database, where it's implemented once, carefully.
+
+**From idea to mechanism.** Each letter needs its own machinery: undo information for **A**, constraints for **C**, locks or snapshots for **I**, and a log flushed at commit for **D**. The following lessons take them one at a time.
+
+:::callout[That's all it is]{type=insight}
+A transaction is a group of statements the database treats as one: all or nothing, invisible until done, permanent once COMMIT returns. ACID is just the list of those promises.
+:::
 
 ## How It Works
 
@@ -68,7 +78,7 @@ COMMIT;                        -- or ROLLBACK;
 
 ### Durability: what COMMIT waits for
 
-`COMMIT` writes a commit record to the WAL and waits until the WAL is flushed (`fsync`) to stable storage. Data pages are written later. Durability thus depends on the whole chain — the database's flush, the filesystem, the disk's write cache honoring flushes, and, for high availability, replication to another machine ([Durability Chain](lesson:x-durability-chain)).
+"Permanent" has to mean "on stable storage", and writing every changed page at commit would be slow. So commit waits for something much smaller. `COMMIT` writes a commit record to the WAL and waits until the WAL is flushed (`fsync`) to stable storage. Data pages are written later. Durability thus depends on the whole chain — the database's flush, the filesystem, the disk's write cache honoring flushes, and, for high availability, replication to another machine ([Durability Chain](lesson:x-durability-chain)).
 
 ### Isolation: a spectrum, not a switch
 

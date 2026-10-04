@@ -33,11 +33,21 @@ Because every chunk is the same size, any page can go into any free frame. There
 
 ## Why It Exists
 
-Earlier schemes allocated each process one contiguous region (base + limit registers) or variable-sized segments. Both suffer from **external fragmentation** of physical memory and make growing a process painful ([Segmentation](lesson:os-segmentation)). Paging:
+**The problem.** Virtual addresses need to be translated to physical ones, and the translation table must stay small and fast. The question is *at what granularity* to translate.
+
+**Without it.** Earlier schemes allocated each process one contiguous region (base + limit registers) or variable-sized segments. Both suffer from **external fragmentation** of physical memory and make growing a process painful ([Segmentation](lesson:os-segmentation)). Paging:
 
 - eliminates external fragmentation (any frame fits any page),
 - allows non-contiguous physical placement of a contiguous virtual range,
 - enables per-page protection, sharing (map the same frame into several processes), demand paging and copy-on-write.
+
+**The idea.** Fragmentation happens because pieces come in different sizes. So make *every* piece the same size. Then any free frame fits any page, and the translation only needs one number per page instead of one per byte.
+
+**From idea to mechanism.** One table entry per page → a table per process (**page table**). That table is too big if stored flat → store it as a tree, skipping empty parts (**multi-level tables**). Walking the tree on every access is slow → cache recent answers (**TLB**, next lesson).
+
+:::callout[That's all it is]{type=insight}
+Chop memory into 4 KB pages. Keep a table saying "virtual page N lives in physical frame M". The bottom 12 bits of an address pass through unchanged; only the page number is looked up.
+:::
 
 ## How It Works
 
@@ -80,7 +90,7 @@ physical address   [ PFN (frame number) ]                   [ offset ]
 
 ### Multi-level page tables
 
-Split the VPN into several indexes; each level is a page-sized table pointing to the next level. Unused regions simply have no lower-level tables.
+The fix follows from noticing that almost all of a 64-bit address space is empty — so don't store entries for empty regions. A tree lets you skip whole empty branches. Split the VPN into several indexes; each level is a page-sized table pointing to the next level. Unused regions simply have no lower-level tables.
 
 **Two-level, 32-bit, 4 KB pages** (classic x86): 10-bit directory index, 10-bit table index, 12-bit offset.
 

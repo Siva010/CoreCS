@@ -39,7 +39,13 @@ Round trips dominate network time; that's why HTTP/2 connection reuse, TLS 1.3, 
 
 ## Why It Exists
 
-This question tests whether you see the system as connected layers rather than memorized facts. Every follow-up ("what if DNS fails?", "where can it be slow?", "what does the kernel do?", "how does the server handle 10,000 of these?") is a door into one of the academy's subjects.
+**The problem it reveals.** Loading a page looks like one action, but it needs *five independent problems* solved in sequence: find the machine (DNS), get a reliable pipe to it (TCP), make the pipe private and authentic (TLS), say what you want (HTTP), and have the server produce it (kernel, app, database). Each protocol in the chain exists because the one before it left exactly one problem unsolved.
+
+**Why interviewers ask it.** This question tests whether you see the system as connected layers rather than memorized facts. Every follow-up ("what if DNS fails?", "where can it be slow?", "what does the kernel do?", "how does the server handle 10,000 of these?") is a door into one of the academy's subjects.
+
+:::callout[That's all it is]{type=insight}
+Name → address (DNS), address → connection (TCP), connection → secure channel (TLS), channel → request (HTTP), request → rows (app + database), rows → pixels (browser). Each step costs round trips, which is why caching and connection reuse matter so much.
+:::
 
 ## How It Works
 
@@ -51,17 +57,23 @@ This question tests whether you see the system as connected layers rather than m
 
 ### 2. DNS: name → IP address
 
+*Why this step:* routers only understand numeric addresses, and humans only remember names.
+
 Browser cache → OS resolver (stub, `/etc/hosts`, systemd-resolved cache) → recursive resolver (ISP / 8.8.8.8 / 1.1.1.1) → if not cached: root → `.com` TLD → `example.com` authoritative servers → answer, possibly a CNAME to a CDN hostname with a short TTL ([DNS](lesson:cn-dns-fundamentals)). Result: `93.184.215.14`, cached per its TTL.
 
 Walkthrough: [DNS resolution](uth:dns-resolution).
 
 ### 3. TCP: a reliable byte stream
 
+*Why this step:* IP only delivers loose packets that can be lost or reordered; HTTP needs an ordered, complete stream.
+
 The browser calls `connect()`: the kernel picks an ephemeral source port, creates a socket, and sends SYN; the server's kernel replies SYN-ACK from its listen queue; the client's ACK completes the handshake — **no application code on the server runs yet** ([TCP Handshake](lesson:cn-tcp-handshake)). Packets travel via the local router (ARP for the gateway's MAC, NAT rewriting the source address), ISP routers doing longest-prefix-match forwarding, and finally the server's network ([Routing](lesson:cn-routing), [NAT](lesson:cn-nat)).
 
 Walkthrough: [TCP connect](uth:tcp-connect).
 
 ### 4. TLS 1.3: authenticated encryption
+
+*Why this step:* the TCP stream crosses networks you don't control — anyone on the path could read or change it, or pretend to be the server.
 
 ClientHello (with key share, SNI, ALPN `h2`) → ServerHello + encrypted certificate chain + CertificateVerify + Finished → client verifies the chain to a trusted root, checks the hostname, derives keys, sends Finished + the first request. One round trip ([TLS Handshake](lesson:cn-tls-handshake)).
 
@@ -80,9 +92,13 @@ Over HTTP/2 it's a HEADERS frame on a new stream, HPACK-compressed ([HTTP/2](les
 
 ### 6. The edge: CDN, load balancer, reverse proxy
 
+*Why this step:* one server can't serve everyone and can't be close to everyone, so something in front spreads requests and answers what it can from nearby.
+
 The IP likely belongs to a **CDN or load balancer**, not the app server. A CDN may serve cached static assets itself ([CDN](lesson:cn-cdn)). For dynamic requests, an L7 load balancer terminates TLS, applies routing rules, picks a healthy backend (round robin / least connections), and forwards the request over a pooled connection ([Proxies & Load Balancers](lesson:cn-proxies-load-balancers)).
 
 ### 7. The server kernel
+
+*Why this step:* the application can't touch the network card directly; the kernel turns raw frames into bytes on a socket the app can read.
 
 The NIC DMA-copies the frames into RAM and raises an interrupt; the kernel's network stack reassembles TCP segments into the socket's receive buffer and marks the socket readable. The application's event loop, sleeping in `epoll_wait()`, wakes up; `read()` copies the bytes into user space ([Syscalls & Interrupts](lesson:os-syscalls-interrupts), [epoll](lesson:os-epoll-event-loops)).
 

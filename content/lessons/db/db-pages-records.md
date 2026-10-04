@@ -32,13 +32,23 @@ Inside a page, rows are variable-length, get inserted, updated and deleted. The 
 
 ## Why It Exists
 
+**The problem.** Rows are small and variable-sized; storage reads and writes in fixed blocks. Somehow tables of rows must be laid out on block devices.
+
+**Why pages:**
+
 - Disks/SSDs and the OS work in blocks (4 KB+); reading 8 KB costs about the same as reading 100 bytes.
 - Fixed-size pages make caching simple (buffer frames are all the same size) and let the WAL describe changes as "page P, offset O".
 - Variable-length rows inside fixed pages need indirection so that compaction and updates don't break every index pointing at a row.
 
+:::callout[That's all it is]{type=insight}
+A table is a pile of 8 KB pages. Each page has a small directory at the front (slots) and rows packed from the back. A row's address is (page, slot), so rows can move inside the page without anyone noticing.
+:::
+
 ## How It Works
 
 ### The slotted page
+
+The design question: rows have different sizes and come and go, yet indexes need stable addresses for them. Answer: add one level of indirection inside the page.
 
 ```text
 ┌──────────────────────────── 8 KB page ────────────────────────────┐
@@ -70,7 +80,7 @@ Columns are stored in declaration order with **alignment padding** (e.g., an 8-b
 
 ### Large values
 
-A row must fit in a page. Values larger than ~2 KB are compressed and/or moved out of line:
+The page design assumes rows are much smaller than a page. A 1 MB JSON document breaks that assumption, so it needs a separate path. A row must fit in a page. Values larger than ~2 KB are compressed and/or moved out of line:
 
 - PostgreSQL **TOAST**: large `text`/`jsonb`/`bytea` values are stored in a side table in chunks; the row holds a pointer. Queries that don't select the column never read it.
 - InnoDB: large columns go to **overflow pages**, with a prefix or pointer kept in the row (depending on row format).

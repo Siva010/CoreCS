@@ -32,7 +32,13 @@ Unlike phone numbers, the split point isn't fixed: `/8`, `/24` or `/29` are all 
 
 ## Why It Exists
 
-Routers can't hold a route for every one of ~4 billion addresses. Grouping addresses into **prefixes** lets a router store one entry per network — and **aggregate** many networks into one shorter prefix (the internet's routing table has ~1 million IPv4 prefixes, not billions of hosts).
+**The problem.** Every machine needs a unique address, and every router must know where to send packets for *any* address. Routers can't hold a route for every one of ~4 billion addresses.
+
+**The idea.** Make addresses hierarchical, like phone numbers or postal codes: nearby machines share a common beginning. Then routers can say "everything starting with 10.1 goes that way" in a single entry. Grouping addresses into **prefixes** lets a router store one entry per network — and **aggregate** many networks into one shorter prefix (the internet's routing table has ~1 million IPv4 prefixes, not billions of hosts).
+
+:::callout[That's all it is]{type=insight}
+An IPv4 address is 32 bits: a network part and a host part, with the `/n` saying where the split is. Routers only look at the network part. Every subnet calculation is "AND with the mask".
+:::
 
 ## How It Works
 
@@ -77,7 +83,7 @@ usable hosts   = 192.168.10.1 – 192.168.10.62  (2^6 − 2 = 62)
 
 ### Classful addressing (history)
 
-Before 1993, the split was fixed by the first bits: Class A (`/8`, first bit 0), B (`/16`, first bits 10), C (`/24`, 110). It wasted addresses (an organization needing 300 hosts got a /16 of 65,536) and bloated routing tables. **CIDR** (Classless Inter-Domain Routing) replaced it with arbitrary prefix lengths and route aggregation. Interviewers still ask about classes — answer, then explain why they're obsolete.
+Worth knowing as the *problem* CIDR fixed. Before 1993, the split was fixed by the first bits: Class A (`/8`, first bit 0), B (`/16`, first bits 10), C (`/24`, 110). It wasted addresses (an organization needing 300 hosts got a /16 of 65,536) and bloated routing tables. **CIDR** (Classless Inter-Domain Routing) replaced it with arbitrary prefix lengths and route aggregation. Interviewers still ask about classes — answer, then explain why they're obsolete.
 
 ::lab{id=subnet-calculator}
 

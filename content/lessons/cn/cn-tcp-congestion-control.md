@@ -31,7 +31,17 @@ The sender's self-imposed limit is the **congestion window (cwnd)**: the maximum
 
 ## Why It Exists
 
-In October 1986 the internet suffered **congestion collapse**: throughput between LBL and UC Berkeley fell from 32 kb/s to 40 b/s. Senders retransmitted aggressively into full queues, which caused more loss and more retransmissions. Van Jacobson's 1988 algorithms (slow start, congestion avoidance, fast retransmit) made TCP back off, saving the internet — and every TCP stack still descends from them.
+**The problem.** Flow control protects the *receiver*. But between sender and receiver sits a shared network, and no sender can see how busy it is. If everyone sends as fast as their receiver allows, routers overflow.
+
+**What actually happened without it.** In October 1986 the internet suffered **congestion collapse**: throughput between LBL and UC Berkeley fell from 32 kb/s to 40 b/s. Senders retransmitted aggressively into full queues, which caused more loss and more retransmissions. Van Jacobson's 1988 algorithms (slow start, congestion avoidance, fast retransmit) made TCP back off, saving the internet — and every TCP stack still descends from them.
+
+**The idea.** Treat packet loss as the network saying "too much". Each sender keeps its own guess of what the path can carry (cwnd), raises it slowly while things work, and cuts it sharply when loss appears. No coordinator is needed: if every sender follows the same rule, they share the bottleneck roughly fairly.
+
+**Why grow slowly but cut fast?** Overshooting causes loss for *everyone*, while undershooting only costs you a bit of speed. So be careful going up and decisive coming down.
+
+:::callout[That's all it is]{type=insight}
+Each sender limits how much it has in flight with a congestion window: double it each round trip at first, then grow by one packet per round trip, and halve it when packets are lost. The sawtooth graph is just that rule repeated.
+:::
 
 ## How It Works
 
@@ -70,7 +80,7 @@ The resulting cwnd graph is the famous **sawtooth**: linear climbs and halvings.
 
 ### AIMD converges to fairness
 
-Two flows sharing a bottleneck: additive increase raises both equally; multiplicative decrease cuts the larger one by more. Repeated, this pulls them toward equal shares (Chiu & Jain). This is why TCP flows are "roughly fair" per flow — and why an application opening 10 parallel connections gets ~10× the share of one.
+Why this particular rule (add slowly, multiply down) rather than any other: it's the one that drives competing flows toward equal shares. Two flows sharing a bottleneck: additive increase raises both equally; multiplicative decrease cuts the larger one by more. Repeated, this pulls them toward equal shares (Chiu & Jain). This is why TCP flows are "roughly fair" per flow — and why an application opening 10 parallel connections gets ~10× the share of one.
 
 ## Internal Mechanism
 
@@ -85,7 +95,7 @@ Two flows sharing a bottleneck: additive increase raises both equally; multiplic
 
 ### Bufferbloat
 
-Loss-based algorithms increase cwnd until a router's buffer overflows. If buffers are huge (common in consumer routers and cellular networks), the queue fills first — adding **hundreds of milliseconds** of latency to every packet before any loss signals congestion. Mitigations: smarter queue management in routers (**AQM**: CoDel, FQ-CoDel, PIE), delay/model-aware congestion control (BBR), and **ECN**.
+The weakness of using loss as the signal: loss only happens once a buffer is *completely* full. Loss-based algorithms increase cwnd until a router's buffer overflows. If buffers are huge (common in consumer routers and cellular networks), the queue fills first — adding **hundreds of milliseconds** of latency to every packet before any loss signals congestion. Mitigations: smarter queue management in routers (**AQM**: CoDel, FQ-CoDel, PIE), delay/model-aware congestion control (BBR), and **ECN**.
 
 :::depth{level=advanced}
 ### ECN — congestion signals without loss

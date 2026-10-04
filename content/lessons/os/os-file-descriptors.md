@@ -30,11 +30,19 @@ Three kernel data structures sit behind it:
 
 ## Why It Exists
 
-A uniform handle means:
+**The problem.** A program needs to refer to things that live in the kernel — an open file, a socket, a pipe — but it must not hold a pointer into kernel memory (it could forge or corrupt it).
+
+**The idea.** Give the program a meaningless small number and keep the real object on the kernel's side of the counter. The number is only valid in *that* process's table, so it can't be forged into access to someone else's file. And because every kind of object is reached the same way, one set of calls works for all of them. A uniform handle means:
 
 - one set of system calls (`read`, `write`, `close`, `poll`) works for files, pipes, sockets, terminals, devices, timers (`timerfd`), events (`eventfd`), signals (`signalfd`);
 - programs compose: the shell can wire any program's stdout to any other program's stdin, a file or a socket;
 - the kernel keeps ownership and can enforce permissions once, at `open` time, then check a cheap integer afterward.
+
+**Why three tables, not one.** Different things are shared at different levels: two programs opening the same file share the *file* but not the read position; `dup` and `fork` share the read position too. Three layers (fd → open description → inode) let each kind of sharing happen at the right level.
+
+:::callout[That's all it is]{type=insight}
+An fd is an index into a per-process array of pointers to kernel objects. `read(3, ...)` means "do a read on whatever slot 3 points at" — a file, a socket or a pipe, it doesn't matter.
+:::
 
 ## How It Works
 
@@ -83,7 +91,7 @@ Every TCP connection is an fd, so a server with 50,000 concurrent connections ne
 
 ### Close-on-exec
 
-By default fds survive `exec`. That's how stdin/stdout reach new programs — but it also leaks sockets, database connections and secret files into child processes you spawn. Open everything with **`O_CLOEXEC`** (or `SOCK_CLOEXEC`, `accept4(..., SOCK_CLOEXEC)`) unless you intend to pass it on. Most modern runtimes (Java, Go, Python 3.4+) do this by default.
+The inheritance that makes shell redirection work has a side effect. By default fds survive `exec`. That's how stdin/stdout reach new programs — but it also leaks sockets, database connections and secret files into child processes you spawn. Open everything with **`O_CLOEXEC`** (or `SOCK_CLOEXEC`, `accept4(..., SOCK_CLOEXEC)`) unless you intend to pass it on. Most modern runtimes (Java, Go, Python 3.4+) do this by default.
 
 :::depth{level=advanced}
 ### Unlinked-but-open files

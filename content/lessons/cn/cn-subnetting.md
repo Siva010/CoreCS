@@ -28,7 +28,13 @@ Subnetting is **cutting a cake into slices of power-of-two sizes**. Borrowing on
 
 ## Why It Exists
 
-Networks are allocated in chunks; organizations must divide them among sites, VLANs, VPC subnets, or Kubernetes node pools — without wasting addresses and with room to grow. Interviews test it because it proves comfort with binary prefixes, which you need to read firewall rules, route tables and cloud network plans.
+**The problem.** Networks are allocated in chunks; organizations must divide them among sites, VLANs, VPC subnets, or Kubernetes node pools — without wasting addresses and with room to grow. Each piece needs its own subnet — so it can have its own routing and firewall rules — but the pieces need different sizes.
+
+**The idea.** A prefix can always be cut in half by moving the split one bit to the right. Keep halving until each piece is the right size. Since every piece is a power of two and starts at a multiple of its size, all the arithmetic reduces to one number: the block size. Interviews test it because it proves comfort with binary prefixes, which you need to read firewall rules, route tables and cloud network plans.
+
+:::callout[That's all it is]{type=insight}
+Find the block size (256 minus the mask octet). Subnets start at multiples of it. Round the IP down to a multiple to get the network; the next multiple minus one is the broadcast.
+:::
 
 ## How It Works
 
@@ -76,7 +82,7 @@ Rule: to get at least N subnets, borrow `ceil(log2 N)` bits. To give each subnet
 
 ### VLSM: size by need, largest first
 
-Network `172.16.0.0/24`; needs: Sales 100 hosts, Engineering 50, Ops 20, two point-to-point links (2 each).
+Equal slices waste space when needs differ (a 2-host link doesn't need a /26). So cut each slice to fit. Network `172.16.0.0/24`; needs: Sales 100 hosts, Engineering 50, Ops 20, two point-to-point links (2 each).
 
 1. **Sort by size, allocate the largest first** (keeps blocks aligned).
 2. Sales 100 → needs 7 host bits (126) → `/25`: `172.16.0.0/25` (.0–.127).

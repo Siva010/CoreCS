@@ -28,7 +28,15 @@ A TCP connection (plus TLS) is expensive to set up — like dialing and authenti
 
 ## Why It Exists
 
-Web pages load dozens of resources. Paying a TCP (and TLS) handshake plus slow start for each would dominate load time. Reusing connections saves round trips and keeps congestion windows warm.
+**The problem.** Web pages load dozens of resources. Paying a TCP (and TLS) handshake plus slow start for each would dominate load time.
+
+**The idea.** The expensive part is setting up the connection, not using it — so set it up once and send many requests over it. Reusing connections saves round trips and keeps congestion windows warm.
+
+**The catch that drives the rest of the lesson.** Once requests share a connection, the receiver must know where each message ends (framing), and HTTP/1.1 can only answer one request at a time per connection — which is what parallel connections, pipelining and eventually HTTP/2 each tried to fix.
+
+:::callout[That's all it is]{type=insight}
+Keep-alive = reuse the TCP connection for the next request instead of opening a new one. HTTP/1.1 still sends one request at a time on it, which is why browsers open about six per host.
+:::
 
 ## How It Works
 
@@ -49,7 +57,7 @@ Pipelining lets a client send requests 1, 2, 3 back to back, but the server must
 
 ### Framing: where does the body end?
 
-With persistent connections, the receiver must know exactly where one message ends and the next begins:
+When one connection carried one response, "the server closed the connection" meant "the body ended". With reuse, that signal is gone. With persistent connections, the receiver must know exactly where one message ends and the next begins:
 
 1. **`Content-Length: 1256`** — exactly this many bytes follow.
 2. **`Transfer-Encoding: chunked`** — the body is sent as chunks, each prefixed with its size in hex, terminated by a zero-length chunk. Lets servers stream responses whose size isn't known in advance (server-rendered pages, streaming APIs, large exports):
@@ -75,7 +83,7 @@ Developer\r\n
 
 ### Client connection pools
 
-HTTP client libraries keep a **pool** of idle keep-alive connections per origin (host + port + scheme): a request borrows one, returns it after reading the full response. Key settings:
+Reuse needs somewhere to keep idle connections between requests. HTTP client libraries keep a **pool** of idle keep-alive connections per origin (host + port + scheme): a request borrows one, returns it after reading the full response. Key settings:
 
 - **max connections per host** (browser: ~6 for HTTP/1.1; libraries: configurable) — beyond it, requests queue;
 - **idle timeout / max lifetime** — must be **shorter** than the server's and any load balancer's idle timeout, or the client will reuse a connection the server already closed (first request fails with a reset);

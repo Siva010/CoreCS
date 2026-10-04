@@ -37,8 +37,15 @@ A **RST** is hanging up abruptly: "This connection doesn't exist / is aborted" �
 
 ## Why It Exists
 
-- Graceful close guarantees all data in both directions is delivered before the connection disappears.
-- TIME_WAIT prevents two real problems: a lost final ACK (the peer would retransmit its FIN and get an RST, reporting an error instead of a clean close) and **old delayed segments** from this connection being accepted by a new connection with the same 4-tuple.
+**The problem.** A TCP connection is *two* independent streams, one each way. One side finishing doesn't mean the other has finished — and over an unreliable network, neither side can be sure its last message arrived.
+
+**Why so many steps.** Each direction needs its own "I'm done" (FIN) and its own "got it" (ACK) — hence four messages. Graceful close guarantees all data in both directions is delivered before the connection disappears.
+
+**Why the waiting.** TIME_WAIT prevents two real problems: a lost final ACK (the peer would retransmit its FIN and get an RST, reporting an error instead of a clean close) and **old delayed segments** from this connection being accepted by a new connection with the same 4-tuple.
+
+:::callout[That's all it is]{type=insight}
+Each side says FIN when it has nothing more to send, and the other acknowledges. The side that closed first lingers for a minute (TIME_WAIT) so late packets die out. RST skips all of this and just kills the connection.
+:::
 
 ## How It Works
 
@@ -92,7 +99,7 @@ $ ss -tan state time-wait | wc -l
 
 ### Keep-alive
 
-TCP itself sends nothing on an idle connection, so a peer that vanished (power loss, cable cut, NAT timeout) goes unnoticed until you write. **TCP keep-alive** sends probes after an idle period:
+The flip side of "TCP sends nothing unless there's data": silence looks the same whether the peer is idle or dead. TCP itself sends nothing on an idle connection, so a peer that vanished (power loss, cable cut, NAT timeout) goes unnoticed until you write. **TCP keep-alive** sends probes after an idle period:
 
 - Linux defaults: `tcp_keepalive_time` = 7,200 s (2 hours!), `intvl` = 75 s, `probes` = 9 → dead peers detected after ~2 h 11 min.
 - Applications set per-socket values (`TCP_KEEPIDLE`, `TCP_KEEPINTVL`, `TCP_KEEPCNT`), e.g., 60 s / 10 s / 3.

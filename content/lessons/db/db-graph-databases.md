@@ -29,7 +29,13 @@ For queries that hop through many relationships of variable depth — "friends o
 
 ## Why It Exists
 
-Some questions are inherently about paths and neighborhoods of unknown depth. In SQL they become recursive CTEs or chains of self-joins whose cost multiplies with each hop ([Subqueries & CTEs](lesson:sql-subqueries-ctes)). Graph databases store the graph in a shape that makes those traversals the fast path, and offer languages that express patterns directly.
+**The problem.** Some questions are inherently about paths and neighborhoods of unknown depth. In SQL they become recursive CTEs or chains of self-joins whose cost multiplies with each hop ([Subqueries & CTEs](lesson:sql-subqueries-ctes)). Graph databases store the graph in a shape that makes those traversals the fast path, and offer languages that express patterns directly.
+
+**The idea.** In a relational database, "who is connected to whom" is recomputed by matching values every time you ask. If connections are the main thing you ask about, store them as direct links instead, so walking from a node to its neighbours is just following pointers.
+
+:::callout[That's all it is]{type=insight}
+A graph database stores relationships as direct pointers between records, so each hop is cheap regardless of graph size. It wins for many-hop, variable-depth questions and loses its edge for ordinary filtering and aggregation.
+:::
 
 ## How It Works
 

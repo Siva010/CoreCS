@@ -33,7 +33,15 @@ The origin controls both answers with headers: **`Cache-Control`** sets freshnes
 
 ## Why It Exists
 
-The fastest request is the one never sent. Caching cuts latency (no round trip), bandwidth, and origin load — often by orders of magnitude for static assets. Revalidation keeps correctness when content may change.
+**The problem.** The same CSS file, logo and API response get downloaded again and again by the same users — each time paying a round trip and the full transfer.
+
+**The idea.** The fastest request is the one never sent. Caching cuts latency (no round trip), bandwidth, and origin load — often by orders of magnitude for static assets.
+
+**The tension it creates.** A copy can go out of date. So the origin decides two things: *how long the copy may be trusted blindly* (freshness), and *how to check cheaply whether it's still right* once that time is up (validators). Revalidation keeps correctness when content may change.
+
+:::callout[That's all it is]{type=insight}
+`Cache-Control` says how long a copy is good for. After that, the cache asks "has version X changed?" and gets either a tiny 304 ("no, keep using it") or the new content.
+:::
 
 ## How It Works
 
@@ -86,9 +94,11 @@ GET /app.css
 
 ### Vary
 
-A cache key is normally the URL. If the response depends on request headers (e.g., `Accept-Encoding`, `Accept-Language`), the server must send `Vary: Accept-Encoding` so caches store separate variants. `Vary: Cookie` or `Vary: User-Agent` effectively disables shared caching (too many variants).
+Caching by URL alone breaks when the same URL returns different content to different clients (compressed vs not, English vs French). A cache key is normally the URL. If the response depends on request headers (e.g., `Accept-Encoding`, `Accept-Language`), the server must send `Vary: Accept-Encoding` so caches store separate variants. `Vary: Cookie` or `Vary: User-Agent` effectively disables shared caching (too many variants).
 
 ### Cache busting: the standard pattern for static assets
+
+The freshness dilemma: long cache lifetimes are fast but make deploys invisible; short ones are always current but slow. The way out is to make every new version a *new URL* — then the old URL can be cached forever because it never changes.
 
 - **Fingerprinted asset URLs** (`/static/app.3f9a1c.js`) with `Cache-Control: public, max-age=31536000, immutable` — cache "forever"; a new deploy produces a new URL.
 - **HTML** (which references those URLs) with `Cache-Control: no-cache` (revalidate every time, cheap 304s) or a short max-age.

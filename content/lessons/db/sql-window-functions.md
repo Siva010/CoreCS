@@ -52,7 +52,15 @@ Window functions are evaluated **after `WHERE`/`GROUP BY`/`HAVING` and before `O
 
 ## Why It Exists
 
-Before window functions, "rank employees within department", "compare each month with the previous one" or "running balance" required self joins or correlated subqueries — O(n²) and hard to read. Window functions express them directly and are computed in a single sorted pass.
+**The problem.** Some questions need *both* the individual row and a summary of rows around it: "each employee and their rank in the department", "each month and last month's revenue", "each transaction and the running balance". GROUP BY gives you the summary but throws the individual rows away.
+
+**Without it.** Before window functions, "rank employees within department", "compare each month with the previous one" or "running balance" required self joins or correlated subqueries — O(n²) and hard to read.
+
+**The idea.** Keep every row, and for each one compute an aggregate over a chosen set of related rows (its "window"). Window functions express them directly and are computed in a single sorted pass.
+
+:::callout[That's all it is]{type=insight}
+A window function is an aggregate that doesn't collapse rows. PARTITION BY picks which rows are related, ORDER BY lines them up, and the frame says how far to look. The answer is written next to each row.
+:::
 
 ## How It Works
 
@@ -103,6 +111,8 @@ ORDER BY month;
 The first month's `lag` is NULL, so its growth is NULL — correct, there's nothing to compare with. Name the window once to avoid repetition: `… OVER w … WINDOW w AS (ORDER BY month)`.
 
 ### Running totals and moving averages: frames
+
+Ranking needs only the order; a running total or moving average also needs to know *which* rows to add up relative to the current one. That set is the frame.
 
 ```sql
 SELECT order_date, total,

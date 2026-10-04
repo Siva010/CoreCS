@@ -32,7 +32,13 @@ The pool is a queue in front of a scarce resource. **Little's law** tells you ho
 
 ## Why It Exists
 
-Opening a database connection per request would add several round trips (TCP + TLS + auth ≈ 3–5 RTT) and, for PostgreSQL, fork a process (~ms, plus several MB of memory). At hundreds of requests per second, connection setup would dominate, and thousands of simultaneous connections would exhaust memory, file descriptors and CPU (context switching, snapshot overhead). Pools amortize setup and cap concurrency.
+**The problem.** Opening a database connection per request would add several round trips (TCP + TLS + auth ≈ 3–5 RTT) and, for PostgreSQL, fork a process (~ms, plus several MB of memory). At hundreds of requests per second, connection setup would dominate, and thousands of simultaneous connections would exhaust memory, file descriptors and CPU (context switching, snapshot overhead). Pools amortize setup and cap concurrency.
+
+**The idea.** It's the same trick as thread pools: pay the expensive setup once, then hand the finished object to whoever needs it next. A pool is also a deliberate limit — it decides how many requests can be talking to the database at once, which protects the database when traffic spikes.
+
+:::callout[That's all it is]{type=insight}
+Connections are expensive to open and limited in number, so keep a few open and lend them out. Size the pool with Little's law (throughput × hold time), remember that every app instance has its own pool, and put timeouts on every wait.
+:::
 
 ## How It Works
 
@@ -58,7 +64,7 @@ And the database side has its own optimum: throughput peaks when active connecti
 
 ### The multiplication problem
 
-50 application instances × pool size 20 = 1,000 database connections — even though each instance is mostly idle. Autoscaling to 150 instances → 3,000 → `FATAL: sorry, too many clients already`. Solutions:
+Each instance sizes its pool for itself; the database sees the sum. 50 application instances × pool size 20 = 1,000 database connections — even though each instance is mostly idle. Autoscaling to 150 instances → 3,000 → `FATAL: sorry, too many clients already`. Solutions:
 
 - Smaller per-instance pools, sized by Little's law.
 - An **external pooler** in transaction mode: thousands of client connections share, say, 100 server connections, because a server connection is only needed *during* a transaction. Caveat: session state (session-level prepared statements, `SET`, advisory locks, `LISTEN`, temp tables) doesn't survive across transactions — use transaction-scoped equivalents.

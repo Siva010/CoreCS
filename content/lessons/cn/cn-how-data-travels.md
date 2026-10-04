@@ -39,7 +39,11 @@ Everything in computer networking elaborates one of those five sentences.
 
 ## Why It Exists
 
-Early telephone networks used **circuit switching**: a dedicated path reserved for the whole call. Computers communicate in **bursts**, so reserving a path wastes capacity. The internet uses **packet switching**: data is chopped into packets that share links with everyone else's packets, each routed independently.
+**The problem.** Millions of computers need to exchange data with any of millions of others, over shared cables, with no central coordinator — and links and routers fail all the time.
+
+**The first answer, and why it didn't fit.** Early telephone networks used **circuit switching**: a dedicated path reserved for the whole call. Computers communicate in **bursts**, so reserving a path wastes capacity. A phone call talks continuously; a computer sends a burst, then goes quiet for seconds.
+
+**The idea.** The internet uses **packet switching**: data is chopped into packets that share links with everyone else's packets, each routed independently. Every packet carries its own destination, so no route has to be set up in advance and a broken link just means "send the next packet another way".
 
 | | Circuit switching | Packet switching |
 |---|---|---|
@@ -51,9 +55,17 @@ Early telephone networks used **circuit switching**: a dedicated path reserved f
 
 The price of packet switching is **queueing**: when many packets want the same link at once, they wait in router buffers (delay) or get dropped (loss). Much of networking — TCP congestion control, QoS, tail latency — exists to cope with that price.
 
+**From idea to mechanism.** Once you decide "independent packets on shared links", the rest of the course falls out: packets need addresses to find hosts (**IP**), something to choose each next hop (**routing**), a way to cross each individual link (**Ethernet, MAC addresses**), a way to reach the right program on the host (**ports**), and — because packets can be lost or reordered — a way to rebuild a reliable stream (**TCP**).
+
+:::callout[That's all it is]{type=insight}
+Data is cut into packets with an address on each. Every router looks at the address and passes the packet one hop closer. The two ends fix up whatever goes wrong on the way: losses, reordering, duplicates.
+:::
+
 ## How It Works
 
 ### Four kinds of addresses, four jobs
+
+Why so many addresses? Because "deliver to that program on that machine across the world" is really four questions: which program (port), which machine globally (IP), which device on this cable right now (MAC), and what humans type (domain name).
 
 | Address | Example | Scope | Who uses it |
 |---|---|---|---|
@@ -103,7 +115,7 @@ Every hop adds four kinds of delay ([Latency & Bandwidth](lesson:cn-latency-band
 
 ### The end-to-end principle
 
-The network core (routers) is deliberately **simple and stateless** — "best effort" delivery of individual packets. Reliability, ordering, encryption and flow control are implemented at the **ends** (in hosts' TCP stacks and applications), because only the ends know what "correct" means for their application, and a smart network can't guarantee end-to-end correctness anyway. This is why the internet scaled: routers don't track your connections. (Middleboxes like NATs and firewalls do keep state, and they're a constant source of breakage — which is why QUIC encrypts almost everything.)
+A design philosophy that explains why the internet looks the way it does. The network core (routers) is deliberately **simple and stateless** — "best effort" delivery of individual packets. Reliability, ordering, encryption and flow control are implemented at the **ends** (in hosts' TCP stacks and applications), because only the ends know what "correct" means for their application, and a smart network can't guarantee end-to-end correctness anyway. This is why the internet scaled: routers don't track your connections. (Middleboxes like NATs and firewalls do keep state, and they're a constant source of breakage — which is why QUIC encrypts almost everything.)
 
 :::depth{level=advanced}
 ### Physical layer in one paragraph

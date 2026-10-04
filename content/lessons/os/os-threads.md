@@ -37,12 +37,18 @@ All threads in a process share:
 
 ## Why It Exists
 
-Processes give isolation, but two needs aren't served well by them:
+**The problem.** Processes give isolation, but two needs aren't served well by them:
 
 1. **Concurrency within one task.** A server wants to handle many clients; a GUI wants to stay responsive while a download runs. Separate processes would need IPC to share state.
 2. **Parallelism on multicore CPUs.** One process with one thread can use one core. Threads let one program use all cores on shared data.
 
-Threads are cheaper than processes to create (~10–20 µs vs 100s of µs), switch between (no address-space change), and communicate between (shared memory, no IPC).
+**Without it.** You'd use several processes, and every piece of shared state (a cache, a connection pool, a counter) would have to be copied between them or squeezed through IPC.
+
+**The idea.** A process bundles two things: *a space* (memory, files) and *a worker* (registers, a stack, a place in the code). Nothing forces one worker per space. Unbundle them: keep one space, put several workers in it. Threads are cheaper than processes to create (~10–20 µs vs 100s of µs), switch between (no address-space change), and communicate between (shared memory, no IPC).
+
+:::callout[That's all it is]{type=insight}
+A thread is a second program counter and stack inside the same process. Everything is shared except "where am I in the code" and "my local variables" — which is exactly why threads are fast to talk to each other, and exactly why they can corrupt each other's data.
+:::
 
 ## How It Works
 
@@ -94,6 +100,8 @@ Local variables are private (on each thread's stack) **unless you pass a pointer
 
 ### User threads vs kernel threads
 
+The problem with kernel threads at scale: each one costs a kernel object, a fixed stack and a syscall to switch. Fine for 100 threads; painful for 100,000 connections each wanting "its own thread". So runtimes started scheduling lightweight threads *themselves*, in user space, on top of a few kernel threads.
+
 | | Kernel threads | User-level threads |
 |---|---|---|
 | Who schedules | OS kernel | A runtime library in user space |
@@ -125,9 +133,9 @@ The M:N runtime must handle blocking: Go parks the goroutine and uses its networ
 
 ### Thread-local storage (TLS)
 
-Sometimes each thread needs its *own* copy of a "global": `errno`, a per-thread random generator, a request ID for logging, a per-thread buffer. **Thread-local storage** (`__thread`/`thread_local` in C/C++, `ThreadLocal` in Java, `threading.local` in Python) gives each thread a separate instance, accessed without locks. On x86-64 Linux it's implemented by pointing the `fs` segment register at a per-thread block.
+Sharing everything is the point of threads — but occasionally sharing is exactly wrong. Sometimes each thread needs its *own* copy of a "global": `errno`, a per-thread random generator, a request ID for logging, a per-thread buffer. **Thread-local storage** (`__thread`/`thread_local` in C/C++, `ThreadLocal` in Java, `threading.local` in Python) gives each thread a separate instance, accessed without locks. On x86-64 Linux it's implemented by pointing the `fs` segment register at a per-thread block.
 
-:::callout{type=warning}[ThreadLocal in thread pools]
+:::callout[ThreadLocal in thread pools]{type=warning}
 Thread pools reuse threads. A value stored in a `ThreadLocal` during one request survives into the next request handled by that thread — a classic source of data leaks between users and memory leaks. Always clear thread-locals in a `finally` block (or use scoped values/context propagation).
 :::
 

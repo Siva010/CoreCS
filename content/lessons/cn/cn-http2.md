@@ -33,7 +33,13 @@ But the highway still runs through one **TCP tunnel**: if a single packet is los
 
 ## Why It Exists
 
-Web pages grew to hundreds of resources. HTTP/1.1's workarounds (multiple connections, domain sharding, spriting, concatenation, inlining) wasted connections and fought TCP's congestion control. SPDY (Google, 2009) proved multiplexing worked; it became HTTP/2 (2015).
+**The problem.** Web pages grew to hundreds of resources. HTTP/1.1's workarounds (multiple connections, domain sharding, spriting, concatenation, inlining) wasted connections and fought TCP's congestion control. SPDY (Google, 2009) proved multiplexing worked; it became HTTP/2 (2015).
+
+**The idea.** HTTP/1.1 can only do one request at a time per connection because a message is one long piece of text — nothing can be slipped in until it ends. So cut every message into small labelled frames ("this piece belongs to request 5"). Now pieces of many requests can share one connection, interleaved, and the receiver reassembles them by label.
+
+:::callout[That's all it is]{type=insight}
+HTTP/2 is the same HTTP, cut into numbered frames so many requests can share one TCP connection at once. Its one big unfixed problem is that TCP below it still stops everything when a single packet is lost.
+:::
 
 ## How It Works
 
@@ -57,7 +63,7 @@ One TCP connection:
 
 ### HPACK
 
-Headers repeat heavily between requests (cookies, user-agent, accept…). HPACK replaces them with indexes into a **static table** (common headers) and a **dynamic table** of previously sent headers, Huffman-encoding the rest. A repeated 800-byte header block can shrink to a few bytes. (It was designed to resist the CRIME attack that broke naive compression of encrypted headers.)
+A cost that became visible once requests were cheap: headers repeat heavily between requests (cookies, user-agent, accept…). HPACK replaces them with indexes into a **static table** (common headers) and a **dynamic table** of previously sent headers, Huffman-encoding the rest. A repeated 800-byte header block can shrink to a few bytes. (It was designed to resist the CRIME attack that broke naive compression of encrypted headers.)
 
 ### Flow control and prioritization
 

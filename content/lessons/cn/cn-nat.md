@@ -31,7 +31,13 @@ That notebook is the **connection-tracking table**. It's why NAT lets thousands 
 
 ## Why It Exists
 
-IPv4 addresses ran out. NAT lets a household, an office or an entire mobile carrier's customers reach the internet through a few public addresses. It also hides internal topology and, as a side effect, blocks unsolicited inbound connections.
+**The problem.** IPv4 addresses ran out. There are more devices than public addresses — a single home has a dozen.
+
+**The idea.** Most devices only *start* conversations; they rarely need to be called. So let many devices share one public address: rewrite each outgoing packet to come from the shared address, remember which inside device it really came from, and use that memory to route the replies back. NAT lets a household, an office or an entire mobile carrier's customers reach the internet through a few public addresses. It also hides internal topology and, as a side effect, blocks unsolicited inbound connections — there's no memory entry for a call nobody made.
+
+:::callout[That's all it is]{type=insight}
+NAT rewrites the source address and port on the way out, writes the mapping in a table, and uses that table to rewrite replies on the way back in. Every NAT problem — port exhaustion, timeouts, P2P trouble, full conntrack tables — is a problem with that table.
+:::
 
 ## How It Works
 
@@ -52,9 +58,11 @@ Every packet in both directions is rewritten (addresses, ports, and checksums re
 
 ### Port exhaustion
 
-One public IP has ~64K ports per protocol **per destination** (entries are distinguished by the full 5-tuple, but many NATs allocate ports more conservatively). When many internal clients open many connections to the **same** destination IP:port — e.g., hundreds of pods all calling one external API — the NAT can run out of source ports for that destination, and new connections fail or time out. Cloud NAT gateways document per-destination connection limits for exactly this reason. Remedies: more NAT IPs, connection reuse/pooling, keep-alive, shorter idle timeouts.
+The table distinguishes inside devices by the *port* it assigns them on the shared address — and ports are a 16-bit number. So the table has a size limit. One public IP has ~64K ports per protocol **per destination** (entries are distinguished by the full 5-tuple, but many NATs allocate ports more conservatively). When many internal clients open many connections to the **same** destination IP:port — e.g., hundreds of pods all calling one external API — the NAT can run out of source ports for that destination, and new connections fail or time out. Cloud NAT gateways document per-destination connection limits for exactly this reason. Remedies: more NAT IPs, connection reuse/pooling, keep-alive, shorter idle timeouts.
 
 ### Types of NAT behavior (why P2P is hard)
+
+Since NAT only allows replies to conversations started from inside, two devices both behind NATs can't simply call each other. Whether tricks work depends on how predictably the NAT picks ports:
 
 - **Endpoint-independent mapping** ("full cone"-ish): the same internal socket gets the same public port regardless of destination — friendliest for peer-to-peer.
 - **Address/port-dependent mapping** ("symmetric"): a new public port per destination — defeats simple hole punching, requiring relays ([VPN & NAT Traversal](lesson:cn-vpn-nat-traversal)).

@@ -36,7 +36,13 @@ The gold standard is **serializability**: whatever the interleaving, the outcome
 
 ## Why It Exists
 
-Running transactions strictly one at a time would be trivially correct and hopelessly slow. Databases interleave them; every interleaving that isn't equivalent to a serial one is a potential bug. Naming the anomalies gives us a vocabulary to state what each isolation level guarantees ([Isolation Levels](lesson:db-isolation-levels)).
+**The problem.** Running transactions strictly one at a time would be trivially correct and hopelessly slow. Databases interleave them; every interleaving that isn't equivalent to a serial one is a potential bug.
+
+**Why name them.** "Isolation" is too vague to choose between options. Naming the anomalies gives us a vocabulary to state what each isolation level guarantees ([Isolation Levels](lesson:db-isolation-levels)) — and to recognise which one your bug actually is.
+
+:::callout[That's all it is]{type=insight}
+An anomaly is a result you could never get if transactions ran one after another. Each has a short story: reading someone's uncommitted change, a value changing under you, rows appearing, two writers overwriting each other, or two transactions each breaking a rule the other was checking.
+:::
 
 ## How It Works
 
@@ -96,7 +102,7 @@ Each read was of committed data, but from different moments. Snapshot isolation 
 
 ### Write skew — the anomaly snapshots don't prevent
 
-Invariant: at least one doctor on call. Alice and Bob are both on call; both want to leave.
+Every anomaly above involves two transactions touching the *same* row. Write skew is the sneaky one: they touch *different* rows, so nothing looks like a conflict. Invariant: at least one doctor on call. Alice and Bob are both on call; both want to leave.
 
 ```text
 T1 (Alice): SELECT count(*) FROM doctors WHERE on_call → 2   -- ok to leave

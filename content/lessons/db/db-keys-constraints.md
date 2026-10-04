@@ -35,7 +35,7 @@ Other constraints: `NOT NULL`, `UNIQUE`, `CHECK (expression)`, `DEFAULT`, and ex
 
 ## Why It Exists
 
-Consider enforcing "emails are unique" in application code:
+**The problem.** Data has rules — emails are unique, orders belong to real customers, quantities are positive. The obvious place to enforce them is application code. Consider enforcing "emails are unique" in application code:
 
 ```text
 Request A: SELECT 1 FROM customers WHERE email='x@y.com'  → none
@@ -47,6 +47,12 @@ Request B: INSERT … email='x@y.com'          ← duplicate created
 Check-then-act across two statements is a race condition ([Race Conditions](lesson:os-race-conditions)). A `UNIQUE` constraint is enforced atomically inside the database (via a unique index and locking), so exactly one insert succeeds and the other fails with a unique-violation error your code can handle.
 
 The same logic applies to foreign keys: without them, deleting a customer can leave "orphan" orders pointing to nothing, and nobody notices until a report joins them.
+
+**The idea.** A rule checked by *some* code paths is a suggestion; a rule checked by the one component *every* write passes through is a guarantee. Declare the rules on the table, and the database enforces them atomically for every writer, now and in the future.
+
+:::callout[That's all it is]{type=insight}
+A key says "this identifies a row" (and the database refuses duplicates). A foreign key says "this value must exist over there". A CHECK says "this must be true". The database checks them on every write, so no code path can skip them.
+:::
 
 ## How It Works
 
@@ -90,7 +96,7 @@ CREATE INDEX ON orders (customer_id);  -- FKs are not indexed automatically in P
 
 ### Referential actions
 
-What happens to children when a parent row is deleted (or its key updated):
+A foreign key creates a question the database must answer whenever a parent row goes away: what about the rows pointing at it? What happens to children when a parent row is deleted (or its key updated):
 
 | Action | Effect |
 |---|---|

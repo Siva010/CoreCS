@@ -34,7 +34,17 @@ A scheduler is **preemptive** if it can take the CPU away from a running thread 
 
 ## Why It Exists
 
-There are almost always more runnable threads than cores. Without a policy, one compute-heavy task could hog the CPU while an interactive program freezes, or short tasks could wait behind long ones. Scheduling is how the OS turns "a few cores" into a responsive, fair, efficient illusion of "a CPU for everyone".
+**The problem.** There are almost always more runnable threads than cores. Something has to decide who runs next.
+
+**Without it.** Without a policy, one compute-heavy task could hog the CPU while an interactive program freezes, or short tasks could wait behind long ones.
+
+**The idea.** Since the context switch already lets the OS stop and resume anything, the only remaining question is *whom to pick, and for how long*. That choice is the scheduler. Scheduling is how the OS turns "a few cores" into a responsive, fair, efficient illusion of "a CPU for everyone".
+
+**Why there's no single right answer.** Picking the shortest job first minimises average waiting but can starve long jobs. Taking turns is fair but makes everyone finish later. So "a scheduling algorithm" is really "a choice of which goal to favour".
+
+:::callout[That's all it is]{type=insight}
+The scheduler is a function called every few milliseconds that answers: "of everyone who could run right now, who goes next?" Every algorithm is a different answer, tuned for a different goal.
+:::
 
 ## How It Works
 
@@ -56,7 +66,7 @@ Non-preemptive scheduling acts only on cases 1 and 4.
 
 ### The metrics
 
-For each process: **arrival time (AT)**, **burst time (BT)**, **completion time (CT)**, and the time it **first** gets the CPU.
+You can only compare schedulers if you agree what "better" means — hence these measurements. For each process: **arrival time (AT)**, **burst time (BT)**, **completion time (CT)**, and the time it **first** gets the CPU.
 
 | Metric | Formula | What it measures |
 |---|---|---|
@@ -98,7 +108,7 @@ Two short jobs wait behind one long job — the **convoy effect**. Running P2 an
 
 ### Preemption is driven by interrupts
 
-The timer (local APIC timer on x86) interrupts each core periodically or at programmed deadlines. The interrupt handler updates the running thread's accounting; if its **time slice** is used up or a more deserving thread is runnable, it sets a "need reschedule" flag. On the way back to user mode the kernel checks the flag and calls the scheduler. Wakeups (e.g., a packet arriving for a blocked thread) can also set the flag.
+The problem: a running thread will never volunteer to stop if it's in a loop. The kernel needs a way to get the CPU back that the thread can't prevent — a hardware alarm clock. The timer (local APIC timer on x86) interrupts each core periodically or at programmed deadlines. The interrupt handler updates the running thread's accounting; if its **time slice** is used up or a more deserving thread is runnable, it sets a "need reschedule" flag. On the way back to user mode the kernel checks the flag and calls the scheduler. Wakeups (e.g., a packet arriving for a blocked thread) can also set the flag.
 
 ### Context-switch overhead is a scheduling cost
 

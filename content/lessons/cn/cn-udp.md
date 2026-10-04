@@ -30,12 +30,18 @@ TCP is a phone call: set it up, then talk in a reliable, ordered stream. **UDP i
 
 ## Why It Exists
 
-Some applications are **better served by speed than by reliability**, or need a **different kind** of reliability than TCP's strict in-order byte stream:
+**The problem.** TCP bundles many features — handshake, retransmission, ordering, congestion control — into one fixed package. That's perfect for most apps, but for some, part of the package actively hurts. Some applications are **better served by speed than by reliability**, or need a **different kind** of reliability than TCP's strict in-order byte stream:
 
 - A lost 20 ms audio frame is better skipped than delivered late.
 - A game's latest position update makes the previous one obsolete — retransmitting it is pointless.
 - A DNS query is one small request and one small response — a 3-way handshake would triple the cost.
 - Protocols like QUIC want reliability **per stream** with modern congestion control, implemented in user space — they need a thin substrate, and UDP passes through middleboxes.
+
+**The idea.** Offer the thinnest possible layer over IP — just ports (so packets reach the right program) and a checksum — and let the application add only the reliability it wants.
+
+:::callout[That's all it is]{type=insight}
+UDP is IP plus port numbers. Each send is one packet; nothing is retransmitted, ordered or throttled unless the application does it itself.
+:::
 
 ## How It Works
 

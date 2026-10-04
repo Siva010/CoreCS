@@ -29,7 +29,15 @@ A filesystem is a **library built on a warehouse of numbered shelves** (disk blo
 
 ## Why It Exists
 
-Raw disks offer only numbered blocks. Programs need named, hierarchical, growable, access-controlled files — and the filesystem must allocate space efficiently, find data quickly, and survive crashes ([Journaling](lesson:os-journaling)).
+**The problem.** Raw disks offer only numbered blocks. Programs need named, hierarchical, growable, access-controlled files — and the filesystem must allocate space efficiently, find data quickly, and survive crashes ([Journaling](lesson:os-journaling)).
+
+**Without it.** Every program would track "my data is in blocks 9,812 to 9,840" itself — and two programs would happily overwrite each other's blocks.
+
+**The idea.** Separate three questions that are easy to tangle: *what is this file?* (an inode — metadata plus where its blocks are), *what is it called?* (a directory entry — just name → inode number), and *which blocks are free?* (bitmaps). Keeping the name out of the inode is what makes hard links, cheap renames and "delete while open" possible.
+
+:::callout[That's all it is]{type=insight}
+A filesystem is a small database on the disk: a table of inodes (file metadata + block locations), directories that map names to inode numbers, and bitmaps of free space. Opening a path is a series of lookups through those directories.
+:::
 
 ## How It Works
 
@@ -43,7 +51,7 @@ Bitmaps track free blocks and free inodes; the inode table holds fixed-size inod
 
 ### Finding a file's data: block pointers vs extents
 
-**Classic Unix inode (ext2/ext3)**: 12 **direct** pointers, then **single**, **double** and **triple indirect** pointers.
+The design tension: most files are tiny, but a few are enormous. The inode is fixed-size, so it can't hold a list of a million blocks — yet small files should need no extra reads. **Classic Unix inode (ext2/ext3)**: 12 **direct** pointers, then **single**, **double** and **triple indirect** pointers.
 
 With 4 KB blocks and 4-byte block addresses (1,024 addresses per block):
 
@@ -56,7 +64,7 @@ With 4 KB blocks and 4-byte block addresses (1,024 addresses per block):
 
 Small files are fast (direct pointers); large files need extra reads through indirect blocks.
 
-**Extents (ext4, XFS, Btrfs)**: describe runs of contiguous blocks as `(start block, length)`. One extent can cover up to 128 MB in ext4; a large contiguous file needs a handful of extents instead of millions of pointers. Extent trees handle fragmented files.
+**Extents (ext4, XFS, Btrfs)**: if blocks are usually allocated contiguously anyway, listing each one is wasteful — say "blocks 5000 to 37,767" once. Extents describe runs of contiguous blocks as `(start block, length)`. One extent can cover up to 128 MB in ext4; a large contiguous file needs a handful of extents instead of millions of pointers. Extent trees handle fragmented files.
 
 ### Path resolution
 

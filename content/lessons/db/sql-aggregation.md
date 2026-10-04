@@ -30,7 +30,15 @@ tags: [group by, having, count, sum, avg, min, max, count distinct, conditional 
 
 ## Why It Exists
 
-Most business questions are summaries: revenue per month, orders per customer, average salary per department. Aggregation lets the database summarize millions of rows where the data lives, instead of shipping them to the application.
+**The problem.** Most business questions are summaries: revenue per month, orders per customer, average salary per department.
+
+**Without it.** You'd fetch millions of rows into the application just to add them up — slow over the network and wasteful in memory.
+
+**The idea.** Aggregation lets the database summarize millions of rows where the data lives, instead of shipping them to the application. Sort the rows into buckets, then reduce each bucket to a few numbers.
+
+:::callout[That's all it is]{type=insight}
+GROUP BY puts rows into buckets; aggregates squash each bucket into one value. WHERE removes rows before bucketing; HAVING removes buckets afterwards. Every selected column must be either the bucket label or a squashed value.
+:::
 
 ## How It Works
 
@@ -56,6 +64,8 @@ flowchart LR
 ```
 
 ### The "must appear in GROUP BY" rule
+
+This error is the database refusing to guess: after grouping, there are many values of `name` per bucket and only one output row.
 
 ```sql
 -- ERROR: column "employees.name" must appear in the GROUP BY clause or be used in an aggregate

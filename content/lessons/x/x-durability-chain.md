@@ -36,7 +36,13 @@ A write is only as durable as the **last link it has reached** when you acknowle
 
 ## Why It Exists
 
-Each layer buffers writes to be fast: databases batch WAL, the OS delays writeback, disks cache in DRAM. Buffering is only safe if something forces data through before claiming success. Knowing the chain lets you answer the real question behind "is it durable?": **durable against what?**
+**The problem.** Each layer buffers writes to be fast: databases batch WAL, the OS delays writeback, disks cache in DRAM. Buffering is only safe if something forces data through before claiming success. Knowing the chain lets you answer the real question behind "is it durable?": **durable against what?**
+
+**The idea.** Durability isn't yes/no; it's "how far down the chain has this write travelled before I said OK?". Each extra link survives a bigger disaster and costs more latency, so you choose the link that matches the failure you care about.
+
+:::callout[That's all it is]{type=insight}
+"Saved" means "copied to somewhere that survives failure X". Each layer (log, fsync, disk, replica, other zone, backup) survives a bigger X. A write is only as safe as the last layer it reached before you acknowledged it.
+:::
 
 ## How It Works
 

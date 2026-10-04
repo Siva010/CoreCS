@@ -37,7 +37,13 @@ The first three are *necessary conditions of the system*; circular wait is the a
 
 ## Why It Exists
 
-Deadlock is the price of two otherwise reasonable things: **exclusive access** (needed for correctness) and **incremental acquisition** (acquiring resources as you discover you need them, e.g., locking account A, then B). Whenever independent actors acquire multiple exclusive resources in different orders, cycles become possible.
+**Nobody designs deadlock in.** It isn't a mechanism; it's an accident that becomes possible once a system has certain properties. Deadlock is the price of two otherwise reasonable things: **exclusive access** (needed for correctness) and **incremental acquisition** (acquiring resources as you discover you need them, e.g., locking account A, then B). Whenever independent actors acquire multiple exclusive resources in different orders, cycles become possible.
+
+**Why the four conditions matter.** If deadlock needs *all four* conditions, you only have to remove *one* to make it impossible. That turns a scary, timing-dependent bug into a design checklist — which is what the [next lesson](lesson:os-deadlock-handling) does.
+
+:::callout[That's all it is]{type=insight}
+Deadlock = everyone is holding something and waiting for something someone else in the group holds, in a circle. Break the circle (for example, always take locks in the same order) and it can't happen.
+:::
 
 ## How It Works
 
@@ -54,7 +60,7 @@ Thread 1 holds `a`, wants `b`; Thread 2 holds `b`, wants `a`. All four condition
 
 ### Resource-allocation graph (RAG)
 
-Nodes: processes (circles) and resource types (boxes, with dots for instances). Edges:
+Why draw a graph: "who holds what, who waits for what" is hard to see in code but obvious as arrows — and "a cycle of waiting" becomes literally a cycle you can look for. Nodes: processes (circles) and resource types (boxes, with dots for instances). Edges:
 
 - **Request edge** P → R: P is waiting for an instance of R.
 - **Assignment edge** R → P: an instance of R is allocated to P.

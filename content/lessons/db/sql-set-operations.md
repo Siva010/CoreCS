@@ -38,7 +38,13 @@ Rules:
 
 ## Why It Exists
 
-Some questions are naturally about combining result sets: "all contacts, from customers and from suppliers", "users active in both January and February", "products in the catalog but never sold". Set operations express them directly.
+**The problem.** Some questions are naturally about combining result sets: "all contacts, from customers and from suppliers", "users active in both January and February", "products in the catalog but never sold". These aren't about pairing rows (joins) but about comparing or stacking whole lists.
+
+**The idea.** Tables are sets of rows, so borrow the set operations everyone already knows — union, intersection, difference — and apply them to whole rows. Set operations express them directly.
+
+:::callout[That's all it is]{type=insight}
+UNION stacks two results (removing duplicates unless you say ALL), INTERSECT keeps rows in both, EXCEPT keeps rows only in the first. Columns match by position, so both sides must line up.
+:::
 
 ## How It Works
 

@@ -37,7 +37,15 @@ Writes become cheap sequential appends. The price is paid at read time (a key mi
 
 ## Why It Exists
 
-On spinning disks, sequential writes were ~100× faster than random ones; on SSDs, random small writes cause internal write amplification and wear. Workloads like event logging, metrics, messaging and time series are **write-heavy**. An LSM tree converts random writes into large sequential ones, sustaining much higher ingest than an in-place B+ tree on the same hardware ([Storage Devices](lesson:os-storage-devices)).
+**The problem.** A B+ tree updates data in place: every write must find its page and rewrite it — a random read plus a random write. For write-heavy workloads, that random I/O is the bottleneck. On spinning disks, sequential writes were ~100× faster than random ones; on SSDs, random small writes cause internal write amplification and wear. Workloads like event logging, metrics, messaging and time series are **write-heavy**. An LSM tree converts random writes into large sequential ones, sustaining much higher ingest than an in-place B+ tree on the same hardware ([Storage Devices](lesson:os-storage-devices)).
+
+**The idea.** Never update anything on disk. Collect writes in memory, sorted; when there are enough, write them out as one new sorted file. Old values are simply superseded by newer files, and a background job merges files to throw the old values away.
+
+**The bill.** A key may now be in several files, so reads must check more places — hence Bloom filters (skip files cheaply) and compaction (keep the number of files small).
+
+:::callout[That's all it is]{type=insight}
+Buffer writes in a sorted in-memory table, dump it to an immutable sorted file when full, and merge files in the background. Reads check newest to oldest. Bloom filters and compaction exist only to keep those reads cheap.
+:::
 
 ## How It Works
 
@@ -62,7 +70,7 @@ Updates and deletes are just newer entries (a new value or a tombstone) — the 
 
 ### Read path
 
-To `get(k)`, check the newest data first and stop at the first hit:
+The cost of never updating in place: a key's latest value could be in any of several places. To `get(k)`, check the newest data first and stop at the first hit:
 
 1. Memtable (and immutable memtables awaiting flush).
 2. L0 SSTables, newest to oldest (they may overlap).
@@ -71,6 +79,8 @@ To `get(k)`, check the newest data first and stop at the first hit:
 For each SSTable, first ask its **Bloom filter**: "definitely not here" skips the file without I/O. With ~10 bits per key, the false-positive rate is ~1%, so a point read that misses most files costs roughly one data-block read. Range scans are harder: they must merge iterators from every level (Bloom filters don't help ranges; prefix Bloom filters partially do).
 
 ### Compaction strategies
+
+Without merging, files pile up forever, every read checks more of them, and deleted data never goes away. Compaction is the cleanup — and *how* you merge decides which cost you pay.
 
 | Strategy | How | Write amp | Read amp | Space amp | Used by |
 |---|---|---|---|---|---|

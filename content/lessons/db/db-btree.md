@@ -32,9 +32,17 @@ Because each page holds hundreds of keys, the tree is **very wide and very shall
 
 ## Why It Exists
 
-A binary search tree over 1 billion keys is ~30 levels deep. If each level is a random disk read, a lookup takes 30 I/Os. Storage reads whole pages anyway ([Pages & Records](lesson:db-pages-records)), so it's wasteful to use a page for one key and two children. A B+ tree fills each page with hundreds of keys: `log_500(10⁹) ≈ 3.3` levels. Same O(log n) complexity, a ~10× smaller constant in I/Os — the only cost that matters on disk.
+**The problem.** You need to find one key among a billion — and also all keys in a range, in order — on storage where every random read is expensive.
+
+**Why the textbook structures fail.** A binary search tree over 1 billion keys is ~30 levels deep. If each level is a random disk read, a lookup takes 30 I/Os. Storage reads whole pages anyway ([Pages & Records](lesson:db-pages-records)), so it's wasteful to use a page for one key and two children. A B+ tree fills each page with hundreds of keys: `log_500(10⁹) ≈ 3.3` levels. Same O(log n) complexity, a ~10× smaller constant in I/Os — the only cost that matters on disk.
 
 Hash tables give O(1) point lookups but no ordering — no ranges, no prefix search, no ORDER BY support. B+ trees give O(log n) lookups **and** ordered access.
+
+**The idea.** Storage hands you a whole page per read anyway, so make each tree node *a whole page* full of keys. A node with 500 keys narrows the search 500 ways per read instead of 2. Then keep the tree balanced automatically (splits and merges), so every lookup costs the same few reads.
+
+:::callout[That's all it is]{type=insight}
+A B+ tree is a sorted list of keys split into pages, with a few small levels of "table of contents" pages on top. Lookup = read one page per level (usually 3–4). Range scan = find the start, then walk the leaves sideways.
+:::
 
 ## How It Works
 
@@ -64,6 +72,8 @@ Find 58: root (40 ≤ 58 < 80 → middle child) → internal (50 ≤ 58 < 65 →
 `WHERE key BETWEEN 44 AND 70`: search for 44, then walk right along the leaf chain until a key exceeds 70. Cost: tree height + number of leaf pages covering the range. This is why B+ trees serve `ORDER BY … LIMIT`, `BETWEEN`, prefix `LIKE 'abc%'` and `>` / `<` predicates.
 
 ### Insert and page splits
+
+The challenge is keeping every leaf at the same depth no matter where keys are inserted. The trick: the tree never grows downward — it grows by splitting full pages and, when the root itself splits, by adding a new root on top.
 
 1. Search for the leaf where the key belongs; insert it in sorted position.
 2. If the leaf overflows, **split** it: keep the lower half, move the upper half to a new leaf, and insert the new leaf's first key as a separator into the parent.

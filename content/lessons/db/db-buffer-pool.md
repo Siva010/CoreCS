@@ -34,11 +34,19 @@ Sizes: PostgreSQL `shared_buffers` (often ~25% of RAM, relying on the OS cache f
 
 ## Why It Exists
 
-Memory is ~1,000× faster than SSD. A database whose hot pages (index roots and inner nodes, recent rows) stay in memory serves most requests without I/O. But the OS page cache can't be relied on alone:
+**The problem.** Every query touches pages, and pages live on storage that is ~1,000× slower than memory.
+
+**The obvious fix, and why it's not enough.** Memory is ~1,000× faster than SSD. A database whose hot pages (index roots and inner nodes, recent rows) stay in memory serves most requests without I/O. But the OS page cache can't be relied on alone:
 
 1. **Write ordering**: the WAL rule requires that a dirty page not reach disk before the log records describing its change ([WAL](lesson:db-wal-durability)). The OS flushes dirty pages whenever it likes.
 2. **Access knowledge**: a sequential scan of a 500 GB table would flush everything useful out of a naive LRU cache.
 3. **Concurrency control**: pages must be latched while being modified; the database manages that on its own memory.
+
+**The idea.** Keep hot pages in a cache the database itself controls, so it can decide what stays, what goes, and — most importantly — *when* a changed page may be written back.
+
+:::callout[That's all it is]{type=insight}
+The buffer pool is the database's own page cache: a table from page id to memory slot. Hit = no I/O. Miss = evict an unused page (writing it first if changed) and read the new one in.
+:::
 
 ## How It Works
 
@@ -66,7 +74,7 @@ Pure LRU fails on **sequential flooding**: one big scan touches millions of page
 
 ### Writing dirty pages
 
-Updates modify pages in memory and generate WAL; the WAL is flushed at commit, **the data page isn't**. Dirty pages are written later by:
+A design choice with large consequences: should commit wait for the changed data pages to reach disk? Writing them at commit would mean random I/O on every transaction. Updates modify pages in memory and generate WAL; the WAL is flushed at commit, **the data page isn't**. Dirty pages are written later by:
 
 - the **background writer** (keeps clean frames available),
 - **checkpoints** (flush everything dirty up to a point, spreading I/O over time),

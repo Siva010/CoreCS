@@ -31,7 +31,13 @@ On x86 these are `xchg`, `lock cmpxchg`, `lock xadd`; the `lock` prefix makes th
 
 ## Why It Exists
 
-[Peterson's algorithm](lesson:os-critical-section-problem) showed mutual exclusion is possible with plain reads and writes — but only for two parties, with busy-waiting, and only under sequential consistency. Atomic read-modify-write instructions give a simple, correct, scalable foundation on real multicore hardware with weak memory ordering.
+**The problem.** Every race comes down to the same gap: you *read* a value, decide, then *write* — and another core slips in between the read and the write.
+
+**Without it.** [Peterson's algorithm](lesson:os-critical-section-problem) showed mutual exclusion is possible with plain reads and writes — but only for two parties, with busy-waiting, and only under sequential consistency. **The idea.** Software can't close the gap between a read and a write — but the hardware can, by doing both in one step that no other core can interrupt. Atomic read-modify-write instructions give a simple, correct, scalable foundation on real multicore hardware with weak memory ordering.
+
+:::callout[That's all it is]{type=insight}
+An atomic instruction is "read and write this memory word as one step". With that single guarantee you can build locks (test-and-set), fair locks (fetch-and-add) and lock-free data structures (compare-and-swap).
+:::
 
 ## How It Works
 
@@ -64,6 +70,8 @@ void lock(spinlock *l) {
 
 ### A ticket lock with fetch-and-add (fair)
 
+The TAS spinlock's flaw is that whoever happens to win the race gets the lock — an unlucky thread can lose forever. The fix is the bakery idea from the previous lesson, now cheap thanks to one atomic instruction: take a numbered ticket and wait for your number.
+
 ```c
 typedef struct { atomic_uint next; atomic_uint serving; } ticketlock;
 
@@ -77,6 +85,8 @@ void unlock(ticketlock *l) { atomic_fetch_add(&l->serving, 1); }
 FIFO order → bounded waiting ✔.
 
 ### A lock-free counter and stack with CAS
+
+Locks have a weakness: if the thread holding one is paused (preempted, page-faulted), everyone else waits. CAS allows a different style — don't lock at all; just *try* to install your change, and retry if someone beat you to it.
 
 ```c
 // counter: retry loop
@@ -111,7 +121,7 @@ Modern CPUs implement locked RMW on cacheable memory by acquiring the cache line
 
 ### The ABA problem
 
-CAS checks that the value **is** A — not that it **stayed** A.
+The catch hidden in "compare": CAS checks that the value **is** A — not that it **stayed** A.
 
 1. Thread 1 reads `top = A` (with `A->next = B`) and is preempted.
 2. Thread 2 pops A, pops B, then pushes A back (A's memory reused). Now `top = A`, `A->next = C`.

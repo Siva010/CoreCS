@@ -34,7 +34,13 @@ A scalar subquery that returns more than one row is a runtime error; one that re
 
 ## Why It Exists
 
-Real questions are multi-step: "compute each customer's total, then find those above the average of totals". Without subqueries you'd need temporary tables or application code between steps. CTEs make those steps explicit and readable; recursion covers structures of unknown depth (org charts, category trees, bill of materials) that fixed joins can't.
+**The problem.** Real questions are multi-step: "compute each customer's total, then find those above the average of totals". Without subqueries you'd need temporary tables or application code between steps. CTEs make those steps explicit and readable; recursion covers structures of unknown depth (org charts, category trees, bill of materials) that fixed joins can't.
+
+**The idea.** A query's result is itself a table — so let a query be used anywhere a table or value can go. Naming those inner queries (CTEs) turns one dense statement into a short list of steps. Allowing a step to refer to *itself* (recursion) turns "join once per level" into "repeat until nothing new".
+
+:::callout[That's all it is]{type=insight}
+A subquery is a query used as a value, list or table. A CTE is a subquery with a name, written first. A recursive CTE starts with some rows and keeps joining to find the next level until a step adds nothing.
+:::
 
 ## How It Works
 
@@ -118,7 +124,7 @@ Execution: the anchor fills a working table; each iteration joins the working ta
 
 ### LATERAL: a subquery per row that can return several rows and columns
 
-"Each customer's 3 most recent orders":
+A gap the other forms leave: a scalar subquery can depend on the outer row but returns only one value; a derived table can return many rows but can't see the outer row. LATERAL gives you both. "Each customer's 3 most recent orders":
 
 ```sql
 SELECT c.name, o.id, o.order_date, o.total

@@ -26,7 +26,7 @@ The single most useful fact: **a running program is almost never "just running".
 
 ## Why It Exists
 
-A file on disk is inert bytes. To execute it, *someone* must:
+**The problem.** A file on disk is inert bytes. The CPU can only execute instructions that sit in memory, at an address in its program counter. Getting from "bytes in a file" to "instructions the CPU is executing" takes work. To execute it, *someone* must:
 
 - give it memory and put its code there,
 - resolve the shared libraries it depends on,
@@ -35,7 +35,13 @@ A file on disk is inert bytes. To execute it, *someone* must:
 - give it controlled access to files, network and devices,
 - clean up after it no matter how it ends.
 
-Doing this per program would be chaos; the OS does it uniformly for all of them.
+**Without it.** Every program would carry its own loader, its own memory bookkeeping and its own cleanup — and one buggy loader could trample everything else on the machine. Doing this per program would be chaos; the OS does it uniformly for all of them.
+
+**The idea.** Split the job into small, general steps the kernel can do for anyone: *make a container* (a process), *fill it with a program* (exec), *share the CPU with it* (scheduling), *serve its requests* (system calls), *empty it when done* (exit/wait). Each step below is one of those.
+
+:::callout[That's all it is]{type=insight}
+Running a program = make an empty process, map the file into its memory, point the CPU at the first instruction, and then keep interrupting it to share the machine. Everything else is detail on one of those steps.
+:::
 
 ## How It Works
 
@@ -75,9 +81,11 @@ sequenceDiagram
 
 ### The executable file format
 
-An ELF file contains headers describing **segments** to map (with permissions and file offsets), the **entry point** address, and for dynamically linked programs the path of the **interpreter** (dynamic loader) plus a list of needed libraries. `readelf -l ./server` shows the program headers.
+The kernel needs instructions for *how* to lay the file out in memory — which bytes are code, which are data, where to start. That's what an executable format is: a table of contents for the loader. An ELF file contains headers describing **segments** to map (with permissions and file offsets), the **entry point** address, and for dynamically linked programs the path of the **interpreter** (dynamic loader) plus a list of needed libraries. `readelf -l ./server` shows the program headers.
 
 ### Static vs dynamic linking
+
+The problem: almost every program uses the same libraries (`libc`, `libssl`). Either each program carries its own copy (simple, but duplicated on disk and in RAM, and every copy must be rebuilt to fix a bug), or programs share one copy that's found and wired up at start (shared and patchable, but startup has work to do and the right version must be installed).
 
 | | Static | Dynamic |
 |---|---|---|
@@ -89,7 +97,7 @@ An ELF file contains headers describing **segments** to map (with permissions an
 
 ### Demand paging at startup
 
-`exec` does not read the whole program into RAM. It sets up **mappings**: "virtual pages 0x400000–0x480000 correspond to this file at these offsets". The first instruction fetch from `main`'s page faults; the kernel finds the page in the page cache (or reads it from disk), maps it, and restarts the instruction. This is why a 200 MB binary can start in milliseconds and why a program's first request is often slower than later ones ("cold start"). See [Page Faults](lesson:os-page-faults).
+Why not just read the whole file into memory? Because most of a program is never used in a given run (error paths, unused features), and reading 200 MB before running line one would make every start slow. So: `exec` does not read the whole program into RAM. It sets up **mappings**: "virtual pages 0x400000–0x480000 correspond to this file at these offsets". The first instruction fetch from `main`'s page faults; the kernel finds the page in the page cache (or reads it from disk), maps it, and restarts the instruction. This is why a 200 MB binary can start in milliseconds and why a program's first request is often slower than later ones ("cold start"). See [Page Faults](lesson:os-page-faults).
 
 ### The CPU is shared continuously
 

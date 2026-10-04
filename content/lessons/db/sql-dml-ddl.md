@@ -30,7 +30,13 @@ DDL statements (`CREATE`, `ALTER`, `DROP`) change the **schema**, and usually ne
 
 ## Why It Exists
 
-Applications must record changes safely: create an order, mark it paid, remove an item. The subtle part is doing so **correctly when many clients act simultaneously** — which is why atomic single-statement operations (`UPDATE … SET stock = stock - 1 WHERE stock > 0`, upserts) matter more than the syntax.
+**The problem.** Applications must record changes safely: create an order, mark it paid, remove an item. The subtle part is doing so **correctly when many clients act simultaneously** — which is why atomic single-statement operations (`UPDATE … SET stock = stock - 1 WHERE stock > 0`, upserts) matter more than the syntax.
+
+**The idea.** Don't read a value into your app, decide, and write it back — another client can change it in between. Instead, send the *whole decision* to the database in one statement ("decrement if positive"), where it happens as one indivisible step.
+
+:::callout[That's all it is]{type=insight}
+INSERT adds rows, UPDATE changes the rows a WHERE finds, DELETE removes them. The skill isn't the syntax — it's putting the check and the change in the same statement so concurrent requests can't slip between them.
+:::
 
 ## How It Works
 
@@ -79,6 +85,8 @@ In MVCC databases a deleted row is only *marked* dead; its space is reclaimed la
 
 ### UPSERT: insert-or-update atomically
 
+The problem: "insert if new, otherwise update" is two steps in application code, and two requests can both see "new" and both insert. The database can do it as one step, using a unique index to detect the conflict.
+
 ```sql
 INSERT INTO daily_stats (day, page, views)
 VALUES (CURRENT_DATE, '/home', 1)
@@ -123,7 +131,7 @@ Either way, every change is first described in the write-ahead log ([WAL](lesson
 
 ### Online schema changes
 
-`ALTER TABLE` takes an `ACCESS EXCLUSIVE` lock in PostgreSQL. Even a fast `ALTER` can cause an outage: it **queues behind** a long-running query holding a weaker lock, and every new query then queues behind the `ALTER`. Mitigations:
+Changing a table's structure while it's being used is like changing a tyre while driving: the database must stop other work on the table for at least a moment. `ALTER TABLE` takes an `ACCESS EXCLUSIVE` lock in PostgreSQL. Even a fast `ALTER` can cause an outage: it **queues behind** a long-running query holding a weaker lock, and every new query then queues behind the `ALTER`. Mitigations:
 
 - `SET lock_timeout = '2s'` on migration sessions and retry.
 - Prefer metadata-only changes: adding a nullable column or a column with a constant default is instant in modern PostgreSQL and MySQL 8; changing a column type usually rewrites the whole table.

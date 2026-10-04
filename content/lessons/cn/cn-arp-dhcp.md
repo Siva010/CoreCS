@@ -31,8 +31,16 @@ Both work by **broadcasting** to the local network, and both trust whoever answe
 
 ## Why It Exists
 
-- A host plugged into a new network knows nothing — not even its own IP address. Manual configuration doesn't scale to laptops and phones that move between networks.
-- IP routing decides *which next hop* (an IP address) to use, but a frame on Ethernet/Wi-Fi must be addressed to a *MAC*. Something must translate.
+Two separate gaps appear the moment a device joins a network:
+
+- **"Who am I here?"** A host plugged into a new network knows nothing — not even its own IP address. Manual configuration doesn't scale to laptops and phones that move between networks.
+- **"How do I physically reach that IP?"** IP routing decides *which next hop* (an IP address) to use, but a frame on Ethernet/Wi-Fi must be addressed to a *MAC*. Something must translate.
+
+**The idea for both.** When you know nothing, ask *everyone* on the local link (broadcast) and let whoever knows the answer reply. DHCP asks "who can configure me?"; ARP asks "who has this IP?". Cache the answers so you don't have to shout every time.
+
+:::callout[That's all it is]{type=insight}
+DHCP: shout "give me an address" and a server answers with IP, gateway and DNS. ARP: shout "who has 192.168.1.1?" and the owner answers with its MAC. Both are local broadcasts, and both believe whoever answers.
+:::
 
 ## How It Works
 
@@ -74,7 +82,7 @@ $ ip neigh show
 
 ### Gratuitous ARP
 
-A host can announce its own IP→MAC mapping unsolicited ("192.168.1.10 is at X") — used to detect duplicate IPs at startup and to **fail over** a virtual IP: when a standby server takes over a floating IP (keepalived/VRRP), it sends gratuitous ARP so switches and neighbors update their tables immediately.
+Caching ARP answers creates a staleness problem: if an IP moves to a different machine, everyone's cache still points to the old MAC. The fix is to announce changes proactively. A host can announce its own IP→MAC mapping unsolicited ("192.168.1.10 is at X") — used to detect duplicate IPs at startup and to **fail over** a virtual IP: when a standby server takes over a floating IP (keepalived/VRRP), it sends gratuitous ARP so switches and neighbors update their tables immediately.
 
 ## Internal Mechanism
 

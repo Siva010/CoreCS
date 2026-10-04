@@ -35,7 +35,15 @@ Two families of answers:
 
 ## Why It Exists
 
-Sharded databases and microservices split data that business operations touch together: an order service, a payment service and an inventory service; or two customers' wallets on different shards. Without a strategy, partial failures leave money charged without an order, inventory reserved forever, or events published for changes that rolled back.
+**The problem.** Sharded databases and microservices split data that business operations touch together: an order service, a payment service and an inventory service; or two customers' wallets on different shards. Without a strategy, partial failures leave money charged without an order, inventory reserved forever, or events published for changes that rolled back.
+
+**Why it's hard.** Atomicity in one database comes from one commit record in one log. With two databases there are two logs, and the message linking them can be lost — so neither side can know for certain what the other did.
+
+**The two ideas.** Either *make everyone promise first, then decide once* (2PC: strong, but participants must wait for the decision), or *commit each step on its own and undo with a compensating step if a later one fails* (sagas: never blocks, but others can see in-between states).
+
+:::callout[That's all it is]{type=insight}
+2PC: ask every database "can you commit?", then tell all of them the single answer. Saga: do each step as its own transaction and, if one fails, run "undo" steps for the earlier ones. The outbox makes "change data + send event" one local transaction.
+:::
 
 ## How It Works
 
@@ -80,6 +88,8 @@ If step 3 fails (out of stock): refund (C2), cancel order (C1). Properties:
 - Every step and compensation must be **idempotent** and retried until it succeeds.
 
 ### The dual-write problem and the outbox
+
+The smallest distributed transaction — "update my database and publish an event" — already has the problem: two systems, no shared commit.
 
 ```python
 db.execute("UPDATE orders SET status='PAID' WHERE id=%s", oid)

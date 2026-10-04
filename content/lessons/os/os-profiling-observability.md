@@ -32,7 +32,15 @@ The skill is moving quickly from broad to specific: **system → process → thr
 
 ## Why It Exists
 
-Intuition about performance is usually wrong: the "obvious" slow part often isn't. Measurement-driven diagnosis avoids wasted optimization and gets to root causes during incidents, when time matters.
+**The problem.** Intuition about performance is usually wrong: the "obvious" slow part often isn't.
+
+**Without it.** Engineers optimise the code they suspect, ship it, and the latency doesn't move — because the time was going somewhere else (a lock, a DNS lookup, a retry).
+
+**The idea.** Don't guess; *sample*. Ask the system, many times per second, "what are you doing right now?" and count the answers. Whatever shows up most is where the time goes. Measurement-driven diagnosis avoids wasted optimization and gets to root causes during incidents, when time matters.
+
+:::callout[That's all it is]{type=insight}
+Metrics say *something* is slow; profiles say *which code* runs; traces say *where a request waited*. Go from broad to narrow and let counts, not hunches, pick the next step.
+:::
 
 ## How It Works
 
@@ -64,7 +72,7 @@ A **flame graph**: each box is a function; the x-axis is the share of samples (n
 
 ### Off-CPU: why is it waiting?
 
-If CPU is low but latency is high, sample where threads **block**:
+A CPU profiler only sees threads that are *running*. But a slow request is often a thread that is *not* running — it's waiting. Those waits are invisible to a CPU profile, so they need a different tool. If CPU is low but latency is high, sample where threads **block**:
 
 - **Thread dumps** (`jstack`, `py-spy dump`, `pstack`, `kill -3` for JVM): taken a few times seconds apart, they show threads stuck in the same place — lock waits, socket reads, pool acquisition.
 - **Off-CPU flame graphs** with eBPF (`offcputime` from BCC) show blocked stacks weighted by blocked time.
@@ -72,7 +80,7 @@ If CPU is low but latency is high, sample where threads **block**:
 
 ### eBPF: safe, low-overhead kernel tracing
 
-eBPF programs attach to kernel/user events and aggregate in-kernel:
+The old trade-off was: detailed tracing (strace) is too slow for production; cheap metrics are too coarse. eBPF breaks it by running small, verified programs *inside* the kernel that count and summarise events where they happen, shipping out only the summary. eBPF programs attach to kernel/user events and aggregate in-kernel:
 
 ```bash
 biolatency           # histogram of block I/O latency

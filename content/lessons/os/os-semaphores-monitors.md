@@ -39,7 +39,13 @@ signal(S) / V(S) / up(S):   S = S + 1;  if S ≤ 0: wake one thread from S's que
 
 ## Why It Exists
 
-Busy-waiting locks waste CPU and don't express *waiting for a condition*. Dijkstra (1965) introduced semaphores as a single primitive for both mutual exclusion and ordering/signaling between processes. Monitors (Hoare, Brinch Hansen, 1970s) came next because semaphore code is error-prone — a single misplaced `P` or missing `V` causes deadlock — and monitors let the compiler/runtime handle the mutual exclusion part.
+**The problem.** Busy-waiting locks waste CPU and don't express *waiting for a condition*. **First answer: the semaphore.** Dijkstra (1965) introduced semaphores as a single primitive for both mutual exclusion and ordering/signaling between processes — one counter that can mean "free slots", "items available" or "the lock is free", with sleeping built in.
+
+**Second answer: the monitor.** Monitors (Hoare, Brinch Hansen, 1970s) came next because semaphore code is error-prone — a single misplaced `P` or missing `V` causes deadlock — and monitors let the compiler/runtime handle the mutual exclusion part. The programmer only writes the *waiting* logic; locking happens automatically on entry and exit.
+
+:::callout[That's all it is]{type=insight}
+A semaphore is a counter you can sleep on. A monitor is an object where only one thread runs at a time, with "wait here until..." benches inside. The second exists because people kept getting the first wrong.
+:::
 
 ## How It Works
 
@@ -63,6 +69,8 @@ semaphore done = 0;
 Pattern 3 shows the power of initializing to 0: the semaphore records that an event happened, even if the signal occurs before the wait (unlike condition variables, which have no memory).
 
 ### Implementation without busy waiting
+
+The whole point of a semaphore is that waiters *sleep* instead of spinning. That needs two pieces: a queue of sleeping threads, and a tiny internal lock so the count and the queue change together.
 
 ```c
 typedef struct { int value; queue_t waiters; spinlock_t guard; } semaphore;
@@ -112,6 +120,8 @@ class BoundedBuffer<T> {
 Java objects have **one** condition queue, so producers and consumers wait on the same queue — hence `notifyAll()` (with `notify()`, you might wake a producer when a consumer was needed, and everyone goes back to sleep: a lost wakeup in effect). `ReentrantLock` with two `Condition`s (`notFull`, `notEmpty`) lets you `signal()` precisely.
 
 ### Hoare vs Mesa semantics
+
+The question this answers: when thread A signals "the buffer is no longer empty" and wakes B, who runs next — A or B? If A keeps going, something could change before B runs.
 
 | | Hoare (signal-and-wait) | Mesa (signal-and-continue) |
 |---|---|---|

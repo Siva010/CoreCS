@@ -40,7 +40,13 @@ The planner picks tools by estimated row counts. If you know when each tool is c
 
 ## Why It Exists
 
-No single algorithm is best for all data sizes. A nested loop with an index is unbeatable for "one customer's orders" and catastrophic for "all customers × all orders"; a hash join is the reverse. Having several algorithms and a cost model to choose among them is what lets one declarative query stay efficient as data changes.
+**The problem.** No single algorithm is best for all data sizes. A nested loop with an index is unbeatable for "one customer's orders" and catastrophic for "all customers × all orders"; a hash join is the reverse. Having several algorithms and a cost model to choose among them is what lets one declarative query stay efficient as data changes.
+
+**Why there are exactly these join algorithms.** To join, you must find matching keys. There are only three basic ways to find matches: *look each one up* (nested loop, best with an index), *put one side in a hash table* (hash join), or *sort both and walk them together* (merge join).
+
+:::callout[That's all it is]{type=insight}
+Reading: whole table, index slice, index only, or bitmap of pages. Joining: look up each row, hash one side, or merge two sorted sides. The planner picks by how many rows it expects.
+:::
 
 ## How It Works
 
@@ -64,6 +70,8 @@ for each row r in outer:
 - Supports any join condition (`<`, `LIKE`, function calls), not just equality.
 
 ### Hash join
+
+When both sides are large, looking up matches one row at a time is too slow — but a hash table makes each lookup O(1) after one pass to build it.
 
 ```text
 build:  for each row s in inner (smaller side): table[hash(s.key)].append(s)

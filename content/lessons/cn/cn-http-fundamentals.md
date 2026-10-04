@@ -25,7 +25,13 @@ HTTP is a **form-and-reply protocol**. The client fills out a form — *what act
 
 ## Why It Exists
 
-Designed for fetching hypertext documents, HTTP's simple, extensible, stateless design turned it into the universal application protocol: web pages, REST and GraphQL APIs, gRPC (over HTTP/2), webhooks, file downloads, streaming.
+**The problem.** TCP delivers bytes, but bytes alone don't say *what you want*. Client and server need a shared language: "give me this document", "here it is", "it doesn't exist", "you're not allowed".
+
+**The idea.** Make every exchange a self-contained form: a verb, a target, some labelled metadata, and an optional body — and make the reply equally self-contained. Because each request carries everything needed to answer it, *any* server, cache or proxy can handle it. Designed for fetching hypertext documents, HTTP's simple, extensible, stateless design turned it into the universal application protocol: web pages, REST and GraphQL APIs, gRPC (over HTTP/2), webhooks, file downloads, streaming.
+
+:::callout[That's all it is]{type=insight}
+HTTP is "method + URL + headers + body" in, "status + headers + body" out. Every feature — caching, cookies, auth, compression — is a header that both sides agree to understand.
+:::
 
 ## How It Works
 
@@ -58,6 +64,8 @@ Date: Tue, 22 Sep 2026 10:15:00 GMT
 Request line (method, target, version) → headers → blank line → optional body. Response: status line → headers → blank line → body.
 
 ### Methods and their semantics
+
+Why methods matter beyond "what the server does": they tell *everyone in between* — browsers, caches, proxies, retry logic — what's safe to repeat or store without asking.
 
 | Method | Purpose | Safe? | Idempotent? | Body? |
 |---|---|---|---|---|

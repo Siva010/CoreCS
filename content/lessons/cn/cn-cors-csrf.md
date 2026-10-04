@@ -30,7 +30,15 @@ Your browser is logged into many sites at once, and any web page you open can ru
 
 ## Why It Exists
 
-Without SOP, any page could read your email, bank account and internal company tools using your cookies and network position. SOP is the web's core isolation boundary; CORS exists because legitimate apps (an SPA on `app.example.com` calling `api.example.com`) need controlled exceptions.
+**The problem.** A browser runs code from any site you visit, while also holding your logged-in cookies for every other site. Without rules, a random page could act *as you* everywhere.
+
+**Without it.** Without SOP, any page could read your email, bank account and internal company tools using your cookies and network position. SOP is the web's core isolation boundary; CORS exists because legitimate apps (an SPA on `app.example.com` calling `api.example.com`) need controlled exceptions.
+
+**The gap that remains.** SOP blocks *reading* other sites' responses, but for compatibility with the early web it still lets pages *send* requests (forms, images) — with cookies attached. CSRF exploits that gap, so it needs its own defenses.
+
+:::callout[That's all it is]{type=insight}
+Browsers let any page *send* requests to other sites but not *read* their responses — CORS is how a server opts specific origins into reading. CSRF abuses the "send" half, and SameSite cookies or CSRF tokens stop it.
+:::
 
 ## How It Works
 
@@ -51,7 +59,7 @@ If `Access-Control-Allow-Origin` doesn't match, the browser **hides the response
 
 ### CORS: preflighted requests
 
-Requests with other methods (`PUT`, `DELETE`, `PATCH`), custom headers (`Authorization`, `X-Request-ID`) or `Content-Type: application/json` trigger a **preflight** `OPTIONS` request first:
+Why a preflight: old servers were written assuming browsers could never send a cross-site `DELETE` or a JSON body with custom headers. To avoid surprising them, the browser first *asks permission* before sending anything "non-simple". Requests with other methods (`PUT`, `DELETE`, `PATCH`), custom headers (`Authorization`, `X-Request-ID`) or `Content-Type: application/json` trigger a **preflight** `OPTIONS` request first:
 
 ```mermaid
 sequenceDiagram

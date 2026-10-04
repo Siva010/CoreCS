@@ -38,7 +38,13 @@ Most lookups never touch the root: caching at every layer is what makes DNS fast
 
 ## Why It Exists
 
-Humans use names; IP routing uses addresses; and the addresses behind a name change (servers move, CDNs pick nearby edges, failovers happen). A single central directory (the original `HOSTS.TXT` file maintained at SRI) couldn't scale. DNS distributes authority (each organization runs its own zone) and relies on caching for performance.
+**The problem.** Humans use names; IP routing uses addresses; and the addresses behind a name change (servers move, CDNs pick nearby edges, failovers happen). A single central directory (the original `HOSTS.TXT` file maintained at SRI) couldn't scale. DNS distributes authority (each organization runs its own zone) and relies on caching for performance.
+
+**The idea, in two parts.** *Split ownership by the dots*: the root knows who runs `.com`, `.com` knows who runs `example.com`, and `example.com` knows its own names — so nobody has to hold everything. *Cache everything with an expiry time*: since names rarely change, a resolver that asked once can answer thousands of later questions itself.
+
+:::callout[That's all it is]{type=insight}
+DNS is a tree of servers, each responsible for one part of a name, plus caches everywhere. A resolver walks the tree from the right end of the name (root → `.com` → `example.com`) and remembers the answer for its TTL.
+:::
 
 ## How It Works
 
@@ -67,7 +73,7 @@ sequenceDiagram
 
 ### Caching layers
 
-A lookup may be answered by any of these, in order:
+Walking root → TLD → authoritative for every lookup would take hundreds of milliseconds and melt the root servers. Caching is what makes the design work. A lookup may be answered by any of these, in order:
 
 1. The **application** (JVM's InetAddress cache, browser DNS cache — `chrome://net-internals/#dns`).
 2. The **OS** (systemd-resolved, nscd, macOS mDNSResponder; many Linux containers have no OS cache at all).

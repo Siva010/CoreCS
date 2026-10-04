@@ -31,7 +31,15 @@ There are two ways to store a table:
 
 ## Why It Exists
 
-Clustering makes access by the clustering key extremely fast: a point lookup lands directly on the row, and a range scan reads rows that are physically adjacent — a handful of pages instead of one random page per row. Rows frequently accessed together (all of one customer's orders) can be stored together by choosing the key well.
+**The problem.** With a heap, every index lookup ends with a jump to wherever the row happens to sit — and rows you usually read together (one customer's orders) may be scattered across thousands of pages.
+
+**The idea.** If the table must be stored in *some* order anyway, store it in the order you most often read it: make the primary-key index *be* the table. Clustering makes access by the clustering key extremely fast: a point lookup lands directly on the row, and a range scan reads rows that are physically adjacent — a handful of pages instead of one random page per row. Rows frequently accessed together (all of one customer's orders) can be stored together by choosing the key well.
+
+**The bill.** Rows can only be in one order, so every other index must find rows *through* the clustering key — and the clustering key's size and insert pattern now affect the whole table.
+
+:::callout[That's all it is]{type=insight}
+In a clustered table the rows live inside the primary-key B+ tree, in key order. Secondary indexes store the primary key and look the row up there. That's why InnoDB wants a short, ever-increasing primary key.
+:::
 
 ## How It Works
 

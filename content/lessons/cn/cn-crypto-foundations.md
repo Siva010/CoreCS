@@ -41,7 +41,13 @@ TLS glues them together: **asymmetric crypto** (slow, but works between stranger
 
 ## Why It Exists
 
-The internet is a hostile shared medium: packets cross networks you don't control (coffee-shop Wi-Fi, ISPs, transit providers). Without encryption, anyone on the path can read passwords and cookies; without integrity, they can inject content; without authentication, they can impersonate the server (man-in-the-middle).
+**The problem.** The internet is a hostile shared medium: packets cross networks you don't control (coffee-shop Wi-Fi, ISPs, transit providers). Without encryption, anyone on the path can read passwords and cookies; without integrity, they can inject content; without authentication, they can impersonate the server (man-in-the-middle).
+
+**The core puzzle.** Encryption needs a shared secret key — but you've never met the server, and anyone can read what you send to set one up. How do two strangers agree on a secret in public? Public-key cryptography is the answer to exactly that puzzle; everything else (hashes, MACs, AEAD) handles integrity once a secret exists.
+
+:::callout[That's all it is]{type=insight}
+Use slow public-key maths for a moment at the start — to prove who the server is and to agree on a secret key — then use fast symmetric encryption with that key for all the data.
+:::
 
 ## How It Works
 
@@ -52,6 +58,8 @@ The internet is a hostile shared medium: packets cross networks you don't contro
 - So protocols use **asymmetric for the handshake** (authenticate, agree on a secret) and **symmetric for the data** (hybrid cryptography).
 
 ### Diffie–Hellman intuition (paint mixing)
+
+The puzzle: agree on a secret when every message you send is visible. The trick is an operation that's easy to do and practically impossible to undo.
 
 1. Alice and Bob agree publicly on a common paint color.
 2. Each secretly picks a private color, mixes it with the common color, and sends the mixture.

@@ -34,11 +34,17 @@ Optimization is therefore two activities: **correct the planner's picture of the
 
 ## Why It Exists
 
-Cost-based optimization is only as good as its inputs. Real data is skewed (a few customers own most orders) and correlated (city determines state), while the planner by default assumes uniformity and independence. Knowing where these assumptions break lets you fix plans instead of fighting them.
+**The problem.** Cost-based optimization is only as good as its inputs. Real data is skewed (a few customers own most orders) and correlated (city determines state), while the planner by default assumes uniformity and independence. Knowing where these assumptions break lets you fix plans instead of fighting them.
+
+:::callout[That's all it is]{type=insight}
+Slow query = too much work. Either the planner misjudged the row counts (fix statistics so it picks the right algorithm) or the query asks for too much (fix the predicate, the round trips or the pagination so a cheap plan exists).
+:::
 
 ## How It Works
 
 ### How estimates are made
+
+The planner can't run every candidate plan to see which is fastest — it must *predict* row counts from a small summary of the data. Its simplifying assumptions (uniform values, independent columns) are what break.
 
 - `col = const`: if const is an MCV → its stored frequency; else (1 − sum of MCV freqs) / (other distinct values).
 - `col < const`: position of const within histogram buckets.

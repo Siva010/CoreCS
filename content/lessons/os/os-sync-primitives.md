@@ -42,7 +42,13 @@ Most real bugs come from using the right primitive incorrectly (forgetting the `
 
 ## Why It Exists
 
-Race conditions ([previous lesson](lesson:os-race-conditions)) need two capabilities: **mutual exclusion** (don't interleave inside critical sections) and **coordination** (wait for something another thread will do). Mutexes and RW locks provide exclusion; semaphores, condition variables and barriers provide coordination. Busy-waiting on a flag would waste CPU and still have visibility/ordering issues — primitives solve both correctly and efficiently.
+**The problem.** Race conditions ([previous lesson](lesson:os-race-conditions)) need two capabilities: **mutual exclusion** (don't interleave inside critical sections) and **coordination** (wait for something another thread will do). Mutexes and RW locks provide exclusion; semaphores, condition variables and barriers provide coordination. **Without it.** You'd write `while (busy) {}` loops on plain variables. Busy-waiting on a flag would waste CPU and still have visibility/ordering issues — primitives solve both correctly and efficiently.
+
+**The idea.** There are really only two things threads ever need from each other: *"don't come in while I'm in here"* and *"wait until I tell you it's ready"*. Every primitive in the table above is one of those two, specialised for a common case (many readers, N slots, everyone arrives).
+
+:::callout[That's all it is]{type=insight}
+A mutex says "one at a time". A condition variable says "sleep until something changes". A semaphore is a counter that does a bit of both. Learn those two needs and the zoo of primitives stops looking like a zoo.
+:::
 
 ## How It Works
 
@@ -58,6 +64,8 @@ Rules: lock, do the minimum, unlock — **on every path** (use RAII `std::lock_g
 
 ### Spinlock vs sleeping mutex
 
+The question this answers: when a thread finds the lock taken, should it *keep checking* or *go to sleep*? Sleeping costs a context switch (~µs); checking costs CPU while you wait. Which is cheaper depends only on how long the wait will be.
+
 - A **spinlock** waiter loops on an atomic test until the lock is free. Excellent when the lock is held for less time than a context switch (~µs) *and* the holder is running on another core. Terrible if the holder is descheduled — waiters burn their whole time slice.
 - A **sleeping mutex** puts the waiter to sleep (kernel involvement) and wakes it on unlock.
 - Modern mutexes are **adaptive**: spin briefly, then sleep. On Linux they're built on **futexes** — the uncontended lock/unlock is a single atomic instruction in user space; only contended cases enter the kernel.
@@ -66,13 +74,15 @@ In the kernel, spinlocks are common (and interrupts may be disabled while holdin
 
 ### Read-write lock
 
-Useful when reads dominate and critical sections are long enough for reader parallelism to matter (e.g., a routing table read on every request, updated every minute). Pitfalls:
+A mutex is stricter than necessary when most threads only *read*: two readers can't hurt each other, yet a mutex makes them queue. An RW lock relaxes "one at a time" to "one writer, or any number of readers". Useful when reads dominate and critical sections are long enough for reader parallelism to matter (e.g., a routing table read on every request, updated every minute). Pitfalls:
 
 - **Writer starvation** with reader-preferring locks (a continuous stream of readers means the writer never gets in); writer-preferring locks can starve readers.
 - For very short critical sections, an RW lock can be *slower* than a mutex — the readers still contend on the lock's internal counter cache line.
 - Upgrading a read lock to a write lock usually deadlocks if two readers try simultaneously.
 
 ### Semaphore
+
+Sometimes the rule isn't "one at a time" but "at most N at a time" — 10 database connections, 4 GPU slots. A counter that blocks at zero expresses that directly.
 
 ```python
 db_slots = threading.Semaphore(10)      # at most 10 concurrent queries
@@ -85,6 +95,8 @@ def query(sql):
 Semaphores have **no owner**: any thread can signal. That makes them good for **signaling between threads** (producer signals "item available") and for **limiting concurrency** — and makes them a poor mutex replacement (no ownership checks, no priority inheritance, easy to signal twice).
 
 ### Condition variable — the correct pattern
+
+The problem: a consumer needs to wait until the queue is non-empty. Checking in a loop burns CPU; sleeping without a lock risks missing the producer's signal. A condition variable is "sleep, and release the lock while you sleep, and wake me when someone signals".
 
 ```c
 pthread_mutex_lock(&m);
@@ -121,7 +133,7 @@ Used in parallel algorithms with phases (simulations, iterative solvers, paralle
 :::depth{level=advanced}
 ### Futex-based mutex in a nutshell
 
-A futex is a 32-bit integer in user memory plus a kernel wait queue keyed by its address.
+The problem: going into the kernel on every lock and unlock costs ~100 ns+ each — but most locks are uncontended, and the kernel is only needed when someone actually has to *sleep*. So do the common case in user space with one atomic instruction, and call the kernel only to sleep or wake. A futex is a 32-bit integer in user memory plus a kernel wait queue keyed by its address.
 
 1. **Lock fast path**: atomic CAS `0 → 1` succeeds → you own it. No syscall.
 2. **Contended**: set the word to 2 ("locked, has waiters") and call `futex(FUTEX_WAIT, addr, 2)` — the kernel sleeps the thread only if the word is still 2 (prevents lost wakeups).

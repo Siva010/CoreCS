@@ -45,17 +45,26 @@ graph, and that prerequisites don't sit in a later stage or later position in th
 
 Use `##` headings from this list (aliases in `src/lib/content/types.ts`), in any order — they're sorted into the canonical order at build time:
 
-`Mental Model` · `Definition` · `Why It Exists` · `How It Works` · `Internal Mechanism` · `Example` · `Complexity & Performance` · `Trade-offs` · `Failure Modes` · `In Production` ·
+`Mental Model` · `Why It Exists` · `Definition` · `How It Works` · `Internal Mechanism` · `Example` · `Complexity & Performance` · `Trade-offs` · `Failure Modes` · `In Production` ·
 `Deeper Connections` · `Common Misconceptions` · `Interview Questions` · `Practice` · `Quick Revision`
 
 `Mental Model` and `Quick Revision` are required in practice (the validator warns without them). Unknown headings are errors.
+
+`Why It Exists` renders before `Definition` on purpose: a reader should meet the problem before the vocabulary. Write it as a chain, using these bold lead-ins where they fit:
+
+- **The problem.** The concrete situation that hurts, in plain words.
+- **Without it.** What breaks, or what people did before, and why that failed.
+- **The idea.** The design insight, in a sentence or two, before any mechanism.
+- **From idea to mechanism.** (optional) How each part of the mechanism answers one sub-problem the idea creates.
+
+End the section with one `:::callout[That's all it is]{type=insight}` — two or three sentences a reader could repeat to a friend. Inside `How It Works` / `Internal Mechanism`, open any subsection that introduces new machinery with a sentence saying what problem that piece solves.
 
 ### Markdown extensions
 
 | Syntax | Renders as |
 |---|---|
 | `:::depth{level=advanced}` … `:::` | Content hidden unless the reader raises the depth filter (`advanced`, `senior`) |
-| `:::callout{type=insight}[Optional title]` … `:::` | Callout — `note, tip, insight, warning, danger, interview, production` |
+| `:::callout[Optional title]{type=insight}` … `:::` | Callout — `note, tip, insight, warning, danger, interview, production` |
 | `:::details[Summary]` … `:::` | Collapsible block |
 | `:::compare[Title]` … `:::`, `:::steps` … `:::` | Comparison / numbered-steps block |
 | `::viz{id=btree}` / `::lab{id=query-plan}` | Embeds a widget inline (also lists it in the lesson's widget section) |
@@ -161,6 +170,7 @@ functions so it can be tested headlessly with `npx tsx`.
 
 ## House style
 
+- Problem first, then the idea, then the mechanism, then the consequence. If a section explains *how* before *why*, reorder it.
 - Teach the mechanism, then the consequence. No filler, no "as we all know".
 - Numbers must be defensible: state assumptions (RTT, page size, row width) and keep arithmetic consistent across a lesson.
 - Prefer concrete failure stories to adjectives; name the signal an engineer would actually see.

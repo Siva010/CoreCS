@@ -24,13 +24,17 @@ A **thread pool** is a fixed or bounded set of long-lived worker threads that re
 
 ## Why It Exists
 
-Creating a thread per task has three problems:
+**The problem.** A server receives a stream of small jobs (requests). The naive design is one new thread per job. Creating a thread per task has three problems:
 
 1. **Creation cost** — tens of microseconds per thread is significant for millisecond-scale tasks.
 2. **Unbounded concurrency** — a traffic spike creates thousands of threads, exhausting memory and scheduler capacity ([Concurrency vs Parallelism](lesson:os-concurrency-vs-parallelism)).
 3. **No control point** — you can't limit, prioritize, measure or reject work.
 
-A pool amortizes creation, **bounds** concurrency, and gives a queue where overload becomes visible and manageable.
+**The idea.** Separate *the work* from *the workers*. Hire a fixed set of workers once and give them a line of jobs to pull from. A pool amortizes creation, **bounds** concurrency, and gives a queue where overload becomes visible and manageable.
+
+:::callout[That's all it is]{type=insight}
+A thread pool is a queue of tasks plus a few threads looping "take a task, run it". The interesting decisions are just two numbers — how many threads, how long the queue — and what to do when the queue is full.
+:::
 
 ## How It Works
 
@@ -71,6 +75,8 @@ An unbounded queue hides overload: throughput stays constant, but latency grows 
 
 ### Single shared queue vs work stealing
 
+The problem with one queue: every worker grabs from the same place, so the queue's lock becomes the new bottleneck when tasks are tiny and workers are many.
+
 - A **single shared queue** is simple but its lock becomes contended with many workers and tiny tasks.
 - **Work-stealing** pools (Java `ForkJoinPool`, Go's scheduler, Tokio, .NET) give each worker its own deque: it pushes/pops its own tasks at one end (LIFO, cache-warm) and idle workers **steal** from the other end of busy workers' deques. Great for recursive divide-and-conquer and many small tasks.
 
@@ -81,7 +87,7 @@ An unbounded queue hides overload: throughput stays constant, but latency grows 
 :::depth{level=advanced}
 ### Bulkheads and pool isolation
 
-If one slow dependency's calls share a pool with everything else, a slowdown there fills the pool and **all** endpoints stall — a cascading failure. The **bulkhead** pattern gives each dependency (or request class) its own bounded pool or semaphore, so one failing dependency exhausts only its own compartment. Combine with timeouts and circuit breakers so blocked threads are released quickly.
+The name comes from ships: watertight compartments, so one breach doesn't sink the whole hull. If one slow dependency's calls share a pool with everything else, a slowdown there fills the pool and **all** endpoints stall — a cascading failure. The **bulkhead** pattern gives each dependency (or request class) its own bounded pool or semaphore, so one failing dependency exhausts only its own compartment. Combine with timeouts and circuit breakers so blocked threads are released quickly.
 
 ### Virtual threads change the calculus
 

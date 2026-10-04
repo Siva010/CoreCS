@@ -31,7 +31,15 @@ Linux uses **all otherwise-unused RAM** for this cache. That's why a healthy ser
 
 ## Why It Exists
 
-Disk access is 1,000–100,000× slower than RAM. Most workloads re-read the same data (code, configs, hot database pages, static assets) and write in small pieces that are better batched. Caching and write batching turn many slow device operations into a few fast ones.
+**The problem.** Disk access is 1,000–100,000× slower than RAM.
+
+**The observation that makes a fix possible.** Most workloads re-read the same data (code, configs, hot database pages, static assets) and write in small pieces that are better batched.
+
+**The idea.** Keep recently used file pages in RAM, and let writes land in RAM first and reach the disk later in bulk. Caching and write batching turn many slow device operations into a few fast ones. RAM that no program is using would otherwise do nothing, so the cache costs nothing until memory is needed — then it shrinks.
+
+:::callout[That's all it is]{type=insight}
+The page cache keeps file contents in spare RAM. Reads that hit it skip the disk; writes go into it and are flushed later. `fsync` is how you say "don't wait — flush mine now".
+:::
 
 ## How It Works
 
@@ -49,6 +57,8 @@ flowchart LR
 Sequential readers trigger **read-ahead**: the kernel notices the pattern and prefetches increasingly large windows (up to `read_ahead_kb`, default 128 KB per device, adjustable), so later reads hit the cache.
 
 ### Write path
+
+Why writes don't go straight to disk: a program writing a log line at a time would turn into thousands of tiny device writes per second, each paying full latency. Holding writes briefly lets the kernel merge them. The trade-off is that "written" no longer means "safe".
 
 1. `write()` copies data into page-cache pages, marks them dirty, returns immediately.
 2. Flusher threads write dirty pages back when:
@@ -71,7 +81,7 @@ Page-cache pages are reclaimed under memory pressure using the kernel's LRU appr
 
 ### Double buffering and O_DIRECT
 
-A database with its own buffer pool that reads through the page cache ends up with the same page cached **twice**: once in the DB's buffer pool and once in the page cache — wasting RAM and adding a memory copy. Options:
+A conflict between two caches that each make sense alone. A database with its own buffer pool that reads through the page cache ends up with the same page cached **twice**: once in the DB's buffer pool and once in the page cache — wasting RAM and adding a memory copy. Options:
 
 - **O_DIRECT** (InnoDB `innodb_flush_method=O_DIRECT`, most commercial databases): bypass the page cache; the DB's buffer pool is the only cache and gets most of the RAM. Requires aligned buffers and makes the DB responsible for read-ahead and write batching.
 - **Buffered I/O** (PostgreSQL's traditional approach): a modest `shared_buffers` (often ~25% of RAM) plus the OS page cache as a second-level cache. Simpler, relies on the kernel's read-ahead and writeback; costs double buffering. (PostgreSQL has been adding asynchronous and direct I/O support in recent releases.)

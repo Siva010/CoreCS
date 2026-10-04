@@ -30,9 +30,15 @@ The IP header is the **shipping label**: who it's from, who it's for, how many m
 
 ## Why It Exists
 
-- TTL prevents routing loops from circulating packets forever.
-- Fragmentation lets IP cross links with different MTUs.
-- ICMP gives hosts feedback — without it, every failure would look like a silent timeout.
+**The problem.** IP is "best effort": routers forward packets without tracking them. That simplicity creates three gaps, and each header feature fills one:
+
+- **Loops.** If two routers misconfigure each other as next hops, a packet could bounce forever, eating bandwidth. TTL prevents routing loops from circulating packets forever.
+- **Different link sizes.** Links have different maximum sizes; a packet that fits one may not fit the next. Fragmentation lets IP cross links with different MTUs.
+- **Silent failures.** When a router drops a packet, the sender otherwise never knows why. ICMP gives hosts feedback — without it, every failure would look like a silent timeout.
+
+:::callout[That's all it is]{type=insight}
+The IP header is a label with addresses, a hop counter that kills looping packets, and pieces for reassembly. ICMP is the network's way of sending back error notes — and `ping` and `traceroute` are clever uses of those notes.
+:::
 
 ## How It Works
 
@@ -51,7 +57,7 @@ The IP header is the **shipping label**: who it's from, who it's for, how many m
 
 ### Fragmentation
 
-A 4,000-byte IPv4 packet (20-byte header + 3,980 data) meets a link with MTU 1,500:
+If a packet is too big for the next link, the router has two choices: drop it or cut it up. IPv4 allowed cutting. A 4,000-byte IPv4 packet (20-byte header + 3,980 data) meets a link with MTU 1,500:
 
 - Each fragment carries ≤ 1,480 data bytes (a multiple of 8), with the same Identification, the MF (more fragments) flag set on all but the last, and an offset in 8-byte units.
 - Fragments: data 0–1479 (offset 0), 1480–2959 (offset 185), 2960–3979 (offset 370, MF=0).
@@ -81,7 +87,7 @@ The reply's TTL (56) hints the remote OS started at 64 and the packet crossed 8 
 
 ### How traceroute works
 
-Send probes with **TTL = 1, 2, 3, …**. The router where TTL hits 0 drops the probe and returns **ICMP Time Exceeded**, revealing its address and the round-trip time to it. When a probe finally reaches the destination, it answers differently (ICMP Port Unreachable for UDP probes to a high port, an Echo Reply, or a TCP SYN-ACK/RST for TCP traceroute) — so traceroute knows it's done.
+Routers don't tell you the path — but every router *does* send an error when a packet's TTL runs out on it. So make packets run out on purpose, one hop further each time. Send probes with **TTL = 1, 2, 3, …**. The router where TTL hits 0 drops the probe and returns **ICMP Time Exceeded**, revealing its address and the round-trip time to it. When a probe finally reaches the destination, it answers differently (ICMP Port Unreachable for UDP probes to a high port, an Echo Reply, or a TCP SYN-ACK/RST for TCP traceroute) — so traceroute knows it's done.
 
 ```text
 TTL=1 → router A: "time exceeded"   → hop 1 = A

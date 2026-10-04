@@ -34,11 +34,21 @@ The central tension: the leader can either **wait** for followers to confirm eac
 
 ## Why It Exists
 
+**The problem.** One database server is one machine: if it dies, the data is unavailable (or gone), and its capacity caps how many reads you can serve.
+
+**The idea.** Keep copies on other machines. You already have a perfect, ordered record of every change — the WAL — so copying is just *sending that log* to other servers and letting them replay it, exactly as crash recovery would. Copies give you:
+
 - **High availability**: if the leader dies, a follower takes over ([Failover](lesson:db-failover)).
 - **Read scaling**: spread read queries across replicas.
 - **Durability beyond one machine**: a synchronously replicated commit survives the leader's disk being destroyed.
 - **Geography**: replicas near users for lower read latency; disaster recovery in another region.
 - **Isolation of workloads**: analytics on a replica instead of the primary.
+
+**The one decision that shapes everything.** Should COMMIT wait for the copies? Waiting is safe but slower and can block; not waiting is fast but copies lag and a crash can lose the latest writes.
+
+:::callout[That's all it is]{type=insight}
+The leader streams its change log to followers, which replay it. Synchronous = commit waits for a follower (no loss, more latency); asynchronous = commit doesn't wait (fast, followers lag). Lag is why reads from replicas can be stale.
+:::
 
 ## How It Works
 
@@ -74,7 +84,7 @@ A common setup: one or two synchronous replicas in the same region (quorum: "any
 
 ### Replication lag and its user-visible anomalies
 
-Asynchronous replicas are **eventually consistent**: reads may return stale data. Lag is usually milliseconds, but spikes to seconds or minutes under heavy writes, long replay conflicts, or network trouble.
+The price of not waiting shows up in what users see: the copy they read from may not yet have the write they just made. Asynchronous replicas are **eventually consistent**: reads may return stale data. Lag is usually milliseconds, but spikes to seconds or minutes under heavy writes, long replay conflicts, or network trouble.
 
 | Problem | Scenario | Mitigation |
 |---|---|---|

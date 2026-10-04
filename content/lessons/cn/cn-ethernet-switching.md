@@ -31,7 +31,15 @@ Some letters are addressed "to everyone" (**broadcast**) — the clerk always co
 
 ## Why It Exists
 
-Early Ethernet was a **shared cable**: every frame reached every host, and hosts transmitting at the same time collided. Switches made each port its own dedicated link (full-duplex, no collisions) and learned to send frames only where needed, making LANs scale in speed and size. VLANs let organizations isolate groups (e.g., servers vs guests) without separate cabling.
+**The problem.** Several machines in one room or rack need to send frames to each other over wires.
+
+**The first answer.** Early Ethernet was a **shared cable**: every frame reached every host, and hosts transmitting at the same time collided. That works for 5 machines and collapses at 500: everyone hears everything and waits for everyone else.
+
+**The idea.** Give every machine its own cable to a central box, and make the box smart enough to send each frame only to the one cable it's for. It doesn't need a configured map — it can *learn* where everyone is just by noticing which port each sender's frames come in on. Switches made each port its own dedicated link (full-duplex, no collisions) and learned to send frames only where needed, making LANs scale in speed and size. VLANs let organizations isolate groups (e.g., servers vs guests) without separate cabling.
+
+:::callout[That's all it is]{type=insight}
+A switch remembers "MAC address X was last seen on port 3" and sends frames for X out port 3. If it doesn't know yet, it sends to every port. That's the entire learning algorithm.
+:::
 
 ## How It Works
 
@@ -81,7 +89,7 @@ sequenceDiagram
 
 ### VLANs
 
-A VLAN tag (4 bytes: TPID 0x8100 + 12-bit VLAN ID) marks which virtual LAN a frame belongs to:
+The problem: you want guests and servers on separate networks (so broadcasts and attacks don't cross), but you don't want to buy separate switches and cables for each. So mark each frame with which "virtual" network it belongs to, and let one switch behave like several. A VLAN tag (4 bytes: TPID 0x8100 + 12-bit VLAN ID) marks which virtual LAN a frame belongs to:
 
 - **Access ports** belong to one VLAN; hosts send untagged frames.
 - **Trunk ports** carry many VLANs between switches, with tags.

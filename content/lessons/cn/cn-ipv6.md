@@ -28,7 +28,15 @@ Everything else is refinement of IPv4 lessons: a simpler fixed header, no broadc
 
 ## Why It Exists
 
-IPv4's ~4.3 billion addresses ran out. NAT and CGNAT stretched them but broke end-to-end connectivity and added stateful middleboxes. IPv6 restores a globally unique address per interface and cleans up design warts.
+**The problem.** IPv4's ~4.3 billion addresses ran out.
+
+**The workaround and its cost.** NAT and CGNAT stretched them but broke end-to-end connectivity and added stateful middleboxes. Every NAT is a table that can fill up, time out, or block inbound connections.
+
+**The idea.** Fix the root cause instead of patching it: make the address space so large that no one ever needs to share. While changing the format anyway, remove the IPv4 features that turned out to cause trouble (router fragmentation, broadcast, header checksums recomputed at each hop). IPv6 restores a globally unique address per interface and cleans up design warts.
+
+:::callout[That's all it is]{type=insight}
+IPv6 is IP with 128-bit addresses — enough that every device gets its own public address and NAT becomes unnecessary — plus a simpler header and multicast in place of broadcast.
+:::
 
 ## How It Works
 
@@ -59,9 +67,11 @@ IPv4's ~4.3 billion addresses ran out. NAT and CGNAT stretched them but broke en
 
 ### SLAAC in brief
 
-A host generates a link-local address, performs duplicate address detection, listens for (or solicits) **Router Advertisements** containing the /64 prefix, and forms a global address from the prefix plus an interface identifier — usually **random/temporary** for privacy (rather than derived from the MAC address, as in early IPv6).
+With 64 bits for the host part, there's enough room for a host to *invent* its own address with almost no chance of collision — so no server has to hand addresses out. A host generates a link-local address, performs duplicate address detection, listens for (or solicits) **Router Advertisements** containing the /64 prefix, and forms a global address from the prefix plus an interface identifier — usually **random/temporary** for privacy (rather than derived from the MAC address, as in early IPv6).
 
 ### Coexistence: dual stack and translation
+
+The practical problem: you can't switch the whole internet in one day. IPv4 and IPv6 can't talk to each other directly, so for decades both must work side by side.
 
 - **Dual stack**: hosts run IPv4 and IPv6 simultaneously; DNS returns both A and AAAA records.
 - **Happy Eyeballs** (RFC 8305): clients try IPv6 and IPv4 connections in a staggered race and use whichever connects first, so broken IPv6 doesn't cause long delays.

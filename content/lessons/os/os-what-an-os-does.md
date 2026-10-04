@@ -34,13 +34,15 @@ An **operating system** is the software layer that manages hardware resources an
 
 ## Why It Exists
 
-Without an OS, every program would need to:
+**The problem.** One machine, many programs. They all want the CPU, all want memory, all want the disk — and none of them was written knowing the others exist.
+
+**Without it.** Without an OS, every program would need to:
 
 - contain drivers for every disk, network card and display it might meet;
 - coordinate with every other program on the machine about which memory addresses it may use;
 - trust every other program not to overwrite it, read its secrets, or hog the CPU forever.
 
-That worked on single-purpose machines in the 1950s. The moment machines were **shared** — first by batch jobs, then by timesharing users, now by hundreds of containers — three needs appeared that only a privileged referee can meet:
+That worked on single-purpose machines in the 1950s, when one program owned the whole machine. The moment machines were **shared** — first by batch jobs, then by timesharing users, now by hundreds of containers — three needs appeared that only a privileged referee can meet:
 
 | Need | What the OS provides |
 |---|---|
@@ -48,13 +50,24 @@ That worked on single-purpose machines in the 1950s. The moment machines were **
 | **Multiplexing** — scarce hardware must be shared efficiently | CPU scheduling, memory allocation, I/O queuing |
 | **Abstraction** — programmers must not deal with raw hardware | Processes, virtual memory, files, sockets |
 
-The key insight is that **protection must be enforced by hardware, and only software running with special hardware privilege can configure that enforcement.** That software is the kernel.
+**The idea.** You can't ask programs to behave — a buggy or hostile one simply won't. So the rules must be enforced by something programs *cannot* bypass: the hardware itself. The key insight is that **protection must be enforced by hardware, and only software running with special hardware privilege can configure that enforcement.** That software is the kernel.
+
+**From idea to mechanism.** Everything in this lesson follows from that one decision:
+
+- If only the kernel is privileged, programs need a way to *ask* it for things → **system calls**.
+- If the kernel must stay in charge even when a program never asks → **timer interrupts** take the CPU back.
+- If programs must not see each other's memory → **per-process address spaces**, configured by the kernel.
+- If programs shouldn't each carry drivers → the kernel offers **abstractions** (files, sockets) once, for everyone.
+
+:::callout[That's all it is]{type=insight}
+The OS is the one program the hardware trusts. It uses that trust to share the machine fairly, keep programs from hurting each other, and replace raw devices with simple things like files and processes.
+:::
 
 ## How It Works
 
 ### The privilege boundary
 
-Modern CPUs have at least two modes. In user mode, certain instructions are illegal (disabling interrupts, changing page tables, talking directly to I/O ports) and memory accesses are checked against page-table permissions. If a user program tries something illegal, the CPU raises an exception and jumps into the kernel, which usually kills the offender (`SIGSEGV`, `SIGILL`).
+This is the hardware half of "protection must be enforced by hardware". Modern CPUs have at least two modes. In user mode, certain instructions are illegal (disabling interrupts, changing page tables, talking directly to I/O ports) and memory accesses are checked against page-table permissions. If a user program tries something illegal, the CPU raises an exception and jumps into the kernel, which usually kills the offender (`SIGSEGV`, `SIGILL`).
 
 There are exactly three ways the CPU goes from user mode into the kernel:
 
@@ -66,7 +79,7 @@ flowchart LR
     K -->|"return to user (iret / sysret)"| U
 ```
 
-Each entry jumps to a kernel-chosen address — the program cannot pick where in the kernel it lands. That single property is what makes the boundary safe.
+Each entry jumps to a kernel-chosen address — the program cannot pick where in the kernel it lands. That single property is what makes the boundary safe. (If a program could jump to *any* kernel address, it could skip straight past the permission check inside `open()` — the privilege would be worthless.)
 
 ### The core abstractions
 
@@ -94,6 +107,8 @@ The kernel continuously makes decisions:
 On Linux the kernel contains the scheduler, memory manager, virtual filesystem layer, filesystems (ext4, XFS), the full TCP/IP stack, device drivers, and security modules. All of it runs in one privileged address space.
 
 ### Kernel architectures
+
+The question underneath this debate: *how much code should hold the master key?* Every line in kernel mode can crash or compromise the whole machine, so less is safer — but every boundary crossing between pieces costs time, so more is faster.
 
 :::compare[Monolithic vs microkernel]
 | | Monolithic (Linux, traditional Unix, Windows NT core is "hybrid") | Microkernel (seL4, QNX, MINIX 3) |

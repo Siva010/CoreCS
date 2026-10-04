@@ -31,7 +31,13 @@ A **service mesh** puts a small proxy (a **sidecar**) next to every service inst
 
 ## Why It Exists
 
-Moving from a monolith to many services turns in-process function calls into network calls — each can fail, be slow, or be intercepted. Every service needs discovery, load balancing, timeouts, retries, circuit breaking, mTLS, and telemetry. Implementing those consistently in every language and team is expensive; platforms centralize them.
+**The problem.** Moving from a monolith to many services turns in-process function calls into network calls — each can fail, be slow, or be intercepted. And the callee's address keeps changing as instances scale and redeploy. Every service needs discovery, load balancing, timeouts, retries, circuit breaking, mTLS, and telemetry. Implementing those consistently in every language and team is expensive; platforms centralize them.
+
+**The idea.** Two separate needs, two separate fixes. *Finding* a service: keep a live directory from names to healthy addresses (discovery). *Calling* it safely: move the network etiquette — encryption, retries, timeouts, metrics — out of each app and into a proxy beside it, configured centrally (mesh).
+
+:::callout[That's all it is]{type=insight}
+Service discovery is a self-updating phone book from service names to healthy instances. A service mesh is a proxy next to every instance that handles encryption, retries, timeouts and metrics for every call, so application code doesn't have to.
+:::
 
 ## How It Works
 
@@ -49,6 +55,8 @@ Moving from a monolith to many services turns in-process function calls into net
 A **Service** gets a stable virtual IP and a DNS name (`payments.prod.svc.cluster.local`). EndpointSlices list ready pod IPs (pods failing readiness probes are removed). On each node, kube-proxy (iptables/IPVS) or an eBPF data plane (Cilium) DNATs connections to the virtual IP onto one pod IP. It's **connection-level** balancing — long-lived HTTP/2/gRPC connections stick to one pod ([HTTP/2](lesson:cn-http2), [Container Networking](lesson:cn-container-networking)).
 
 ### What a mesh sidecar does per request
+
+Since the sidecar sits on every request path, anything it does is applied to every call uniformly — without touching application code.
 
 ```mermaid
 flowchart LR

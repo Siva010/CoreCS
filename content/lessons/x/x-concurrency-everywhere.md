@@ -40,7 +40,13 @@ Whenever two actors can touch the same state at the same time, you get the same 
 
 ## Why It Exists
 
-Concurrency is how systems get throughput — more threads, more connections, more instances. Every added actor sharing state reintroduces the same hazards. Recognizing the common pattern lets you transfer solutions across layers instead of rediscovering them (often badly) at each one.
+**The problem.** Concurrency is how systems get throughput — more threads, more connections, more instances. Every added actor sharing state reintroduces the same hazards.
+
+**The idea.** The hazards come from one situation — two actors, one piece of state, no agreed order — so the fixes are the same three at every layer: make them take turns (locks), let them race but check at the end (compare-and-swap), or stop sharing mutable state (versions). Recognizing the common pattern lets you transfer solutions across layers instead of rediscovering them (often badly) at each one.
+
+:::callout[That's all it is]{type=insight}
+Threads, transactions and services all hit the same three problems (lost updates, inconsistent reads, deadlocks) and use the same three fixes (lock first, check-and-retry, or immutable versions). Only the names change between layers.
+:::
 
 ## How It Works
 

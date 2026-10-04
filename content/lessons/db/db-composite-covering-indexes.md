@@ -35,7 +35,13 @@ That's the **leftmost-prefix rule**, and nearly every composite-index question r
 
 ## Why It Exists
 
-Real queries filter and sort on several columns: "orders of customer 42 with status 'paid', newest first". Separate single-column indexes can each narrow one condition; a composite index matching the query can jump **directly to the exact contiguous range, already in the requested order**, and stop after `LIMIT` rows.
+**The problem.** Real queries filter and sort on several columns: "orders of customer 42 with status 'paid', newest first". Separate single-column indexes can each narrow one condition; a composite index matching the query can jump **directly to the exact contiguous range, already in the requested order**, and stop after `LIMIT` rows.
+
+**The idea.** Sort the index by several columns at once, in the order the query narrows things down. Then the rows a query wants sit next to each other, already in the order it wants them. Put the remaining columns it needs in the index too, and it never has to visit the table at all.
+
+:::callout[That's all it is]{type=insight}
+A composite index is sorted by its first column, then the second within that, and so on — so it can only jump using a leftmost prefix. Put equality columns first and the range or sort column after. Add the other needed columns and the table is never touched.
+:::
 
 ## How It Works
 
@@ -65,7 +71,7 @@ Entries are sorted like this:
 
 ### Equality first, range last
 
-Once a column is used with a **range** (`>`, `<`, `BETWEEN`, `LIKE 'x%'`), later columns can't narrow the seek — within the range, they're not sorted globally. So order columns:
+Why the order matters: within one value of the first column, the second column is sorted; across a *range* of the first column, it isn't. Once a column is used with a **range** (`>`, `<`, `BETWEEN`, `LIKE 'x%'`), later columns can't narrow the seek — within the range, they're not sorted globally. So order columns:
 
 1. Columns tested with **equality** (most selective first is a common tiebreaker, but equality-vs-range matters far more),
 2. then the **range** or **sort** column,
@@ -78,6 +84,8 @@ For `WHERE tenant_id = ? AND created_at >= ? ORDER BY created_at` → `(tenant_i
 An index returns rows in key order, so `ORDER BY` matching the index (after equality-bound prefix columns) needs no Sort node. Direction matters for mixed orders: `ORDER BY a ASC, b DESC` needs an index on `(a ASC, b DESC)` (or the reverse of both), not `(a, b)`.
 
 ### Covering and index-only scans
+
+The remaining cost after a perfect seek is fetching each row from the table — one random read per row. If the index already holds every column the query asks for, that step disappears.
 
 ```sql
 -- Query needs customer_id, order_date, total

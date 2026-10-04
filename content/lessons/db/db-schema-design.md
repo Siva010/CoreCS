@@ -34,11 +34,19 @@ Key decisions covered here:
 
 ## Why It Exists
 
-Normalization tells you *which facts go in which table*. It doesn't tell you what type an id should be, how to represent "deleted", how to keep history, or how to serve 10,000 customers from one database. Those choices dominate day-to-day schema work and interviews for backend roles.
+**The problem.** Normalization tells you *which facts go in which table*. It doesn't tell you what type an id should be, how to represent "deleted", how to keep history, or how to serve 10,000 customers from one database. Those choices dominate day-to-day schema work and interviews for backend roles.
+
+**The principle behind every choice below.** Data outlives code. A wrong type or representation is cheap to fix with ten rows and painful with ten billion, so pick representations that stay correct, enforceable and changeable as the table grows.
+
+:::callout[That's all it is]{type=insight}
+Pick types that can't lie (exact numbers for money, timestamptz for instants), ids that suit your index, an explicit story for deletion and history, columns for anything you query, and a tenant key from day one if you're multi-tenant.
+:::
 
 ## How It Works
 
 ### Identifiers
+
+The tension: an id should be cheap to generate and store, friendly to the index (new ids land near each other), and safe to expose. No single option wins all three.
 
 | Option | Pros | Cons |
 |---|---|---|

@@ -30,7 +30,13 @@ Think of each important query as a request for **one contiguous slice of one sor
 
 ## Why It Exists
 
-Indexes are the most effective and the most over-applied performance tool. Too few and queries scan; too many and every write pays for all of them, memory fills with rarely used index pages, and replication lags ([Index Fundamentals](lesson:db-index-fundamentals)). A method prevents both.
+**The problem.** Indexes are the most effective and the most over-applied performance tool. Too few and queries scan; too many and every write pays for all of them, memory fills with rarely used index pages, and replication lags ([Index Fundamentals](lesson:db-index-fundamentals)). A method prevents both.
+
+**The idea.** Start from the queries, not the columns. For each important query, find the one sorted slice it needs; then find the fewest indexes that provide all those slices; then check what they cost on writes.
+
+:::callout[That's all it is]{type=insight}
+List the queries that matter, design the index each one wants (equality → range/sort → covering), merge overlaps, verify with EXPLAIN on real data, and delete indexes nobody uses.
+:::
 
 ## How It Works
 

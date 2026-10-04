@@ -33,7 +33,15 @@ At scale, the **tail becomes the common case**. That's why engineers talk in per
 
 ## Why It Exists
 
-Latency distributions in real systems are long-tailed: most requests are fast, but queueing, garbage collection, retransmissions, cache misses, lock contention and noisy neighbors produce occasional very slow ones. In distributed systems, those occasional delays compound.
+**The problem.** Latency distributions in real systems are long-tailed: most requests are fast, but queueing, garbage collection, retransmissions, cache misses, lock contention and noisy neighbors produce occasional very slow ones.
+
+**Why it gets worse at scale.** In distributed systems, those occasional delays compound. A page that waits on 100 backend calls is as slow as the *slowest* of them — so a 1-in-100 slow event happens on most page loads.
+
+**The idea.** Stop describing latency with one number. Measure the whole distribution (percentiles), and treat the slow tail as a design target in its own right — attacking both its causes (variability) and its effect (fan-out).
+
+:::callout[That's all it is]{type=insight}
+p99 is "how slow the slowest 1% are". When one request waits on many others, those rare slow cases stop being rare — so at scale, the tail is what users actually feel.
+:::
 
 ## How It Works
 
@@ -78,6 +86,8 @@ So a service fanning out to 100 leaves needs each leaf's **p99.9** to be good fo
 ## Internal Mechanism
 
 ### Techniques to tame the tail
+
+You can't remove every source of slowness, so the techniques split into two groups: make individual slow events rarer, and stop one slow event from deciding the whole request's latency.
 
 - **Hedged requests**: send the request to one replica; if no response within, say, the p95 latency, send a second copy to another replica and use whichever answers first. Adds ~5% load, cuts p99.9 dramatically. Only for idempotent reads.
 - **Tied requests**: send to two replicas at once with cross-cancellation when one starts executing.

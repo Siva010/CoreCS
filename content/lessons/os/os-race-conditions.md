@@ -37,7 +37,19 @@ Not every race condition is a data race: two properly locked operations can stil
 
 ## Why It Exists
 
-Shared memory makes communication between threads cheap — no copies, no syscalls. The price is that the hardware and compiler were optimized for **single-threaded** speed: they cache values in registers, buffer writes, and reorder instructions whenever a *single* thread couldn't tell the difference. Another thread can tell.
+Race conditions aren't a feature someone designed; they're the bill for two decisions that were each sensible on their own.
+
+**Decision 1: share memory.** Shared memory makes communication between threads cheap — no copies, no syscalls.
+
+**Decision 2: make one thread fast.** The hardware and compiler were optimized for **single-threaded** speed: they cache values in registers, buffer writes, and reorder instructions whenever a *single* thread couldn't tell the difference.
+
+**The collision.** Another thread can tell. Each of the three failure kinds maps to one of those speed tricks: operations split into several steps (atomicity), values parked in registers and buffers (visibility), and instructions shuffled (ordering).
+
+**The fix, in one idea.** Mark the places where threads interact, and at those places — *only* there — switch the speed tricks off. That's what locks, atomics and `volatile` do; the rest of the code stays fast.
+
+:::callout[That's all it is]{type=insight}
+A race is two threads touching the same data with nothing saying who goes first. Every fix is a way of saying who goes first, and of making sure the second one sees what the first one wrote.
+:::
 
 ## How It Works
 
@@ -115,13 +127,15 @@ Without synchronization, the compiler or CPU may make `ready = 1` visible before
 
 ### Why hardware reorders
 
+Each of these exists because waiting is slow: a core that waited for every write to reach shared cache, or executed strictly one instruction after another, would be several times slower.
+
 - **Store buffers**: a core's writes go into a private store buffer and drain to cache later, so its *own* reads see them but other cores don't yet. On x86 this allows store→load reordering; ARM and POWER are weaker and allow more reorderings.
 - **Out-of-order execution and speculation**: loads may execute before earlier loads/stores if the core predicts no dependency.
 - **Compiler optimizations**: register allocation, hoisting, dead-store elimination, instruction scheduling — all legal for single-threaded semantics.
 
 ### Memory models and happens-before
 
-A **memory model** (Java JMM, C/C++11, Go) specifies which values a read may observe. The key relation is **happens-before**:
+The problem: if hardware and compilers may reorder anything a single thread can't notice, programmers need a *contract* stating which orderings other threads are guaranteed to see. A **memory model** (Java JMM, C/C++11, Go) specifies which values a read may observe. The key relation is **happens-before**:
 
 - program order within a thread;
 - unlock of a mutex → subsequent lock of the same mutex;

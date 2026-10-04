@@ -36,7 +36,13 @@ A wider pipe doesn't make the first drop arrive sooner; for small transfers (mos
 
 ## Why It Exists
 
-Engineers constantly face questions like "why is this upload slow on a gigabit link?", "how much will a CDN help?", "should we batch these calls?" — all answered with a few formulas and realistic numbers.
+**The problem.** "The network is slow" can mean two completely different things — the pipe is *narrow* (bandwidth) or *long* (latency) — and the fixes are different. More bandwidth does nothing for a long pipe.
+
+**Why it matters.** Engineers constantly face questions like "why is this upload slow on a gigabit link?", "how much will a CDN help?", "should we batch these calls?" — all answered with a few formulas and realistic numbers.
+
+:::callout[That's all it is]{type=insight}
+Small transfers are limited by round trips (latency); large transfers by link speed (bandwidth) and by having enough data in flight to fill the pipe (window ≥ bandwidth × RTT). Count round trips first.
+:::
 
 ## How It Works
 
@@ -79,6 +85,8 @@ BDP (bytes) = bandwidth (bits/s) × RTT (s) / 8
 TCP needs `min(cwnd, rwnd) ≥ BDP` to fill the path; otherwise **throughput ≤ window / RTT** ([Flow Control](lesson:cn-tcp-flow-control)).
 
 ### Loss-limited TCP throughput (Mathis et al.)
+
+Congestion control halves the window on every loss, so frequent losses keep the window — and therefore throughput — small regardless of link speed. This formula puts a number on it:
 
 ```text
 throughput ≲ (MSS / RTT) × (1.22 / √p)

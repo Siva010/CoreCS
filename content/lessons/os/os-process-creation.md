@@ -37,13 +37,21 @@ At the end of life, a process doesn't vanish immediately. It becomes a **zombie*
 
 ## Why It Exists
 
-Why not a single `create_process("ls", args, redirects…)` call? (Windows does exactly that with `CreateProcess`.) The Unix designers chose composability:
+**The problem.** Every process except the first must be created by another process — and the new one usually needs a slightly different setup: output redirected to a file, a different directory, fewer privileges.
+
+**The design choice.** Why not a single `create_process("ls", args, redirects…)` call? (Windows does exactly that with `CreateProcess`.) The Unix designers chose composability:
 
 - `fork` needs no parameters — the child inherits everything.
 - Any setup the child needs is done with existing syscalls (`dup2`, `chdir`, `setuid`, `close`) in the child *before* `exec`, so no giant option struct is required.
 - `fork` alone is useful: pre-fork servers (Apache prefork, PostgreSQL's postmaster) fork workers that run the *same* program.
 
-The zombie state exists because the parent may want the child's exit status *after* the child is gone — and the kernel must keep it somewhere until asked.
+**The idea.** Don't invent a new "create with options" interface; reuse the one you already have. Copy the process, let the copy configure *itself* with ordinary syscalls, then swap in the new program.
+
+**Why zombies.** The zombie state exists because the parent may want the child's exit status *after* the child is gone — and the kernel must keep it somewhere until asked. Without it, `wait()` couldn't tell the shell whether `make` succeeded.
+
+:::callout[That's all it is]{type=insight}
+`fork` = copy me. `exec` = replace my program. `wait` = tell me how my child ended. Everything a shell does with processes is those three calls in a row.
+:::
 
 ## How It Works
 
@@ -97,7 +105,7 @@ When a process exits, the kernel immediately releases almost everything (address
 
 ### Copy-on-write makes fork cheap
 
-Naively, `fork` would copy the parent's entire memory — gigabytes for a large process — only for the child to discard it immediately in `exec`. Instead, the kernel:
+`fork` has an obvious cost problem, and copy-on-write is the answer. Naively, `fork` would copy the parent's entire memory — gigabytes for a large process — only for the child to discard it immediately in `exec`. Instead, the kernel:
 
 1. copies the parent's **page tables**, not the pages;
 2. marks every writable page **read-only in both** processes and increments a reference count;
@@ -167,7 +175,7 @@ $ ps -o pid,ppid,comm -C python3
 | Pre-forked worker pool | No per-request creation cost, isolation | Idle memory usage; pool sizing |
 | Threads instead of processes | Cheapest creation and switching | No isolation |
 
-:::callout{type=warning}[fork() in a multithreaded program]
+:::callout[fork() in a multithreaded program]{type=warning}
 `fork` copies only the **calling thread**. If another thread held a lock (e.g., inside `malloc`) at that moment, the child inherits a locked mutex that no thread will ever unlock — a deadlock on the child's first `malloc`. Rule: in a multithreaded program, the child should call only async-signal-safe functions before `exec`.
 :::
 

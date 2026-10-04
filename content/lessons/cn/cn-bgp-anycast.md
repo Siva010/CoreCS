@@ -29,7 +29,15 @@ The internet is a **federation of ~75,000 independently operated networks** — 
 
 ## Why It Exists
 
-Inside one organization, IGPs (OSPF, IS-IS) compute shortest paths over a known topology ([Routing](lesson:cn-routing)). Between organizations, topology is private, business relationships matter more than distance, and the system must scale to ~1 million prefixes. BGP exchanges reachability plus attributes and lets each AS apply policy.
+**The problem.** The internet has no owner. ~75,000 independent networks must agree on how to reach each other's addresses, without revealing their internal layouts and while respecting who pays whom.
+
+**Why internal routing protocols don't work here.** Inside one organization, IGPs (OSPF, IS-IS) compute shortest paths over a known topology ([Routing](lesson:cn-routing)). Between organizations, topology is private, business relationships matter more than distance, and the system must scale to ~1 million prefixes. BGP exchanges reachability plus attributes and lets each AS apply policy.
+
+**The idea.** Each network only tells its neighbors "I can reach these prefixes, and here's the list of networks the path goes through". The list prevents loops and lets each network choose by its own rules. Nobody needs the whole map.
+
+:::callout[That's all it is]{type=insight}
+BGP is networks telling their neighbors "I can reach these addresses via this chain of networks", and each one picking which claim to believe by policy. Anycast is announcing the same addresses from many places so users land on the nearest one.
+:::
 
 ## How It Works
 
@@ -49,7 +57,7 @@ Inside one organization, IGPs (OSPF, IS-IS) compute shortest paths over a known 
 
 ### Anycast
 
-The same prefix (say `1.1.1.0/24`) is announced from 300 cities. Each network's BGP picks the "best" (usually nearest in AS hops/IGP cost) announcement, so users in Frankfurt reach the Frankfurt site and users in Tokyo reach Tokyo — **one IP, many servers**.
+A side effect of "each network picks the best-looking announcement": if the *same* addresses are announced from many places, each user is sent to whichever place looks closest. That turns BGP into a free, global load balancer. The same prefix (say `1.1.1.0/24`) is announced from 300 cities. Each network's BGP picks the "best" (usually nearest in AS hops/IGP cost) announcement, so users in Frankfurt reach the Frankfurt site and users in Tokyo reach Tokyo — **one IP, many servers**.
 
 Used for:
 

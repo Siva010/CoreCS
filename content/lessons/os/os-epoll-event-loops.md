@@ -30,7 +30,11 @@ An event loop is a **dispatcher at a switchboard with thousands of phone lines**
 
 ## Why It Exists
 
-Thread-per-connection hits walls around tens of thousands of connections: memory for stacks, scheduler overhead, context switches, and lock contention. `select`/`poll` scan every fd on every call — O(n) — so 50,000 mostly idle connections cost 50,000 checks per wakeup. epoll (Linux 2.6, 2002) made per-wait cost proportional to *active* connections, solving the C10K problem and enabling C100K+.
+**The problem.** Thread-per-connection hits walls around tens of thousands of connections: memory for stacks, scheduler overhead, context switches, and lock contention. `select`/`poll` scan every fd on every call — O(n) — so 50,000 mostly idle connections cost 50,000 checks per wakeup. **The idea.** Don't ask every connection "anything for me?" on every wait. Instead, have each connection *announce itself* when something happens, and keep a list of the ones that did. epoll (Linux 2.6, 2002) made per-wait cost proportional to *active* connections, solving the C10K problem and enabling C100K+.
+
+:::callout[That's all it is]{type=insight}
+epoll is a kernel-side list of "sockets that have something for you", filled in by callbacks as packets arrive. An event loop is one thread that takes that list, handles each item quickly, and asks again.
+:::
 
 ## How It Works
 
@@ -52,6 +56,8 @@ flowchart LR
 When you add an fd, the kernel registers a **callback** on that file's wait queue. When a packet arrives on socket A, the network stack wakes the socket's wait queue, the callback appends A to the ready list and wakes any thread in `epoll_wait`. `epoll_wait` just drains the ready list — no scanning.
 
 ### Level-triggered vs edge-triggered
+
+A design choice about *how often to remind you*: keep telling you while data is waiting, or tell you only when new data arrives.
 
 - **Level-triggered (default)**: `epoll_wait` reports an fd as long as the condition holds (unread data remains). Forgiving: if you read only part of the data, you'll be told again.
 - **Edge-triggered (`EPOLLET`)**: reported only when the state **changes** (new data arrives). You must read until `EAGAIN` each time, or leftover data will never be reported again — a hang. Fewer wakeups, more discipline.
@@ -82,7 +88,7 @@ for (;;) {
 
 ### Multi-core event loops
 
-One loop uses one core. Servers scale across cores by:
+An event loop removes the cost of many threads — but it also removes the parallelism. One loop uses one core. Servers scale across cores by:
 
 - **Multiple processes**, each with its own loop (Nginx workers, Node.js cluster), sharing listening sockets. **`SO_REUSEPORT`** gives each worker its own listening socket and lets the kernel load-balance incoming connections by hash, avoiding the **thundering herd** (all workers waking for one new connection; `EPOLLEXCLUSIVE` also addresses it).
 - **Multiple threads**, one loop each (Netty's EventLoopGroup, Envoy workers, Redis 6+ I/O threads for reads/writes while command execution stays single-threaded).

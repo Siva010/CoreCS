@@ -42,7 +42,15 @@ Almost every beginner error — "column alias doesn't exist in WHERE", "must app
 
 ## Why It Exists
 
-SQL was designed to read like an English request ("select name from customers where city is Pune") while compiling to relational algebra. The price of that readability is the mismatch between written and evaluated order — which is exactly why you must know the evaluation order explicitly.
+**The problem.** People want to ask a database questions without writing a program for each one.
+
+**The design choice.** SQL was designed to read like an English request ("select name from customers where city is Pune") while compiling to relational algebra. The price of that readability is the mismatch between written and evaluated order — which is exactly why you must know the evaluation order explicitly.
+
+**Why the order is what it is.** You can't filter rows before you have them (FROM first), can't group before filtering (WHERE before GROUP BY), and can't name an output column before computing it (SELECT after both). The evaluation order is simply the order in which each step's inputs become available.
+
+:::callout[That's all it is]{type=insight}
+FROM builds the rows, WHERE drops some, GROUP BY bundles them, HAVING drops bundles, SELECT computes the output, ORDER BY sorts it, LIMIT cuts it. Every "why doesn't this work?" in basic SQL is that order.
+:::
 
 ## How It Works
 
@@ -97,6 +105,8 @@ ORDER BY salary DESC;
 `CASE` returns the first matching branch; without `ELSE` it returns NULL.
 
 ### Sorting details
+
+Tables have no inherent order (they're sets), so any order you rely on must be asked for explicitly — and fully.
 
 - Sort by several keys: `ORDER BY department_id, salary DESC`.
 - NULLs sort **last in ascending order in PostgreSQL and first in MySQL**; control with `NULLS FIRST/LAST`.

@@ -43,13 +43,19 @@ SQL tables are **bags (multisets)**, not sets: they allow duplicate rows unless 
 
 ## Why It Exists
 
-Before 1970, databases were **navigational**: hierarchical (IBM IMS) and network (CODASYL) models where programs followed physical pointers from record to record. Every query was a program that knew the storage layout; reorganize the storage and the programs broke.
+**The problem.** Before 1970, databases were **navigational**: hierarchical (IBM IMS) and network (CODASYL) models where programs followed physical pointers from record to record. Every query was a program that knew the storage layout; reorganize the storage and the programs broke.
 
 E. F. Codd's relational model separated the **logical** view (relations) from the **physical** storage, and defined queries mathematically. That gave:
 
 - **Data independence** — storage can change without breaking queries.
 - **Ad-hoc queries** — ask new questions without writing new navigation code.
 - **Optimizability** — algebraic rules let the system rewrite queries into cheaper equivalent forms.
+
+**The idea in one line.** Describe *what* data you want, never *where it is stored* — and store everything as plain tables of values, so that "related" means "has a matching value", not "has a pointer".
+
+:::callout[That's all it is]{type=insight}
+Store everything as tables of facts. Answer questions by filtering, picking columns and matching rows across tables. Because a query only says *what*, the database is free to pick the fastest *how*.
+:::
 
 ## How It Works
 
@@ -78,7 +84,7 @@ flowchart BT
 
 ### Equivalences enable optimization
 
-Because the operators are mathematical, the optimizer can apply rewrite rules that are **guaranteed to preserve the result**:
+This is the payoff of describing *what* instead of *how*: the database can transform your request into a cheaper one that is guaranteed to return the same rows. Because the operators are mathematical, the optimizer can apply rewrite rules that are **guaranteed to preserve the result**:
 
 - Push selections down: filter `Customer` to Pune *before* joining, so the join processes fewer rows.
 - Reorder joins: A ⋈ B ⋈ C can be computed as (A ⋈ B) ⋈ C or A ⋈ (B ⋈ C) — pick the order with the smallest intermediate results.

@@ -31,7 +31,13 @@ Kubernetes adds one rule that shapes everything: **every pod gets its own IP, an
 
 ## Why It Exists
 
-Containers need isolation (their own ports and IPs, no port conflicts) and connectivity (to each other, to the host, to the internet), at high density and with constantly changing membership. Kubernetes' flat pod network makes service-to-service communication simple for applications.
+**The problem.** Containers need isolation (their own ports and IPs, no port conflicts) and connectivity (to each other, to the host, to the internet), at high density and with constantly changing membership. Those two goals pull in opposite directions.
+
+**The idea.** Give each container its own complete, private network stack (a namespace) — that solves isolation. Then connect the stacks back together with the ordinary building blocks from earlier lessons, just in software: virtual cables (veth), a virtual switch (bridge), routes, NAT and tunnels. Kubernetes' flat pod network makes service-to-service communication simple for applications.
+
+:::callout[That's all it is]{type=insight}
+Each container gets a private network stack; a virtual cable connects it to the host; the host switches, routes or tunnels packets between containers and NATs them to the outside. A Kubernetes Service IP is just a NAT rule that picks a pod.
+:::
 
 ## How It Works
 
@@ -53,7 +59,7 @@ Containers need isolation (their own ports and IPs, no port conflicts) and conne
 
 ### Multi-node: pod-to-pod across nodes
 
-Two main approaches:
+On one host, a bridge is enough. Across hosts, the physical network doesn't know pod addresses exist — so either teach it (routing) or hide pod packets inside host packets (overlay). Two main approaches:
 
 | | Routed (no encapsulation) | Overlay (encapsulation) |
 |---|---|---|
@@ -65,6 +71,8 @@ Two main approaches:
 Cloud "VPC-native" CNIs (AWS VPC CNI, GKE VPC-native) give pods real VPC IPs — no overlay, but pods consume subnet addresses ([Subnetting](lesson:cn-subnetting)).
 
 ### Services: stable virtual IPs
+
+Pods die and get new IPs constantly, so clients can't use pod IPs directly. A Service gives them one address that never changes and quietly maps each new connection to a current pod.
 
 ```mermaid
 sequenceDiagram

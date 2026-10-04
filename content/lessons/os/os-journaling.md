@@ -29,7 +29,15 @@ Appending one block to a file is not one write — it's several: update the **da
 
 ## Why It Exists
 
-Without it, every crash requires a full fsck — minutes to hours on large disks — and even fsck can't recover lost data, only make structures consistent. Journaling makes recovery proportional to the journal size (seconds) and guarantees metadata consistency.
+**The problem.** One logical change ("append a block") is several physical writes, and the disk can only promise each write individually. A crash can land between any two of them.
+
+**Without it.** Every crash requires a full fsck — minutes to hours on large disks — and even fsck can't recover lost data, only make structures consistent.
+
+**The idea.** You can't make several writes atomic, but you *can* make one small write atomic — a single commit block. So first write the whole change somewhere harmless (the journal), then flip one commit block saying "this change is complete", and only then touch the real structures. After a crash, any change with a commit block can be redone; any change without one never touched anything. Journaling makes recovery proportional to the journal size (seconds) and guarantees metadata consistency.
+
+:::callout[That's all it is]{type=insight}
+Write down what you're about to do, mark it "committed", then do it. After a crash, redo whatever was committed and ignore the rest. This is the same write-ahead logging databases use.
+:::
 
 ## How It Works
 
@@ -55,13 +63,13 @@ After a crash, recovery scans the journal: transactions with a valid commit bloc
 
 ### Copy-on-write filesystems
 
-Btrfs and ZFS never overwrite live blocks. An update writes new copies of data and every metadata block up to the root, then atomically switches the root pointer (the **uberblock/superblock**). A crash leaves either the old tree or the new tree — always consistent, no journal replay needed (ZFS adds an intent log for fast synchronous writes). Bonus: snapshots are free, and checksums detect silent corruption.
+A different answer to the same problem: if the danger is a half-overwritten structure, *never overwrite anything*. Btrfs and ZFS never overwrite live blocks. An update writes new copies of data and every metadata block up to the root, then atomically switches the root pointer (the **uberblock/superblock**). A crash leaves either the old tree or the new tree — always consistent, no journal replay needed (ZFS adds an intent log for fast synchronous writes). Bonus: snapshots are free, and checksums detect silent corruption.
 
 ## Internal Mechanism
 
 ### What fsync really guarantees (and what it doesn't)
 
-`write()` only copies data into the **page cache**; it returns long before the data is on disk ([Page Cache](lesson:os-page-cache)). Durability requires `fsync`:
+Journaling keeps the filesystem *consistent*; it doesn't make your data *durable* the moment you write it — those are different promises. `write()` only copies data into the **page cache**; it returns long before the data is on disk ([Page Cache](lesson:os-page-cache)). Durability requires `fsync`:
 
 - `fsync(fd)` flushes the file's dirty data and metadata and issues a **device cache flush** (or FUA writes) so the drive's volatile cache doesn't lose it.
 - **Creating or renaming a file modifies the directory**, so for a new file to survive a crash you must also `fsync` the **directory**.
@@ -69,7 +77,7 @@ Btrfs and ZFS never overwrite live blocks. An update writes new copies of data a
 
 ### The atomic-replace pattern
 
-Updating a config or state file safely:
+The problem: overwriting a file in place means a crash can leave it half old, half new. But `rename` is atomic — a name points to one inode or the other, never a mix. So write a complete new file, then swap the name. Updating a config or state file safely:
 
 ```python
 import os

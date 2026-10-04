@@ -34,11 +34,19 @@ These three problems are not puzzles for their own sake. Each is a **template** 
 
 ## Why It Exists
 
-Dijkstra and Courtois et al. formulated them in the 1960s–70s to test whether a synchronization mechanism could express common coordination patterns cleanly and without deadlock or starvation. They remain the standard way to reason about correctness properties.
+**The problem.** It's hard to judge a synchronization tool in the abstract. You need standard situations that every tool must handle — and that expose the typical failure (lost wakeups, starvation, deadlock).
+
+**The idea.** Dijkstra and Courtois et al. formulated them in the 1960s–70s to test whether a synchronization mechanism could express common coordination patterns cleanly and without deadlock or starvation. They remain the standard way to reason about correctness properties. Each problem isolates exactly *one* hard thing: Producer–Consumer is about *waiting* for a state, Readers–Writers about *sharing fairly*, Dining Philosophers about *needing two resources at once*.
+
+:::callout[That's all it is]{type=insight}
+Three toy stories, three real problems: wait until there's room or work (producer–consumer), let readers share but writers go alone (readers–writers), and don't deadlock when you need two locks (philosophers). Recognise the shape in real code and the known fix applies.
+:::
 
 ## How It Works
 
 ### 1. Producer–Consumer with semaphores
+
+Two different needs, so two different tools: the producer must *wait for a free slot* and the consumer must *wait for an item* (counting), and both must not corrupt the buffer's indices (mutual exclusion).
 
 ```c
 semaphore mutex = 1;     // mutual exclusion on the buffer
@@ -94,7 +102,7 @@ Readers run concurrently. But as long as at least one reader is present, new rea
 
 ### 3. Dining Philosophers
 
-Naive solution: each philosopher picks up the left fork, then the right.
+The story stands for any task that needs *two* resources at once (two accounts in a transfer, two locks). Naive solution: each philosopher picks up the left fork, then the right.
 
 ```c
 semaphore fork[5] = {1,1,1,1,1};

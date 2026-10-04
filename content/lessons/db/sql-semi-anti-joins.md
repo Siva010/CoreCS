@@ -47,7 +47,15 @@ WHERE o.id IS NULL;
 
 ## Why It Exists
 
-Using an inner join for "customers who ordered" returns each customer once per order; adding `DISTINCT` to fix it forces a sort/hash over the whole result. A semi join states the real question, so the database can **stop at the first match** per row and never produces duplicates.
+**The problem.** Many questions are yes/no about related rows: "customers who *have* ordered", "products *never* sold". A regular join answers a different question — "pair each customer with each order".
+
+**Without it.** Using an inner join for "customers who ordered" returns each customer once per order; adding `DISTINCT` to fix it forces a sort/hash over the whole result.
+
+**The idea.** Ask the question you actually mean: "does at least one match exist?" A semi join states the real question, so the database can **stop at the first match** per row and never produces duplicates. An anti join is the same question with the answer flipped.
+
+:::callout[That's all it is]{type=insight}
+Semi join = keep A rows that have a match in B (EXISTS). Anti join = keep A rows that have no match (NOT EXISTS). Neither adds B's columns or duplicates A's rows. Avoid NOT IN when the subquery can contain NULLs.
+:::
 
 ## How It Works
 

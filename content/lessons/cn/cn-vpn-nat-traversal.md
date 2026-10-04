@@ -31,8 +31,16 @@ tags: [vpn, ipsec, wireguard, openvpn, tls vpn, tunnel, split tunneling, zero tr
 
 ## Why It Exists
 
+Two different problems, both caused by the public internet not being shaped the way we want:
+
 - Organizations need private connectivity between offices, clouds and remote workers without leased lines.
 - Peer-to-peer apps (video calls, games, file sharing, mesh VPNs like Tailscale) want direct low-latency paths between devices, but NAT blocks unsolicited inbound traffic ([NAT](lesson:cn-nat)).
+
+**The ideas.** For VPNs: if you can't have a private cable, make a private *envelope* — encrypt private packets and send them inside ordinary public packets. For NAT traversal: since NATs only let in replies to outbound traffic, have both sides send outbound packets to each other at the same moment, so each NAT thinks the other's packets are replies.
+
+:::callout[That's all it is]{type=insight}
+A VPN wraps private packets in encrypted public packets. Hole punching gets two devices behind NATs talking by having both "call out" at once; when that fails, a relay in the middle forwards their traffic.
+:::
 
 ## How It Works
 
@@ -62,6 +70,8 @@ Encapsulation adds overhead → a smaller effective MTU (WireGuard default 1,420
 Traditional VPNs grant network-level access ("once inside, you can reach everything"). **Zero-trust** access (identity-aware proxies, BeyondCorp-style) authenticates and authorizes each request to each application, reducing lateral movement. Mesh VPNs with per-device ACLs sit in between.
 
 ### NAT traversal step by step
+
+The two obstacles: neither peer knows its own public address, and neither NAT will accept an unexpected packet. STUN solves the first; simultaneous sending solves the second.
 
 ```mermaid
 sequenceDiagram

@@ -43,7 +43,11 @@ POSIX definition: an operation is **synchronous** if the requesting thread is bl
 
 ## Why It Exists
 
-A server handling 10,000 connections spends most of its time waiting on the network. With blocking I/O you need a thread per connection — 10,000 threads, with their stacks and context switches (the **C10K problem**, 1999). Non-blocking + multiplexing lets one thread wait on thousands of sockets. Asynchronous I/O goes further: submitting work and harvesting completions in batches with minimal syscalls, and it works for disk files, where readiness models don't.
+**The problem.** A server handling 10,000 connections spends most of its time waiting on the network. With blocking I/O you need a thread per connection — 10,000 threads, with their stacks and context switches (the **C10K problem**, 1999). **The idea.** The expensive thing was never the waiting — it was dedicating a whole thread to each wait. Instead, let *one* thread say "wake me when any of these 10,000 is ready" (multiplexing), and make sure reading a ready socket never blocks (non-blocking). Non-blocking + multiplexing lets one thread wait on thousands of sockets. Asynchronous I/O goes further: submitting work and harvesting completions in batches with minimal syscalls, and it works for disk files, where readiness models don't.
+
+:::callout[That's all it is]{type=insight}
+I/O has two parts: waiting until data is there, and copying it. The models differ only in who waits (your thread or the kernel) and how many things one wait covers (one fd or thousands).
+:::
 
 ## How It Works
 
@@ -99,6 +103,8 @@ One `io_uring_enter` call submits a batch and optionally waits for completions; 
 ## Internal Mechanism
 
 ### Readiness vs completion
+
+The two families answer different questions: "*when can* I do the I/O without blocking?" vs "*please do* the I/O and tell me when it's done".
 
 - **Readiness-based** (epoll, kqueue): the kernel tells you *you may now read without blocking*; you then perform the I/O yourself.
 - **Completion-based** (io_uring, IOCP): you describe the I/O up front; the kernel tells you *it's done*. Buffers must stay valid until completion.

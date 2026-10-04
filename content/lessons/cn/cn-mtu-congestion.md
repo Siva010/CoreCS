@@ -28,7 +28,13 @@ Every link has a maximum packet size (**MTU**), like a tunnel with a height limi
 
 ## Why It Exists
 
-Networks are heterogeneous, and encapsulation (VPNs, VXLAN, GRE, IPsec, PPPoE) adds headers that shrink the space available for inner packets. Something must reconcile sizes end to end.
+**The problem.** Networks are heterogeneous, and encapsulation (VPNs, VXLAN, GRE, IPsec, PPPoE) adds headers that shrink the space available for inner packets. Something must reconcile sizes end to end.
+
+**Why it fails so confusingly.** The mechanism that reconciles sizes (PMTUD) relies on an error message (ICMP) coming *back* — and many firewalls drop ICMP. So the failure only hits *big* packets, and only silently: small things work, large things hang.
+
+:::callout[That's all it is]{type=insight}
+The biggest packet a path can carry is set by its smallest link, and tunnels make it smaller. If the "too big" notice can't get back to the sender, large packets vanish and connections hang — fix it by allowing that ICMP or by clamping MSS.
+:::
 
 ## How It Works
 
@@ -65,7 +71,7 @@ Symptoms: "SSH connects but hangs when listing large directories", "API works fo
 
 ### Bottlenecks and congestion
 
-The throughput of a path is limited by its **bottleneck link** — the slowest or most loaded hop. Congestion appears when arrival rate exceeds that link's capacity:
+The same "smallest link wins" rule applies to speed as well as size. The throughput of a path is limited by its **bottleneck link** — the slowest or most loaded hop. Congestion appears when arrival rate exceeds that link's capacity:
 
 - **Queue build-up** → rising RTT (bufferbloat if buffers are deep) → eventually drops → TCP backs off ([Congestion Control](lesson:cn-tcp-congestion-control)).
 - **Microbursts**: sub-millisecond bursts (many flows or TSO bursts converging on one port, "incast" in data centers when many servers respond to one aggregator simultaneously) overflow shallow switch buffers, causing drops even though average utilization looks low. Visible in switch drop counters, not 1-minute utilization graphs.

@@ -42,7 +42,13 @@ Derived rules: **union** (X → Y, X → Z ⇒ X → YZ), **decomposition** (X �
 
 ## Why It Exists
 
-To normalize a schema you must answer precisely: "Is this attribute set a key?", "Does this non-key attribute depend on only part of the key?", "Is this decomposition lossless?". FDs and closures make those answers mechanical instead of intuitive.
+**The problem.** Redundancy in a table comes from facts stored more often than they need to be — "this customer's city" repeated on every order. To fix it, you need a precise way to say which facts determine which.
+
+**What it enables.** To normalize a schema you must answer precisely: "Is this attribute set a key?", "Does this non-key attribute depend on only part of the key?", "Is this decomposition lossless?". FDs and closures make those answers mechanical instead of intuitive.
+
+:::callout[That's all it is]{type=insight}
+X → Y means "knowing X tells you Y". The closure of X is everything X tells you, found by applying the rules until nothing new appears. If X's closure is every column, X is a key.
+:::
 
 ## How It Works
 
@@ -65,6 +71,8 @@ Compute {A, D}⁺:
 
 ### Finding all candidate keys
 
+The shortcut comes from one observation: an attribute that nothing determines can only be known if it's *in* the key. 
+
 1. Attributes that appear on **no right-hand side** must be in every key (nothing determines them). Here: A and D.
 2. Attributes only on right-hand sides are never in a minimal key. Here: E.
 3. Start from the must-have set; if its closure is everything, it is the **only** candidate key. Otherwise add the "middle" attributes (appearing on both sides) in increasing combinations, keeping only minimal results.
@@ -81,7 +89,7 @@ R(A, B, C), F = { A → B, B → A, A → C }.
 
 ### Minimal cover
 
-F = { A → BC, B → C, A → B, AB → C }:
+Why bother: the same rules can be written with lots of redundancy, which hides what the real dependencies are and makes normalization produce extra tables. A minimal cover is the shortest equivalent list. F = { A → BC, B → C, A → B, AB → C }:
 
 1. Split right sides: A → B, A → C, B → C, A → B, AB → C → remove the duplicate: {A → B, A → C, B → C, AB → C}.
 2. Remove extraneous left attributes: in AB → C, is B extraneous? A⁺ under F = {A, B, C} contains C → yes, AB → C becomes A → C (duplicate, remove).

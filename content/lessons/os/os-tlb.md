@@ -25,7 +25,15 @@ The **Translation Lookaside Buffer (TLB)** is a small, fast, associative cache i
 
 ## Why It Exists
 
-With 4-level page tables, every memory access would need up to 4 extra memory reads just to translate its address — making memory effectively 5× slower. The TLB removes that overhead in the common case.
+**The problem.** Paging solved fragmentation but introduced a lookup on *every single memory access*.
+
+**Without it.** With 4-level page tables, every memory access would need up to 4 extra memory reads just to translate its address — making memory effectively 5× slower.
+
+**The idea.** Programs keep touching the same few pages (locality), so the same few translations are needed again and again. Remember the recent ones in a tiny, very fast table inside the CPU. The TLB removes that overhead in the common case.
+
+:::callout[That's all it is]{type=insight}
+The TLB is a cache of page-table answers. Everything else — reach, flushes, shootdowns, huge pages — is about keeping that cache big enough and correct.
+:::
 
 ## How It Works
 
@@ -61,7 +69,7 @@ Modern variant (t ≈ 0, k = 4 levels, m = 100 ns, h = 99%): `0.99 × 100 + 0.01
 
 ### TLB reach
 
-**TLB reach = entries × page size.** 1,536 entries × 4 KB = 6 MB. A working set bigger than the TLB reach causes frequent misses even if all the data is in RAM and cache. With 2 MB huge pages, 1,536 entries cover 3 GB — the main reason databases and JVMs use huge pages ([Huge Pages & NUMA](lesson:os-hugepages-numa)).
+A cache is only useful if what you're using fits in it. For the TLB, "fits" is measured in memory covered, not entries: **TLB reach = entries × page size.** 1,536 entries × 4 KB = 6 MB. A working set bigger than the TLB reach causes frequent misses even if all the data is in RAM and cache. With 2 MB huge pages, 1,536 entries cover 3 GB — the main reason databases and JVMs use huge pages ([Huge Pages & NUMA](lesson:os-hugepages-numa)).
 
 ## Internal Mechanism
 
@@ -76,7 +84,7 @@ Switching between threads of the same process doesn't change the address space, 
 
 ### Keeping TLBs coherent: shootdowns
 
-TLBs are per core and **not** kept coherent by hardware. When the kernel changes or removes a mapping that other cores might have cached (`munmap`, `mprotect`, page migration, COW break, page reclaim), it must:
+Every cache has the same weakness: when the original changes, the copies become wrong. TLBs are per core and **not** kept coherent by hardware. When the kernel changes or removes a mapping that other cores might have cached (`munmap`, `mprotect`, page migration, COW break, page reclaim), it must:
 
 1. update the PTE,
 2. send an **inter-processor interrupt (IPI)** to every core that may cache the entry,

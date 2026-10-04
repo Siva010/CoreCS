@@ -34,11 +34,29 @@ It's copy-on-write for rows ([Copy-on-Write](lesson:os-cow-mmap)).
 
 ## Why It Exists
 
-With pure locking, a long report holding shared locks blocks every writer, and writers block readers — throughput collapses under mixed workloads. MVCC keeps enough history that every transaction can read a consistent past state without locks, which is what makes Read Committed and Snapshot Isolation cheap.
+**The problem.** A database has one copy of each row, and two kinds of users want it at the same time: a reader who needs a *consistent* picture ("total of all balances right now") and a writer who is halfway through changing it. If the reader sees the half-changed state, the answer is wrong. So something has to keep them apart.
+
+**Without it.** The obvious tool is locking: readers take shared locks, writers take exclusive ones. With pure locking, a long report holding shared locks blocks every writer, and writers block readers — throughput collapses under mixed workloads. A 10-minute analytics query would freeze checkout for 10 minutes.
+
+**The idea.** The reader doesn't need the *current* row; it needs a row that was true at one moment. So don't make the writer wait — let it write a *new* copy, and leave the old copy where the reader can still find it. Keep a little history instead of making anyone wait. MVCC keeps enough history that every transaction can read a consistent past state without locks, which is what makes Read Committed and Snapshot Isolation cheap.
+
+**From idea to mechanism.** Once you decide "keep old copies", three questions fall out, and each part of MVCC answers one:
+
+| Question | Answer |
+|---|---|
+| How do we know which copy belongs to which moment? | Stamp each version with who created it (`xmin`) and who ended it (`xmax`) |
+| How does a reader pick "its" copy? | A **snapshot**: the list of transactions that had committed when it started |
+| Old copies pile up forever — then what? | **Vacuum / purge** deletes versions no snapshot can see any more |
+
+:::callout[That's all it is]{type=insight}
+Writers add new versions instead of overwriting; readers pick the version that matches their start time; a janitor removes versions nobody can see. Every MVCC detail — bloat, wraparound, HOT, undo chains — is a consequence of one of those three.
+:::
 
 ## How It Works
 
 ### PostgreSQL: versions in the heap
+
+The first design decision is *where to keep the old copy*. PostgreSQL's answer is the simplest possible one: don't move anything. The new version goes into the table next to the old one, and both carry their stamps.
 
 ```text
 UPDATE accounts SET balance = 400 WHERE id = 1;   -- run by xid 105
@@ -61,7 +79,7 @@ A `DELETE` just sets `xmax`. A rollback doesn't touch the tuples: xid 105 is mar
 
 ### InnoDB: latest version in place + undo log
 
-InnoDB updates the row **in place** in the clustered index and writes the previous values to the **undo log**, linking them via a roll pointer. A reader whose read view shouldn't see the latest version follows the roll pointer chain, reconstructing older versions from undo records. The **purge** thread discards undo records no read view needs.
+The opposite answer to "where does the old copy go": keep the table holding only the newest version (so the common reader, who wants the latest, finds it immediately) and push old copies out to a side log. InnoDB updates the row **in place** in the clustered index and writes the previous values to the **undo log**, linking them via a roll pointer. A reader whose read view shouldn't see the latest version follows the roll pointer chain, reconstructing older versions from undo records. The **purge** thread discards undo records no read view needs.
 
 | | PostgreSQL | InnoDB |
 |---|---|---|
@@ -73,7 +91,7 @@ InnoDB updates the row **in place** in the clustered index and writes the previo
 
 ### Vacuum
 
-VACUUM (autovacuum in the background):
+Why it's needed: every update in PostgreSQL leaves the old version behind in the table. Nothing else ever deletes it, so without a cleaner a table updated 100 times per row would hold 100 copies of every row, and every scan would wade through them. VACUUM is that cleaner (autovacuum runs it in the background):
 
 1. Finds dead tuples (xmax committed and older than the oldest snapshot still in use — the **xmin horizon**).
 2. Removes their index entries, then frees their space in the page for reuse.
@@ -84,18 +102,18 @@ Plain VACUUM doesn't shrink files; it makes space reusable. `VACUUM FULL`/`pg_re
 
 ### The long-transaction problem
 
-Vacuum can only remove versions older than the **oldest running snapshot**. One transaction open for 6 hours (a forgotten `BEGIN` in a console, a stuck report, an idle-in-transaction connection, an abandoned replication slot with `hot_standby_feedback`) pins the horizon: every update in those 6 hours leaves garbage that can't be reclaimed. Tables bloat, indexes bloat, queries slow down — on tables that transaction never touched.
+This follows directly from the rule "delete a version only when no snapshot can see it". Vacuum can only remove versions older than the **oldest running snapshot**. One transaction open for 6 hours (a forgotten `BEGIN` in a console, a stuck report, an idle-in-transaction connection, an abandoned replication slot with `hot_standby_feedback`) pins the horizon: every update in those 6 hours leaves garbage that can't be reclaimed. Tables bloat, indexes bloat, queries slow down — on tables that transaction never touched.
 
 ## Internal Mechanism
 
 :::depth{level=advanced}
 ### Transaction-id wraparound
 
-PostgreSQL xids are 32-bit and compared modulo 2³² (each xid sees ~2 billion as past and ~2 billion as future). A tuple whose xmin is more than ~2 billion transactions old would suddenly appear to be "in the future" — invisible. To prevent this, vacuum **freezes** old tuples (marks them as visible to everyone regardless of xid). If freezing falls too far behind, PostgreSQL emits warnings and eventually refuses new writes to protect data ("database is not accepting commands to avoid wraparound data loss"). Aggressive anti-wraparound autovacuums on huge tables are a well-known operational event. (64-bit xids in some forks remove the issue.)
+The problem: visibility is decided by comparing transaction ids, and ids are a finite counter. Sooner or later the counter wraps around, and "older than me" stops being answerable by a plain comparison. PostgreSQL xids are 32-bit and compared modulo 2³² (each xid sees ~2 billion as past and ~2 billion as future). A tuple whose xmin is more than ~2 billion transactions old would suddenly appear to be "in the future" — invisible. To prevent this, vacuum **freezes** old tuples (marks them as visible to everyone regardless of xid). If freezing falls too far behind, PostgreSQL emits warnings and eventually refuses new writes to protect data ("database is not accepting commands to avoid wraparound data loss"). Aggressive anti-wraparound autovacuums on huge tables are a well-known operational event. (64-bit xids in some forks remove the issue.)
 
 ### HOT updates
 
-If an update changes no indexed column and the new version fits on the same page, PostgreSQL creates a **heap-only tuple**: no new index entries; index entries still point to the chain's root, and a page-level prune can clean dead HOT versions without a full vacuum. Keeping indexes off frequently updated columns and leaving free space (`fillfactor`) maximize HOT updates ([Pages & Records](lesson:db-pages-records)).
+The problem: a new version lives at a new physical address, so in principle *every index* on the table needs a new entry pointing at it — even when the update only changed a column no index covers (say, `last_seen_at`). On a table with five indexes, one tiny update becomes six writes. HOT avoids that. If an update changes no indexed column and the new version fits on the same page, PostgreSQL creates a **heap-only tuple**: no new index entries; index entries still point to the chain's root, and a page-level prune can clean dead HOT versions without a full vacuum. Keeping indexes off frequently updated columns and leaving free space (`fillfactor`) maximize HOT updates ([Pages & Records](lesson:db-pages-records)).
 
 ### Snapshot contents
 

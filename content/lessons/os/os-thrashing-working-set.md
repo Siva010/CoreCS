@@ -31,7 +31,15 @@ The **working set** is the set of books you need right now. As long as each proc
 
 ## Why It Exists
 
-Demand paging and overcommit let the OS run more than fits in RAM — valuable because most processes don't use all their memory at once. The working-set model explains when this stops being safe, and the mechanisms (reclaim, swap, OOM) are the OS's escalating responses as it gets unsafe.
+**The problem.** Demand paging and overcommit let the OS run more than fits in RAM — valuable because most processes don't use all their memory at once. But "more than fits" only works up to a point, and the OS needs to know where that point is.
+
+**Without it.** The system keeps admitting work until everyone is waiting on the disk. Nothing crashes; everything just becomes thousands of times slower — the worst kind of failure, because it looks like "busy".
+
+**The idea.** What matters isn't how much memory a process *has*, but how much it's *using right now* — its working set. If the working sets fit, paging is nearly free; if they don't, no algorithm can save you, so the OS must reduce demand (reclaim, swap, suspend, kill). The working-set model explains when this stops being safe, and the mechanisms (reclaim, swap, OOM) are the OS's escalating responses as it gets unsafe.
+
+:::callout[That's all it is]{type=insight}
+Thrashing = the pages everyone needs right now don't fit in RAM, so the machine spends its time swapping instead of working. The cure is never a smarter eviction policy; it's less demand or more memory.
+:::
 
 ## How It Works
 
@@ -59,7 +67,7 @@ For each process, track the pages touched in the last Δ references. If the tota
 
 ### Page-fault frequency (PFF)
 
-A cheaper control loop: measure each process's fault rate.
+Tracking every page each process touched is expensive. But the *symptom* of too few frames — a high fault rate — is cheap to measure. So steer by the symptom instead. A cheaper control loop: measure each process's fault rate.
 
 - Fault rate above an upper bound → give it more frames.
 - Below a lower bound → take frames away.
@@ -77,7 +85,7 @@ When free memory falls below watermarks, **kswapd** reclaims in the background; 
 
 ### The OOM killer
 
-If reclaim fails, the kernel must free memory by force. It computes an **oom_score** per process (proportional to memory usage, adjusted by `oom_score_adj` from −1000 to 1000) and sends **SIGKILL** to the highest. Kernel log:
+Because memory was promised lazily (overcommit), the kernel can end up unable to keep a promise it already made. At that point there's no polite option left. If reclaim fails, the kernel must free memory by force. It computes an **oom_score** per process (proportional to memory usage, adjusted by `oom_score_adj` from −1000 to 1000) and sends **SIGKILL** to the highest. Kernel log:
 
 ```text
 Out of memory: Killed process 23714 (java) total-vm:9123456kB, anon-rss:7800123kB, ...
@@ -89,7 +97,7 @@ In containers, hitting the cgroup's `memory.max` triggers a **cgroup OOM kill** 
 
 ### Measuring pressure: PSI
 
-Load average and "free memory" are poor signals (Linux uses spare RAM for the page cache, so "free" is always low on a healthy box). **Pressure Stall Information** (`/proc/pressure/memory`) reports the share of time tasks were stalled on memory:
+To act before the cliff, you need a signal that measures *harm*, not just usage. Load average and "free memory" are poor signals (Linux uses spare RAM for the page cache, so "free" is always low on a healthy box). **Pressure Stall Information** (`/proc/pressure/memory`) reports the share of time tasks were stalled on memory:
 
 ```text
 some avg10=12.50 avg60=8.10 avg300=3.02 total=...

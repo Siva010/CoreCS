@@ -26,14 +26,22 @@ A **signal** is a small integer notification delivered asynchronously to a proce
 
 ## Why It Exists
 
-Processes need to be told about events that happen *outside their normal control flow*:
+**The problem.** A process runs its own code, top to bottom. But some things happen *to* it that its code never asked about. Processes need to be told about events that happen *outside their normal control flow*:
 
 - **Faults they caused**: dividing by zero (`SIGFPE`), invalid memory access (`SIGSEGV`), illegal instruction (`SIGILL`).
 - **Events from the terminal**: Ctrl+C (`SIGINT`), Ctrl+Z (`SIGTSTP`), terminal closed (`SIGHUP`).
 - **Events from other processes**: "please terminate" (`SIGTERM`), "reload config" (`SIGHUP` by convention), user-defined (`SIGUSR1/2`).
 - **Kernel bookkeeping**: child changed state (`SIGCHLD`), write to a pipe with no reader (`SIGPIPE`), timer expired (`SIGALRM`).
 
-Polling for all of these would be wasteful and slow. Signals are the Unix mechanism for **asynchronous, low-bandwidth notification**.
+**Without it.** Each program would have to keep asking "did Ctrl+C get pressed? did my child die? should I shut down?" between every few instructions. Polling for all of these would be wasteful and slow — and for faults like `SIGSEGV` there's nothing to poll: the instruction simply can't continue.
+
+**The idea.** Let the kernel interrupt the process's normal flow and say "this happened" — the same trick hardware interrupts play on the kernel, handed down to user programs. Signals are the Unix mechanism for **asynchronous, low-bandwidth notification**: they say *which* event, not much else.
+
+**From idea to mechanism.** The kernel needs to remember a signal until the process can take it → the **pending** set. The process needs to decide in advance what each one means to it → **dispositions** and handlers. And because the tap can come between any two instructions, handlers must be tiny → **async-signal-safety**.
+
+:::callout[That's all it is]{type=insight}
+A signal is a numbered "something happened" that the kernel delivers by making the process jump to a function you registered (or by applying a default, usually death). It's an interrupt for processes.
+:::
 
 ## How It Works
 
@@ -75,17 +83,17 @@ sequenceDiagram
 
 ### Standard signals don't queue
 
-The pending set is a **bitmask**: if three `SIGCHLD`s arrive before the handler runs, the handler runs **once**. Code must handle "at least one event happened" (e.g., loop over `waitpid(-1, …, WNOHANG)`). POSIX **real-time signals** (`SIGRTMIN`…`SIGRTMAX`) do queue and carry a small payload.
+This is a consequence of how cheaply signals are stored: one bit per signal number, not a list. The pending set is a **bitmask**: if three `SIGCHLD`s arrive before the handler runs, the handler runs **once**. Code must handle "at least one event happened" (e.g., loop over `waitpid(-1, …, WNOHANG)`). POSIX **real-time signals** (`SIGRTMIN`…`SIGRTMAX`) do queue and carry a small payload.
 
 ### Interrupted system calls
 
-If a signal arrives while a process is blocked in a slow syscall (`read` on a socket, `accept`, `sleep`), the syscall is interrupted: it either fails with **`EINTR`** or is automatically restarted if the handler was installed with `SA_RESTART`. Robust code retries on `EINTR`.
+The problem: the kernel can only run a handler on the way back to user mode — but a process blocked in `read` might stay in the kernel for hours. To deliver promptly, the kernel has to abandon the wait. If a signal arrives while a process is blocked in a slow syscall (`read` on a socket, `accept`, `sleep`), the syscall is interrupted: it either fails with **`EINTR`** or is automatically restarted if the handler was installed with `SA_RESTART`. Robust code retries on `EINTR`.
 
 ## Internal Mechanism
 
 ### What a handler may safely do
 
-A handler can run **between any two instructions** of your program — including while your main code is inside `malloc` holding its lock, or halfway through updating a data structure. If the handler then calls `malloc` or `printf` (which may take the same locks or touch the same buffers), you get deadlock or corruption.
+This restriction is the price of "interrupt between any two instructions". A handler can run **between any two instructions** of your program — including while your main code is inside `malloc` holding its lock, or halfway through updating a data structure. If the handler then calls `malloc` or `printf` (which may take the same locks or touch the same buffers), you get deadlock or corruption.
 
 So handlers may call only **async-signal-safe** functions (`write`, `_exit`, `kill`, `waitpid`, …; *not* `printf`, `malloc`, most of libc) and should typically do nothing but **set a flag** of type `volatile sig_atomic_t` or write a byte to a pipe (the **self-pipe trick**), letting the main loop do the real work. Modern Linux alternative: `signalfd` turns signals into readable file descriptor events that fit into an `epoll` loop.
 

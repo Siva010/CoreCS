@@ -36,7 +36,13 @@ Transaction models (multi-object) are a different axis: **serializability** (tra
 
 ## Why It Exists
 
-"Consistent" is used loosely; engineers and databases mean different things by it. Precise models let you state what an application needs ("users must see their own posts immediately" = read-your-writes, not full linearizability) and choose the cheapest system/configuration that provides it.
+**The problem.** "Consistent" is used loosely; engineers and databases mean different things by it. With copies on several machines, "the latest value" stops being obvious — and making every copy agree on every read is expensive.
+
+**The idea.** Instead of one vague promise, define a ladder of precise ones, from "behaves like a single copy" down to "copies agree eventually". Precise models let you state what an application needs ("users must see their own posts immediately" = read-your-writes, not full linearizability) and choose the cheapest system/configuration that provides it.
+
+:::callout[That's all it is]{type=insight}
+A consistency model is a promise about which values a read may return. Linearizable: as if there's one copy. Causal: causes before effects. Session guarantees: your own view makes sense. Eventual: copies agree once writes stop.
+:::
 
 ## How It Works
 
@@ -69,7 +75,7 @@ Tracks *happened-before*: if you read a post and then reply, anyone who sees you
 
 ### Eventual consistency and conflicts
 
-Replicas accept writes independently and exchange them later. Concurrent writes to the same item conflict; resolution strategies:
+The bill for letting every replica accept writes without coordinating: two of them may accept *different* writes to the same item. Replicas accept writes independently and exchange them later. Concurrent writes to the same item conflict; resolution strategies:
 
 - **Last-write-wins** (by timestamp): simple, silently loses data, sensitive to clock skew.
 - **Version vectors (vector clocks) + siblings**: track per-replica counters to detect whether two writes are causally ordered or genuinely concurrent, return all concurrent versions, and let the application merge them (Dynamo/Riak).

@@ -32,10 +32,18 @@ Two related but distinct terms:
 
 ## Why It Exists
 
-It is the mechanism that implements multitasking. Without it, a CPU could run only one task until that task finished. Context switches let the OS:
+**The problem.** There are more things to run than CPUs, and a CPU can only hold one task's registers at a time.
+
+**Without it.** It is the mechanism that implements multitasking. Without it, a CPU could run only one task until that task finished — a task waiting on disk would hold the CPU idle, and an infinite loop would freeze the machine.
+
+**The idea.** A task's entire "where was I" fits in a few hundred bytes of registers. Copy them out to memory, copy someone else's in, and the CPU is now running the other task. Context switches let the OS:
 
 - run another task while one waits for I/O (**voluntary** switch — the task blocked);
 - share the CPU fairly among runnable tasks (**involuntary** switch — preemption by the timer or by a higher-priority wakeup).
+
+:::callout[That's all it is]{type=insight}
+Save this task's registers, load that task's registers. The switch itself is cheap; what costs is that the new task finds the caches full of the old task's data.
+:::
 
 ## How It Works
 
@@ -55,6 +63,8 @@ It is the mechanism that implements multitasking. Without it, a CPU could run on
 
 ### Direct vs indirect cost
 
+Why a "cheap" operation can be expensive: the switch only moves registers, but the CPU's *caches* — which made the old task fast — are full of the wrong data for the new one.
+
 | Cost | Typical magnitude | Where it comes from |
 |---|---|---|
 | **Direct** — save/restore registers, scheduler decision, kernel entry/exit | ~1–3 µs | Kernel code path, mitigations (KPTI, IBPB) |
@@ -73,6 +83,8 @@ Threads of the same process share one address space, so step 5 is skipped: no pa
 A `getpid()` system call enters and leaves the kernel without switching tasks — the same task continues. A context switch happens only if the scheduler chooses a different task (because the current one blocked, was preempted, or yielded).
 
 ### Voluntary vs involuntary
+
+The two reasons a switch happens (the task *had* to wait, or the OS *made* it wait) point to two different problems, which is why the kernel counts them separately:
 
 - **Voluntary**: the task blocked (I/O, lock, sleep, `futex` wait). High counts → lots of waiting (I/O-bound, lock contention).
 - **Involuntary**: the task was preempted while runnable. High counts → CPU oversubscription (more runnable threads than cores).

@@ -35,7 +35,15 @@ Redo brings back what committed work lost; undo (or invisibility) removes what u
 
 ## Why It Exists
 
-Forcing pages at commit and never stealing would make recovery trivial but performance terrible (random writes at every commit, buffer pool stuck holding every uncommitted page). Logging lets databases write pages whenever convenient and still recover exactly.
+**The problem.** For speed, the buffer pool writes pages whenever it likes — so at the moment of a crash, disk holds some changes that never committed and lacks some that did.
+
+**The simple alternative, and why it's rejected.** Forcing pages at commit and never stealing would make recovery trivial but performance terrible (random writes at every commit, buffer pool stuck holding every uncommitted page).
+
+**The idea.** Accept the messy disk, because the log knows exactly what happened. Logging lets databases write pages whenever convenient and still recover exactly: replay the log to put back everything (redo), then remove what belonged to transactions that never committed (undo).
+
+:::callout[That's all it is]{type=insight}
+After a crash: find where to start (analysis), replay every logged change so the disk matches the moment of the crash (redo), then roll back transactions that hadn't committed (undo). Page LSNs make replay safe to repeat.
+:::
 
 ## How It Works
 
@@ -60,7 +68,7 @@ PostgreSQL never needs a physical undo pass: uncommitted changes are new tuple v
 
 ### Backups and point-in-time recovery
 
-Crash recovery handles "the process died"; it doesn't handle "the disk died" or "someone ran `DELETE FROM orders` without a WHERE". For that:
+Recovery from a log needs the data files to still exist. Crash recovery handles "the process died"; it doesn't handle "the disk died" or "someone ran `DELETE FROM orders` without a WHERE". For that:
 
 - **Base backup**: a physical copy of the data files (taken online; consistent when combined with the WAL generated during the copy).
 - **WAL archive**: every WAL segment copied to durable storage (object storage).

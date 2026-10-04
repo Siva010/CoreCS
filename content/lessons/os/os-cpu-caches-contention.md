@@ -30,7 +30,15 @@ If two cores keep writing to the same line — even to **different variables** t
 
 ## Why It Exists
 
-Private caches are necessary for speed; coherence is necessary for correctness. The cost of coherence is invisible in source code — it depends on memory layout and access patterns — so it's a common cause of "mysterious" scaling failures.
+**The problem.** Private caches are necessary for speed; coherence is necessary for correctness. Put them together and every *write* to shared data must chase down and invalidate other cores' copies.
+
+**Why it's surprising.** The cost of coherence is invisible in source code — it depends on memory layout and access patterns — so it's a common cause of "mysterious" scaling failures. Two lines of code that look independent can fight over the same 64 bytes.
+
+**The idea for fixing it.** Coherence works at cache-line granularity, so design at cache-line granularity: give each thread's hot data its own line, write shared data rarely, and batch updates.
+
+:::callout[That's all it is]{type=insight}
+Cores keep private copies of 64-byte lines; a write by one core invalidates everyone else's copy. If several cores keep writing the same line — even different variables on it — the line bounces between them and parallel code runs slower than serial.
+:::
 
 ## How It Works
 
@@ -46,6 +54,8 @@ Private caches are necessary for speed; coherence is necessary for correctness. 
 A write to a line in Shared state requires a **read-for-ownership**/invalidate round-trip to all other holders: tens to hundreds of cycles — far more across sockets ([NUMA](lesson:os-hugepages-numa)).
 
 ### False sharing, concretely
+
+The hardware doesn't know about variables; it only knows lines. So two variables that happen to be neighbours behave as if they were one shared variable.
 
 ```c
 struct Counters { long a; long b; };   // a and b share one 64-byte line

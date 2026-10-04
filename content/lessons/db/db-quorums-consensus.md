@@ -35,7 +35,13 @@ Majorities are the trick behind both: **any two majorities of the same set inter
 
 ## Why It Exists
 
-Replication needs agreement on *order*: if replicas apply the same writes in different orders, they diverge. Failover needs agreement on *who is leader* — and a wrong answer means split brain ([Failover](lesson:db-failover)). Distributed locks, configuration, membership and unique ID allocation all need one agreed answer despite failures. Consensus provides it with no single point of failure, tolerating f crashed nodes out of 2f + 1.
+**The problem.** Replication needs agreement on *order*: if replicas apply the same writes in different orders, they diverge. Failover needs agreement on *who is leader* — and a wrong answer means split brain ([Failover](lesson:db-failover)). Distributed locks, configuration, membership and unique ID allocation all need one agreed answer despite failures. Consensus provides it with no single point of failure, tolerating f crashed nodes out of 2f + 1.
+
+**Why majorities.** Waiting for *all* replicas means one dead node stops everything; trusting *any one* means two nodes can decide differently. A majority is the smallest group that still guarantees any two decisions share at least one witness — so the system can lose a minority and never contradict itself.
+
+:::callout[That's all it is]{type=insight}
+Any two majorities overlap, so a decision recorded on a majority can never be missed by a later majority. Quorums use that to make reads see the latest write; Raft uses it to elect one leader per term and to commit log entries that survive crashes.
+:::
 
 ## How It Works
 
@@ -68,7 +74,7 @@ Any 2 of 3 overlaps any other 2 of 3 in at least one node, which has v2.
 
 ### Consensus with Raft
 
-Raft decomposes consensus into leader election, log replication and safety.
+Quorums alone can't order concurrent writes. Raft adds the missing piece: one elected leader per term decides the order, and a majority stores each decision. Raft decomposes consensus into leader election, log replication and safety.
 
 ```mermaid
 stateDiagram-v2

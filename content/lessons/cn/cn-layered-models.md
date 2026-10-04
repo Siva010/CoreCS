@@ -33,7 +33,15 @@ Because each layer depends only on the contract below, you can swap Wi-Fi for fi
 
 ## Why It Exists
 
-A network stack must handle electrical signaling, local delivery, global routing, reliable streams, encryption and application semantics. One monolithic design would be impossible to evolve. Layering lets thousands of independent teams build interoperable pieces.
+**The problem.** A network stack must handle electrical signaling, local delivery, global routing, reliable streams, encryption and application semantics.
+
+**Without it.** One monolithic design would be impossible to evolve. Every web browser would need to know about Wi-Fi radio timing; replacing copper with fiber would mean rewriting every application.
+
+**The idea.** Split the job into pieces where each piece only *uses* the one below and only *serves* the one above, through a fixed contract. Then anyone can replace a piece as long as they honour its contract. Layering lets thousands of independent teams build interoperable pieces.
+
+:::callout[That's all it is]{type=insight}
+Each layer solves one problem — signal, next hop, any host, right program, app meaning — and treats everything below it as a black box. The OSI and TCP/IP models are just two ways of drawing the same stack.
+:::
 
 ## How It Works
 

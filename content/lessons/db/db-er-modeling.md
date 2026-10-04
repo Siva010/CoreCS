@@ -65,7 +65,13 @@ erDiagram
 
 ## Why It Exists
 
-Jumping straight to tables mixes two decisions: *what the domain is* and *how to store it*. ER modeling makes the domain explicit and reviewable with non-engineers ("can an order have no items?"), then a mechanical mapping produces a correct first schema.
+**The problem.** Jumping straight to tables mixes two decisions: *what the domain is* and *how to store it*. ER modeling makes the domain explicit and reviewable with non-engineers ("can an order have no items?"), then a mechanical mapping produces a correct first schema.
+
+**Why cardinality is the key question.** A table cell holds one value. So the only real question for each relationship is "on which side is there exactly one?" — that side's key can be stored as a single column on the other side. When neither side has "exactly one" (many-to-many), the relationship needs a table of its own.
+
+:::callout[That's all it is]{type=insight}
+Draw the things (entities) and how they relate (with one/many on each end). Each entity becomes a table; each one-to-many becomes a foreign key on the "many" side; each many-to-many becomes a junction table.
+:::
 
 ## How It Works
 
