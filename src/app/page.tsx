@@ -3,6 +3,7 @@ import { ArrowRight, Cpu, Database, Layers, MessagesSquare, Network, Route, Wayp
 import { getAllLessons, getCounts, getLessonsBySubject, getSubjects, getWalkthroughs } from "@/lib/content/loader";
 import { DEPTHS, REVISION_MODES, type SubjectId } from "@/lib/content/types";
 import { ContinueLearning, SubjectMasteryCard } from "@/components/progress/ProgressBits";
+import { GithubMark, REPO_URL } from "@/components/ui/GithubMark";
 import { cn, DEPTH_META, SUBJECT_STYLE } from "@/lib/utils";
 
 const SUBJECT_ICON: Record<SubjectId, typeof Cpu> = { os: Cpu, cn: Network, db: Database, x: Waypoints };
@@ -49,6 +50,14 @@ export default function Home() {
           <Link href="/path#roadmaps" className="inline-flex h-11 items-center gap-2 rounded-xl border border-border bg-surface px-5 text-sm font-semibold text-fg hover:border-border-strong">
             <Route className="h-4 w-4" /> Learning roadmap
           </Link>
+          <a
+            href={REPO_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex h-11 items-center gap-2 rounded-xl border border-border bg-surface px-5 text-sm font-semibold text-fg hover:border-border-strong"
+          >
+            <GithubMark className="h-4 w-4" /> View on GitHub
+          </a>
           <a href="#subjects" className="inline-flex h-11 items-center gap-2 rounded-xl px-3 text-sm font-semibold text-muted hover:text-fg">
             Browse by subject
           </a>
