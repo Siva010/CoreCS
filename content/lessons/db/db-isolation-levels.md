@@ -216,6 +216,52 @@ MySQL InnoDB defaults to Repeatable Read.
 
 Read Committed re-evaluates the updated row's latest version, so in-database arithmetic isn't lost.
 
+### [mcq] Which anomaly does PostgreSQL's Repeatable Read prevent even though the SQL standard permits it at that level?
+
+- [ ] Dirty reads
+- [ ] Non-repeatable reads
+- [x] Phantoms
+- [ ] Write skew
+
+PostgreSQL's Repeatable Read is snapshot isolation: the whole transaction reads one snapshot, so re-running a range query never shows new rows. Write skew remains possible; only Serializable stops it.
+
+### [numeric 0.0125 ±0.0001 unit=%] Serializable transactions fail with a serialization error 5% of the time, independently per attempt. With up to 3 attempts, what percentage of transactions fail all three?
+
+:::answer
+0.05³ = 0.000125 = **0.0125**%. A retry loop turns a 5% error rate into roughly 1 in 8,000 — as long as retries don't make contention (and the failure rate) worse, which is why they use backoff.
+:::
+
+### [mcq] In PostgreSQL at Read Committed, a single long `SELECT` runs while other transactions commit changes to the rows it's reading. What does it see?
+
+- [ ] A mix of old and new values, row by row
+- [x] A consistent snapshot taken when that statement started
+- [ ] Only rows that were not modified
+- [ ] An error once any row changes
+
+Read Committed takes a new snapshot per statement, so each statement is internally consistent; two statements in the same transaction can disagree.
+
+### [exercise] Write application pseudocode for running a function inside a SERIALIZABLE transaction with correct retry behaviour.
+
+:::solution
+```text
+for attempt in 1..5:
+    begin transaction isolation level serializable
+    try:
+        result = work()               # all reads and writes of the transaction
+        commit
+        return result
+    catch error:
+        rollback
+        if error.sqlstate in ("40001", "40P01"):   # serialization_failure, deadlock_detected
+            sleep(random(0, 2^attempt * 10 ms))      # jittered exponential backoff
+            continue
+        raise                                        # anything else is a real error
+raise "gave up after 5 attempts"
+```
+
+Retry the **whole** transaction (including its reads), not just the failed statement; keep side effects such as sending email outside it, or make them idempotent; and cap the attempts so a hot spot can't loop forever.
+:::
+
 ## Quick Revision
 
 - Standard: RU < RC (no dirty reads) < RR (no non-repeatable reads) < Serializable (no phantoms / any anomaly).

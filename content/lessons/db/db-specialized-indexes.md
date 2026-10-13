@@ -220,6 +220,42 @@ Physical order correlates with time, so min/max per block range prunes almost ev
 
 The query's condition must imply the index predicate `status = 'pending'`.
 
+### [numeric 1048576 unit=ranges] A 1 TiB table (2⁴⁰ bytes) uses 8 KiB pages. A BRIN index summarizes every 128 pages. How many block ranges does it summarize?
+
+:::answer
+Pages: 2⁴⁰ ÷ 2¹³ = 2²⁷ ≈ 134 million. Ranges: 2²⁷ ÷ 2⁷ = 2²⁰ = **1,048,576**. At a few dozen bytes per summary, the whole index is tens of MB — compared with tens of GB for a B+ tree over the same rows.
+:::
+
+### [exercise] Users log in with their email in any letter case. Make the lookup fast and prevent two accounts whose emails differ only by case.
+
+:::solution
+```sql
+CREATE UNIQUE INDEX users_email_lower_key ON users (lower(email));
+
+SELECT id FROM users WHERE lower(email) = lower($1);
+```
+
+An expression index stores `lower(email)`, so a query using the same expression can seek it, and UNIQUE on the expression rejects `Asha@X.com` when `asha@x.com` exists. The query must use exactly the indexed expression. Alternatives: the `citext` type, or a nondeterministic case-insensitive ICU collation.
+:::
+
+### [mcq] Which index type serves `WHERE attrs @> '{"color": "red"}'` on a `jsonb` column?
+
+- [ ] B+ tree
+- [x] GIN
+- [ ] BRIN
+- [ ] Hash
+
+GIN is an inverted index: it maps each key/value inside the documents to the rows containing it, which is exactly what containment needs. A B+ tree can only index the whole value (or an expression extracting one field).
+
+### [mcq] Which index lets PostgreSQL return the 10 restaurants nearest to a point without computing the distance to every row?
+
+- [ ] B+ tree on (latitude, longitude)
+- [ ] GIN on the location
+- [x] GiST (or SP-GiST) on the location, queried with `ORDER BY location <-> point LIMIT 10`
+- [ ] BRIN on the location
+
+GiST supports nearest-neighbour search: it walks the tree in order of distance bound, so it can stop after 10 results. A B+ tree on two columns can't order by two-dimensional distance.
+
 ## Quick Revision
 
 - Partial = index a subset (rare values, active rows, conditional uniqueness).

@@ -292,6 +292,40 @@ Weight each average by its headcount: (2 × 100 + 8 × 200) / 10 = 1,800 / 10 = 
 
 GROUP BY produces one row per group, and there are no groups. Without GROUP BY you'd get a single row containing 0.
 
+### [numeric 3 unit=rows] Order counts by status are paid 142, shipped 110, cancelled 59 and pending 49. How many rows does `SELECT status, count(*) FROM orders GROUP BY status HAVING count(*) > 50` return?
+
+:::answer
+HAVING filters whole groups after they're counted: paid, shipped and cancelled exceed 50; pending doesn't. **3** rows.
+:::
+
+### [exercise] Return the percentage of orders that were cancelled, rounded to 2 decimals. Why does `count(*) FILTER (WHERE status = 'cancelled') / count(*) * 100` return 0?
+
+:::solution
+```sql
+SELECT round(100.0 * count(*) FILTER (WHERE status = 'cancelled') / count(*), 2) AS cancel_pct
+FROM orders;
+```
+
+Both counts are integers, and integer division truncates: 59 / 360 = 0, and 0 × 100 = 0. Starting with `100.0` makes the arithmetic numeric. Graded in the [SQL Playground](lab:sql-playground#cancel-rate).
+:::
+
+### [exercise] For each year, return the year and the number of paid, shipped, pending and cancelled orders as four columns, in a single pass over `orders`.
+
+:::solution
+```sql
+SELECT extract(year FROM order_date)::int AS year,
+       count(*) FILTER (WHERE status = 'paid')      AS paid,
+       count(*) FILTER (WHERE status = 'shipped')   AS shipped,
+       count(*) FILTER (WHERE status = 'pending')   AS pending,
+       count(*) FILTER (WHERE status = 'cancelled') AS cancelled
+FROM orders
+GROUP BY 1
+ORDER BY 1;
+```
+
+Conditional aggregation pivots values into columns without a self-join or one query per status. In databases without FILTER, use `sum(CASE WHEN status = 'paid' THEN 1 ELSE 0 END)`. Graded in the [SQL Playground](lab:sql-playground#status-by-year).
+:::
+
 ## Quick Revision
 
 - GROUP BY collapses rows; select only group keys or aggregates.

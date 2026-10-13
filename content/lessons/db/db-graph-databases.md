@@ -191,6 +191,56 @@ Variable-depth traversal over relationships is the graph sweet spot.
 
 Traversals fan out through every edge of a highly connected node.
 
+### [numeric 40000 unit=paths] Every user has 200 friends. How many friend-of-friend paths does a two-hop traversal from one user explore, before removing duplicates?
+
+:::answer
+200 × 200 = **40,000** paths; a third hop would be 8 million. Traversal cost grows with the branching factor raised to the depth — which is why graph queries bound their depth and why supernodes hurt.
+:::
+
+### [mcq] What does "index-free adjacency" mean in a native graph database?
+
+- [ ] Graph databases don't support indexes
+- [x] Each node record points directly to its relationships, so moving to a neighbour is a pointer hop rather than an index lookup
+- [ ] Relationships are stored in a hash table keyed by node id
+- [ ] Every query must scan all edges
+
+A traversal costs time proportional to the edges it actually visits, independent of total graph size. A relational join instead looks up each next step in an index, costing O(log n) per hop.
+
+### [mcq] Which workload is a poor fit for a graph database?
+
+- [ ] Fraud rings: accounts linked through shared devices, three to five hops away
+- [ ] Recommendations from friends-of-friends
+- [x] Monthly revenue totals across all orders
+- [ ] Shortest path between two people
+
+Aggregations that scan everything favour columnar or relational engines; graph databases shine when queries follow relationships from a starting point.
+
+### [exercise] Find the friends-of-friends of Alice who aren't already her friends (and aren't Alice), ranked by the number of mutual friends — once in Cypher and once in SQL over `friendships(user_id, friend_id)` (stored in both directions).
+
+:::solution
+```text
+MATCH (a:Person {name: 'Alice'})-[:FRIEND]-(f)-[:FRIEND]-(fof)
+WHERE fof <> a AND NOT (a)-[:FRIEND]-(fof)
+RETURN fof.name, count(DISTINCT f) AS mutual
+ORDER BY mutual DESC
+LIMIT 10;
+```
+
+```sql
+SELECT f2.friend_id AS candidate, count(DISTINCT f1.friend_id) AS mutual
+FROM friendships f1
+JOIN friendships f2 ON f2.user_id = f1.friend_id
+WHERE f1.user_id = $alice
+  AND f2.friend_id <> $alice
+  AND NOT EXISTS (SELECT 1 FROM friendships x WHERE x.user_id = $alice AND x.friend_id = f2.friend_id)
+GROUP BY f2.friend_id
+ORDER BY mutual DESC
+LIMIT 10;
+```
+
+At two hops, both are fine with an index on `friendships(user_id)`. The graph database pulls ahead as depth grows or becomes variable ("within 4 hops"), where SQL needs recursive CTEs and one index lookup per edge.
+:::
+
 ## Quick Revision
 
 - Property graph: nodes + typed relationships, both with properties; Cypher/Gremlin/GQL.

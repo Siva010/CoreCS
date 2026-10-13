@@ -240,6 +240,40 @@ UNIQUE(email, deleted_at) allows duplicates among active rows because NULLs are 
 
 0.1 + 0.2 = 0.30000000000000004 in binary floating point. Money needs exact decimal arithmetic.
 
+### [numeric 99999999.99 ±0.001] What is the largest value a PostgreSQL `numeric(10,2)` column can store?
+
+:::answer
+Precision 10 is the total number of digits and scale 2 the digits after the point, leaving 8 before it: **99999999.99**. Size money columns for the largest plausible total (including sums and currencies with small units), not today's typical order.
+:::
+
+### [mcq] An app serves users in several time zones. Which type should store the moment an order was placed?
+
+- [ ] `timestamp` (without time zone), in the server's local time
+- [x] `timestamptz`
+- [ ] `date` plus a `varchar` holding the time
+- [ ] `bigint` milliseconds in the user's local time
+
+`timestamptz` represents an absolute instant (PostgreSQL stores it in UTC and converts for display). A timestamp without time zone is ambiguous across zones and around daylight-saving changes.
+
+### [exercise] Design a table that keeps the full price history of each product, and write the query for a product's price at a given moment. How can the database prevent overlapping periods?
+
+:::solution
+```sql
+CREATE TABLE product_prices (
+  product_id int NOT NULL REFERENCES products(id),
+  price      numeric(12,2) NOT NULL CHECK (price >= 0),
+  valid      tstzrange NOT NULL,
+  EXCLUDE USING gist (product_id WITH =, valid WITH &&)   -- needs the btree_gist extension
+);
+
+SELECT price
+FROM product_prices
+WHERE product_id = $1 AND valid @> $2::timestamptz;
+```
+
+Each row is a price with the period it applied (`[from, to)`, open-ended for the current price). The exclusion constraint forbids two rows for the same product whose ranges overlap — something a plain UNIQUE can't express. Without range types, use `valid_from`/`valid_to` columns and the predicate `valid_from <= t AND (valid_to > t OR valid_to IS NULL)`.
+:::
+
 ## Quick Revision
 
 - Ids: bigint internal (+ public UUID) or UUIDv7; random UUIDv4 hurts B+ tree locality. Never `int`.

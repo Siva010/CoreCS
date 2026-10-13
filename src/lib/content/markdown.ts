@@ -25,8 +25,8 @@ import type { ContainerDirective, LeafDirective, TextDirective } from "mdast-uti
 import { VFile } from "vfile";
 
 export type RenderMode = "react" | "html";
-/** Returns an href for a scheme:id link, or null if the target does not exist. */
-export type LinkResolver = (scheme: string, id: string) => string | null;
+/** Returns an href for a scheme:id link (with an optional "#fragment"), or null if the target does not exist. */
+export type LinkResolver = (scheme: string, id: string, hash?: string) => string | null;
 
 const LINK_SCHEME = /^(lesson|lab|viz|case|uth|trap):([a-z0-9-]+)(#[\w-]+)?$/;
 
@@ -80,7 +80,7 @@ function remarkCustom(options: CustomOptions) {
         const link = node as Link;
         const m = LINK_SCHEME.exec(link.url);
         if (m) {
-          const href = resolve(m[1], m[2]);
+          const href = resolve(m[1], m[2], m[3]);
           if (href) link.url = href + (m[3] ?? "");
           else {
             onBrokenLink?.(link.url);

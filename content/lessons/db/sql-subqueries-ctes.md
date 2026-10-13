@@ -321,6 +321,43 @@ The anchor emits the first day; each iteration adds one day until the condition 
 
 `x > ALL (empty set)` is defined as TRUE for any x — even NULL — because there is no value it fails to exceed. So the filter keeps every row.
 
+### [mcq] In PostgreSQL 12 and later, a non-recursive CTE without side effects that is referenced once in the query is:
+
+- [ ] Always materialized into a temporary result first
+- [x] Inlined into the main query, so the planner can push filters into it
+- [ ] Executed once per outer row
+- [ ] Cached and reused by later queries
+
+Since PostgreSQL 12 such CTEs are inlined like subqueries; write `AS MATERIALIZED` to force the old optimization-fence behaviour, or `NOT MATERIALIZED` to inline one that's referenced twice.
+
+### [exercise] Return name, department_id and salary of employees who earn more than the average salary of their own department.
+
+:::solution
+```sql
+SELECT e.name, e.department_id, e.salary
+FROM employees e
+WHERE e.salary > (SELECT avg(x.salary) FROM employees x WHERE x.department_id = e.department_id);
+```
+
+The subquery is correlated: it refers to `e`, so it's evaluated per outer row (the planner may turn it into a join). An equivalent window version computes `avg(salary) OVER (PARTITION BY department_id)` in a CTE and filters on it. Graded in the [SQL Playground](lab:sql-playground#above-department-average).
+:::
+
+### [exercise] For every employee, return their id and reporting path from the top, like 'Aarav Mehta > Diya Sharma > Rohan Gupta'.
+
+:::solution
+```sql
+WITH RECURSIVE r AS (
+  SELECT id, name::text AS path FROM employees WHERE manager_id IS NULL
+  UNION ALL
+  SELECT e.id, r.path || ' > ' || e.name
+  FROM employees e JOIN r ON e.manager_id = r.id
+)
+SELECT id, path FROM r;
+```
+
+The anchor starts at the root; each iteration adds the next level by joining employees to the rows produced so far, extending the path string. It stops when an iteration adds no rows. A cycle in `manager_id` would loop forever — guard with a depth limit or `CYCLE` clause. Graded in the [SQL Playground](lab:sql-playground#org-paths).
+:::
+
 ## Quick Revision
 
 - Subquery kinds: scalar (one value; >1 row = error; 0 rows = NULL), list (IN/EXISTS), table (FROM), correlated (per outer row).

@@ -270,6 +270,18 @@ For each of R's 100 blocks, read all 400 blocks of S: 100 × 400 = 40,000, plus 
 Run generation creates ⌈10,000 / 101⌉ = 100 runs (pass 1). With 100 input buffers, all 100 runs merge in a single pass (pass 2). Total **2** passes.
 :::
 
+### [numeric 4200] Block nested loop join with M = 52 buffer pages: outer R has 200 blocks, inner S has 1,000 blocks. How many block transfers?
+
+:::answer
+M − 2 = 50 pages hold a chunk of R, so S is scanned ⌈200 ÷ 50⌉ = 4 times: 4 × 1,000 + 200 = **4,200** transfers — compared with 200 × 1,000 + 200 = 200,200 with a single buffer page for R.
+:::
+
+### [numeric 16200] Index nested loop join: R has 4,000 records in 200 blocks; each lookup in S's B+ tree index costs 4 block reads (3 index levels + 1 data block). How many block transfers?
+
+:::answer
+Read R once (200) and do one index lookup per R record: 200 + 4,000 × 4 = **16,200**. Cheap when R is small or filtered; terrible when R is large — 4 random reads per row adds up fast.
+:::
+
 ## Quick Revision
 
 - Scans: seq (much of the table), index (few rows/ordered), index-only (covering + all-visible), bitmap (medium selectivity, AND/OR).

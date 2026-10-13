@@ -244,6 +244,32 @@ Fetching 30 million rows via random lookups costs far more than reading the tabl
 
 500³ = 125 million < 1 billion ≤ 500⁴, so 4 levels — and the upper levels are almost always cached.
 
+### [numeric 8 unit=times] A table has 10 million rows on 100,000 pages. A query matches 2% of rows, scattered randomly. Assume an index scan costs one random page read per matching row (ignore the index's own pages), a full scan reads every page sequentially, and a random read costs 4× a sequential one. How many times more expensive is the index scan?
+
+:::answer
+Matching rows: 2% × 10,000,000 = 200,000 random reads × 4 = 800,000 sequential-read units. Full scan: 100,000 units. 800,000 ÷ 100,000 = **8** times more expensive — which is why planners switch to a sequential (or bitmap) scan once selectivity passes a few percent.
+:::
+
+### [exercise] There is an index on `orders(created_at)`, but `WHERE date(created_at) = '2024-06-01'` and `WHERE created_at + interval '1 day' > now()` both scan the whole table. Rewrite both so they can use the index.
+
+:::solution
+```sql
+WHERE created_at >= DATE '2024-06-01' AND created_at < DATE '2024-06-02'
+WHERE created_at > now() - interval '1 day'
+```
+
+An index on `created_at` is sorted by the raw column; it can't search by `date(created_at)` or `created_at + interval`, because those are new values computed per row. Move the arithmetic to the constant side so the column stands alone (a *sargable* predicate). If you must filter by an expression, index the expression itself: `CREATE INDEX ON orders ((created_at::date))`.
+:::
+
+### [mcq] A table has 6 secondary indexes. Inserting one row writes to how many structures (ignoring the WAL)?
+
+- [ ] 1: only the table; indexes are updated lazily
+- [ ] 2: the table and the primary-key index
+- [x] 7: the table plus every one of the 6 indexes
+- [ ] 6: indexes replace the table
+
+Every index must contain every row (partial indexes excepted), so each insert adds an entry to each — and each of those can split pages and generate WAL. Indexes speed reads by taxing writes.
+
 ## Quick Revision
 
 - Index = sorted copy of key columns + pointers to rows (B+ tree).

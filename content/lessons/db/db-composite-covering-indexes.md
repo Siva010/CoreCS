@@ -223,6 +223,40 @@ Only (country, city) is a leftmost prefix with equality on both; the last option
 
 Equality columns first, then the sort column: the scan reads exactly the first 10 matching entries in order. (id is in every index in InnoDB; in PostgreSQL add INCLUDE (id) for an index-only scan.)
 
+### [numeric 1 unit=columns] With an index on (a, b, c), a query has `WHERE a = 1 AND c = 3`. How many of its conditions can narrow the index seek (the range of leaf entries visited)?
+
+:::answer
+Only the leading column: **1**. Without a condition on b, the entries with a = 1 are ordered by b first, so c = 3 is scattered across that whole range; it can still be checked inside the index while scanning a = 1 (avoiding heap visits), but it doesn't shrink the range. An index on (a, c) — or (a, c, b) — would seek on both.
+:::
+
+### [exercise] Design one index for `SELECT order_date, total FROM orders WHERE customer_id = $1 AND status = 'paid' ORDER BY order_date DESC LIMIT 20` that avoids a sort and, ideally, heap visits.
+
+:::solution
+```sql
+CREATE INDEX ON orders (customer_id, status, order_date DESC) INCLUDE (total);
+```
+
+Equality columns first (customer_id, status), then the ORDER BY column: within one (customer, status) the entries are already in order_date order, so the database reads the first 20 and stops — no sort, no full fetch. `INCLUDE (total)` stores the remaining selected column in the leaves so the query can be an index-only scan. (A plain B+ tree can also be read backwards, so `order_date` without DESC works for this query too.)
+:::
+
+### [mcq] EXPLAIN shows `Index Only Scan … Heap Fetches: 48000` for a query returning 50,000 rows. What is the most likely reason?
+
+- [ ] The index is corrupted
+- [x] Most of the table's pages aren't marked all-visible in the visibility map, so PostgreSQL must check the heap for row visibility
+- [ ] Index-only scans always visit the heap
+- [ ] The query selects a column that isn't in the index
+
+An index-only scan skips the heap only for pages the visibility map marks all-visible; VACUUM sets those bits. On a recently bulk-loaded or heavily updated table, run VACUUM (or tune autovacuum) and the heap fetches drop.
+
+### [mcq] Which index best serves `WHERE status = 'open' AND created_at > now() - interval '1 day'`?
+
+- [ ] (created_at, status)
+- [x] (status, created_at)
+- [ ] Two separate indexes, (status) and (created_at), always
+- [ ] (created_at) only
+
+Equality first, range last: with status leading, all 'open' entries are contiguous and sorted by created_at, so the seek covers exactly the matching rows. With created_at first, the scan covers every status in the last day and filters.
+
 ## Quick Revision
 
 - Composite index = phone book sorted by (a, b, c). Seeks only on leftmost prefixes.

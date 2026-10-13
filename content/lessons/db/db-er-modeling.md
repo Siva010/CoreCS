@@ -264,6 +264,30 @@ A relationship attribute belongs to the relationship's table.
 Three strong entities → 3 tables (Customer, Order, Product). The 1:N relationship needs no table (FK in Order). The M:N relationship needs a junction table (+1). The multivalued attribute needs its own table (+1). Total **5**.
 :::
 
+### [numeric 6 unit=tables] Entities Author, Book and Publisher: Author M:N Book, Publisher 1:N Book, Book has a multivalued attribute `keyword`, and the weak entity Edition is identified by Book. What is the minimum number of tables?
+
+:::answer
+One per strong entity (Author, Book, Publisher) = 3; the 1:N becomes a foreign key in Book (no table); the M:N needs Author_Book; the multivalued attribute needs Book_Keyword; the weak entity needs Edition with Book's key in its primary key. 3 + 1 + 1 + 1 = **6**.
+:::
+
+### [mcq] The weak entity `Room` (partial key `room_no`) is identified by `Building` (key `building_id`). What is the primary key of the Room table?
+
+- [ ] room_no
+- [x] (building_id, room_no)
+- [ ] A new surrogate id only, with no reference to Building
+- [ ] building_id
+
+A weak entity's key is its owner's key plus its partial key: room 101 exists in many buildings.
+
+### [exercise] Vehicles are either Cars (seats) or Trucks (payload_tons) — never both, never neither — and all have a VIN and a model. Give two ways to map this specialization to tables and the trade-off.
+
+:::solution
+1. **One table** `vehicles(vin PK, model, kind CHECK (kind IN ('car','truck')), seats, payload_tons)` with CHECKs that the right columns are filled per kind. Simple queries over all vehicles and no joins; nullable subtype columns, and constraints get awkward as subtypes grow.
+2. **Table per subtype sharing the key**: `vehicles(vin PK, model, kind)`, `cars(vin PK REFERENCES vehicles, seats)`, `trucks(vin PK REFERENCES vehicles, payload_tons)`. Clean columns and NOT NULL constraints; queries for subtype details need a join, and "exactly one subtype row" needs extra enforcement (the `kind` column plus triggers or composite foreign keys).
+
+(A third option — only `cars` and `trucks` with no parent table — works for a total, disjoint specialization but makes "all vehicles" a UNION and VIN uniqueness across both tables hard to enforce.)
+:::
+
 ## Quick Revision
 
 - Entities (nouns with identity), attributes, relationships (verbs), cardinality (max), participation (min).

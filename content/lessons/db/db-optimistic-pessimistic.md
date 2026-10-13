@@ -212,6 +212,49 @@ Zero affected rows is the conflict signal; the application must handle it.
 
 Locks and transactions can't be held across user think time.
 
+### [numeric 1.25 unit=attempts] An optimistic update fails its version check with probability 0.2 on each attempt, independently. How many attempts does it take on average?
+
+:::answer
+The number of attempts is geometric: 1 ÷ (1 − 0.2) = **1.25** on average. At a conflict probability of 0.8 it would be 5 attempts, each redoing all its work — the point where locking (waiting once) becomes cheaper than retrying.
+:::
+
+### [mcq] Which statement safely decrements stock without needing either an explicit lock or a version column?
+
+- [ ] `SELECT stock FROM items WHERE id = 1`, then `UPDATE items SET stock = <value − 1> WHERE id = 1`
+- [x] `UPDATE items SET stock = stock - 1 WHERE id = 1 AND stock > 0`
+- [ ] `UPDATE items SET stock = 9 WHERE id = 1`
+- [ ] `SELECT stock FROM items WHERE id = 1 FOR SHARE`, then update
+
+The read, check and write happen inside one statement under the row lock the UPDATE takes, so concurrent decrements serialize correctly. Check the affected row count to detect "out of stock".
+
+### [mcq] A payment request times out, and the client retries it. How do you guarantee the customer is charged once?
+
+- [ ] Use SERIALIZABLE isolation
+- [ ] Retry only on HTTP 500
+- [x] The client sends an idempotency key; the server stores it with a unique constraint alongside the result and returns the stored result for repeats
+- [ ] Add a version column to the payments table
+
+The first attempt may have succeeded before the timeout. An idempotency key turns "do it again" into "tell me what happened", and the unique constraint makes concurrent duplicates collide instead of both executing.
+
+### [exercise] Implement optimistic concurrency for `PUT /documents/42` with ETags: what the server sends, what the client sends back, the SQL, and the response when someone else saved first.
+
+:::solution
+1. `GET /documents/42` → `200 OK`, `ETag: "7"` (the row's version column).
+2. The client edits and sends `PUT /documents/42` with `If-Match: "7"`.
+3. The server runs:
+
+```sql
+UPDATE documents
+SET body = $1, version = version + 1, updated_at = now()
+WHERE id = 42 AND version = 7
+RETURNING version;
+```
+
+4. One row updated → `200 OK` with `ETag: "8"`. Zero rows → someone changed it after version 7 → `412 Precondition Failed`; the client re-fetches, shows the conflict or merges, and retries.
+
+No lock is held while the user edits for minutes; the check costs one extra predicate at write time. A request without `If-Match` can be rejected with `428 Precondition Required` so clients can't skip the check.
+:::
+
 ## Quick Revision
 
 - Pessimistic: lock first (FOR UPDATE), others wait; good for hot rows and short critical sections.

@@ -191,6 +191,38 @@ Every range has its own Raft/Paxos group, so the system scales by adding more gr
 
 Hash-sharded indexes or UUIDs spread inserts across ranges.
 
+### [numeric 8 unit=ms] A Spanner-style system has a clock uncertainty interval of ±4 ms. Up to how long does commit wait delay acknowledging a write?
+
+:::answer
+The commit timestamp is chosen at the top of the uncertainty interval, and the system waits until every clock must have passed it: about 2 × 4 = **8** ms. Better clocks (GPS and atomic references) directly reduce this cost.
+:::
+
+### [mcq] What do "follower reads" in distributed SQL trade?
+
+- [ ] Durability for speed
+- [x] Freshness for latency: a nearby replica serves a read at a slightly older timestamp instead of going to the range's leaseholder
+- [ ] Consistency of writes for availability of writes
+- [ ] They make every read linearizable
+
+Reads at a timestamp a few seconds in the past are safe on any replica that has applied up to that time — perfect for dashboards and lists, wrong for read-after-write flows.
+
+### [mcq] A CockroachDB range grows beyond its size limit. What happens?
+
+- [ ] Writes to it are rejected
+- [x] It splits into two ranges, each with its own Raft group, which can then be rebalanced onto different nodes
+- [ ] The whole table is resharded
+- [ ] It moves to a bigger node
+
+Automatic splitting (by size, and by load for hot ranges) and rebalancing are what let range-sharded systems grow without manual resharding.
+
+### [exercise] Users in India and the EU must have their personal data stored in their own region, and their everyday requests should be fast. Sketch a distributed SQL design.
+
+:::solution
+Add a `region` column to user-owned tables and **geo-partition** by it: rows with `region = 'in'` keep their replicas (and their leaseholder) in Indian zones, `region = 'eu'` in EU zones. Most requests touch one user's rows, so their reads and consensus writes stay in-region: a few milliseconds.
+
+Global reference data that everyone reads (product catalogue, configuration) goes in **global tables** replicated everywhere, optimized for fast reads with slower writes. Cross-region operations (an Indian user messaging an EU user) pay the cross-region round trip and must not copy personal data into the wrong region. Within each region, use three zones so a zone failure keeps a majority; decide explicitly what happens if an entire region fails (data residency may forbid failing over elsewhere).
+:::
+
 ## Quick Revision
 
 - Ranges (auto split/move) × consensus group per range × distributed transactions with replicated coordinator state × MVCC timestamps.

@@ -11,7 +11,8 @@ relevance: high
 stage: 2
 prerequisites: [db-anomalies]
 related: [db-isolation-levels, db-locking, db-concurrency-protocols, db-transactions-acid, db-crash-recovery, os-race-conditions]
-visualizations: [isolation]
+visualizations: [isolation, schedules]
+labs: [schedules]
 tags: [schedule, serial schedule, serializability, conflict serializability, view serializability, precedence graph, conflicting operations, blind write, recoverable schedule, cascadeless schedule, strict schedule, cascading rollback]
 ---
 
@@ -102,6 +103,10 @@ flowchart LR
       A2((T1)) --> B2((T2))
     end
 ```
+
+Type any schedule into the analyzer below — it draws the precedence graph, lists the conflicts behind every edge, and checks each property in this lesson. Hover an edge to see which pair of operations created it.
+
+::lab{id=schedules}
 
 ### View serializability
 
@@ -277,6 +282,20 @@ Conflicts on A: R1(A) before W2(A) → **T1 → T2**; W2(A) before R3(A) → **T
 Conflicts on B: R2(B) before W1(B) → **T2 → T1**; W1(B) before W3(B) → T1 → T3; R2(B) before W3(B) → T2 → T3.
 
 Edges T1 → T2 and T2 → T1 form a cycle, so the schedule is **not** conflict serializable.
+:::
+
+### [numeric 210 unit=schedules] T1 has 3 operations, T2 has 2 and T3 has 2. How many schedules interleave them while keeping each transaction's own order?
+
+:::answer
+Choose positions for each transaction's operations among 7 slots: 7! ÷ (3! × 2! × 2!) = 5,040 ÷ 24 = **210**. Only 3! = 6 of them are serial.
+:::
+
+### [exercise] Is `R1(A) W2(A) W1(A) W3(A) C1 C2 C3` conflict serializable? View serializable? Check your answer in the [Schedule Analyzer](lab:schedules).
+
+:::solution
+**Conflict serializability**: R1(A) before W2(A) gives T1 → T2; W2(A) before W1(A) gives T2 → T1. Cycle, so **not** conflict serializable.
+
+**View serializability**, compared with the serial order T1, T2, T3: T1 reads the initial A in both; nobody else reads; and T3 performs the final write of A in both. All three conditions hold, so it **is** view serializable. W2(A) and W3(A) are blind writes (written without reading A), and T3's final write hides the order of the earlier writes — the only way a schedule can be view- but not conflict-serializable.
 :::
 
 ## Quick Revision

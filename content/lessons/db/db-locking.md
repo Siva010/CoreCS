@@ -244,6 +244,48 @@ S is compatible only with S; NOWAIT makes the X request fail immediately instead
 Updates to one row are serialized: 1000 ms / 5 ms = **200** transactions per second, no matter how many cores or connections you add.
 :::
 
+### [numeric 140 unit=ms] Eight transactions queue for the same row lock, and each holds it for 20 ms once granted. How long does the eighth transaction wait before it gets the lock?
+
+:::answer
+The seven ahead of it run one after another: 7 × 20 ms = **140** ms of pure waiting before its own 20 ms. A hot row turns concurrency into a queue; shortening the time the lock is held (do slow work before taking it) helps more than adding servers.
+:::
+
+### [mcq] `ALTER TABLE orders ADD COLUMN note text` is waiting behind a 10-minute reporting query on `orders`. What happens to new, ordinary SELECTs on `orders` meanwhile?
+
+- [ ] They run normally; SELECTs never wait
+- [x] They queue behind the ALTER's pending ACCESS EXCLUSIVE request, so the table is effectively down until the report ends
+- [ ] The ALTER is cancelled automatically after one second
+- [ ] They read the table as it will be after the ALTER
+
+Lock requests are granted in order, and the waiting exclusive request conflicts with everything. Run DDL with a short `lock_timeout` (and retry), so it gives up instead of blocking everyone.
+
+### [mcq] Several workers take jobs from a `jobs` table. Which query lets each worker claim a different pending job without waiting on the others?
+
+- [ ] `SELECT * FROM jobs WHERE status = 'pending' LIMIT 1 FOR UPDATE`
+- [x] `SELECT * FROM jobs WHERE status = 'pending' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED`
+- [ ] `SELECT * FROM jobs WHERE status = 'pending' LIMIT 1 FOR SHARE`
+- [ ] `LOCK TABLE jobs IN EXCLUSIVE MODE` before each select
+
+SKIP LOCKED skips rows other transactions have locked, so each worker gets the next free job immediately. Plain FOR UPDATE makes every worker queue for the same first row.
+
+### [exercise] Two transfers run at the same time: T1 moves money from account 1 to 2 (updating 1, then 2) and T2 moves money from 2 to 1 (updating 2, then 1). Show how they deadlock, then fix the code. Try both versions in the [lock manager lab](lab:db-locks).
+
+:::solution
+T1 locks row 1; T2 locks row 2; T1 requests row 2 and waits for T2; T2 requests row 1 and waits for T1. The waits-for graph has the cycle T1 → T2 → T1, so the deadlock detector aborts one of them.
+
+Fix: lock rows in one global order, whatever the direction of the transfer:
+
+```sql
+BEGIN;
+SELECT id FROM accounts WHERE id IN ($from, $to) ORDER BY id FOR UPDATE;  -- lowest id first
+UPDATE accounts SET balance = balance - $amount WHERE id = $from;
+UPDATE accounts SET balance = balance + $amount WHERE id = $to;
+COMMIT;
+```
+
+Now both transactions request row 1 first; the second simply waits for the first to commit — a queue, never a cycle. Keep a retry for deadlock errors anyway (SQLSTATE 40P01), since other code paths may lock differently.
+:::
+
 ## Quick Revision
 
 - S shared with S; X exclusive. Intention locks connect row and table granularity.

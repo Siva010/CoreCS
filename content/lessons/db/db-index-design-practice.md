@@ -203,6 +203,39 @@ Inventory them with sizes and usage (`idx_scan` on primary and replicas over at 
 
 Rows examined ≫ rows returned means the index isn't the right shape for the query.
 
+### [numeric 14000 unit=entries/s] A table receives 2,000 inserts per second and has 7 indexes. How many index entries per second must the database add?
+
+:::answer
+2,000 × 7 = **14,000** index insertions per second, each a B+ tree descent, a possible page split and a WAL record — on top of the 2,000 heap inserts. An eighth index adds another 2,000 per second; that's why indexes on write-heavy tables are capacity decisions.
+:::
+
+### [exercise] Propose a minimal set of indexes on `orders(id, customer_id, status, created_at, total)` for these three frequent queries, and say which query each index serves: (1) `WHERE customer_id = $1 ORDER BY created_at DESC LIMIT 20`; (2) `WHERE customer_id = $1 AND status = $2`; (3) `WHERE status = 'pending' AND created_at < now() - interval '1 hour'`.
+
+:::solution
+- `CREATE INDEX ON orders (customer_id, created_at DESC);` — serves (1) without a sort (seek on customer, read newest first). It also serves (2): seek on customer_id and filter status among that customer's orders, which is cheap because one customer has few orders.
+- `CREATE INDEX ON orders (created_at) WHERE status = 'pending';` — serves (3): a small partial index containing only pending orders, already ordered by time.
+
+A separate (customer_id, status) index would duplicate most of the first one's work; add it only if customers have so many orders that filtering by status becomes expensive.
+:::
+
+### [mcq] `pg_stat_user_indexes` shows `idx_scan = 0` for an index over the last 30 days. What should you check before dropping it?
+
+- [ ] Nothing — an unused index is always safe to drop
+- [x] Whether it enforces a constraint (UNIQUE, primary key), whether replicas or rarely run jobs use it (stats are per server), and when the stats were last reset
+- [ ] Only its size
+- [ ] Whether it's a B+ tree
+
+Unique indexes enforce correctness even if never scanned; statistics are counted per server, so a replica serving reports may use it; and a monthly job may not have run since the last stats reset.
+
+### [mcq] `orders.status` has 4 values, each about 25% of 10 million rows. Will an index on `status` make `WHERE status = 'paid'` faster?
+
+- [ ] Yes, an index always beats a full scan
+- [x] Usually not: fetching 2.5 million scattered rows through the index costs more than scanning the table
+- [ ] Only if the index is a hash index
+- [ ] Yes, but only for COUNT(*)
+
+Low-selectivity predicates make index scans expensive. A partial index helps only for a rare value (`WHERE status = 'pending'` when 1% are pending), or as part of a composite index after a selective column.
+
 ## Quick Revision
 
 - Design from the workload: equality → range/sort → covering; merge overlapping indexes; verify with EXPLAIN.

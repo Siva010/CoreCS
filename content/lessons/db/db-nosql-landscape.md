@@ -188,6 +188,35 @@ Write-heavy, append-only, partition-local range reads with expiry.
 
 BASE describes systems that prefer availability and converge to consistency over time.
 
+### [mcq] What does "schema-on-read" mean?
+
+- [ ] The database rejects writes that don't match a declared schema
+- [x] Data is stored as written, and structure is imposed by the code (or query) that reads it
+- [ ] The schema is cached in memory for faster reads
+- [ ] Reads must specify every column explicitly
+
+Schema-on-write (relational tables) validates at insert time; schema-on-read (most document stores, data lakes) accepts any shape and leaves every reader to handle old and new formats.
+
+### [mcq] A team uses PostgreSQL for orders, Redis for sessions and Elasticsearch for product search. What is the main cost of this polyglot setup?
+
+- [ ] None — each store is simply best at its job
+- [x] Keeping copies consistent across stores (and operating, monitoring and securing three systems)
+- [ ] Redis can't store sessions
+- [ ] PostgreSQL can't handle orders at scale
+
+The search index is a derived copy of product data: it must be updated on every change (often via CDC or an outbox) and may lag. Each extra store is another thing to back up, upgrade and page someone about.
+
+### [exercise] Design the keys for a chat app on a wide-column or key-value store, given its two queries: (1) the latest 50 messages in a conversation, (2) a user's conversations ordered by most recent activity.
+
+:::solution
+Query-first: one table per access pattern.
+
+- `messages`: partition key `(conversation_id, month)`, clustering key `message_id` (a time-ordered id) descending. Query (1) reads the newest rows of one partition — a single sequential read. The month bucket keeps a busy conversation's partition from growing without bound.
+- `user_conversations`: partition key `user_id`, clustering key `(last_activity DESC, conversation_id)`, with the conversation title and last-message preview copied in. Query (2) reads one partition.
+
+Sending a message writes to `messages` and updates `user_conversations` for every participant — denormalization paid at write time so that each read touches one partition. Updating `last_activity` in a clustering key means deleting and re-inserting that row, which this model accepts.
+:::
+
 ## Quick Revision
 
 - NoSQL = models that make specific access patterns cheap at scale: KV, document, wide-column, graph, time-series, search.

@@ -69,6 +69,7 @@ End the section with one `:::callout[That's all it is]{type=insight}` — two or
 | `:::compare[Title]` … `:::`, `:::steps` … `:::` | Comparison / numbered-steps block |
 | `::viz{id=btree}` / `::lab{id=query-plan}` | Embeds a widget inline (also lists it in the lesson's widget section) |
 | `[text](lesson:db-btree)` | Link to a lesson — also `lab:`, `viz:`, `case:`, `uth:`, `trap:` |
+| `[text](lab:sql-playground#cancel-rate)` | Opens the SQL Playground on that graded exercise; the validator checks the id exists in `src/lib/sql/exercises.ts` |
 | ` ```mermaid ` | Mermaid diagram, themed for light/dark |
 
 Raw HTML is stripped — use Markdown or the directives above.

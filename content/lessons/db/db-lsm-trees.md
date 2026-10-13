@@ -218,6 +218,32 @@ Leveled keeps each level non-overlapping (few files to check, little obsolete da
 Each filter wrongly says "maybe" with probability 0.01; across 10 independent files the expected number of false positives is 10 × 0.01 = **0.1** reads per lookup.
 :::
 
+### [numeric 40] In leveled compaction with a size ratio of 10, a byte is rewritten about 10 times while it sits in each level. Ignoring the WAL and the first flush, how many times has it been written by the time it settles in level 4, after passing through L1 to L4?
+
+:::answer
+About 10 rewrites per level × 4 levels = **40**. That write amplification is the price leveled compaction pays for few overlapping files (low read and space amplification); size-tiered compaction writes far less but leaves more files to check.
+:::
+
+### [mcq] Why can't an LSM tree implement DELETE by simply removing the key from the memtable?
+
+- [ ] Memtables are append-only and can't change
+- [x] Older SSTables may still contain the key; without a tombstone a read would find the old value there
+- [ ] Deletes must be written directly to the bottom level
+- [ ] Bloom filters can't remove keys
+
+Reads check the memtable, then SSTables from newest to oldest, and stop at the first hit. A tombstone is that first hit, saying "deleted"; compaction drops it once no older copy can exist below it.
+
+### [exercise] Walk through a point read for key k in an LSM tree with an active memtable, one immutable memtable and SSTables in levels L0–L2. Where do Bloom filters and fence pointers save I/O?
+
+:::solution
+1. Look up k in the active memtable, then the immutable one (in memory). A hit — value or tombstone — ends the search.
+2. Check L0 SSTables newest first (they can overlap, so possibly several).
+3. In L1 and L2 files don't overlap, so at most one file per level can contain k: pick it by key range.
+4. For each candidate SSTable, first test its **Bloom filter** (in memory): "definitely not here" skips the file with no I/O. If it says "maybe", use the file's **fence pointers / block index** (first key of each block, in memory) to read exactly one data block.
+
+A key that exists costs about one data-block read; an absent key costs almost nothing thanks to Bloom filters, except for their false positives.
+:::
+
 ## Quick Revision
 
 - Write: WAL append + memtable insert; flush memtable → immutable SSTable; compaction merges files.

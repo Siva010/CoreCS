@@ -200,6 +200,41 @@ Unbounded arrays grow without limit and make every update expensive.
 
 Multi-document atomicity requires transactions.
 
+### [numeric 33554 ±10 unit=comments] A MongoDB post document embeds all its comments, each about 500 bytes. The maximum document size is 16 MiB (16,777,216 bytes). About how many comments fit before the document can't grow?
+
+:::answer
+16,777,216 ÷ 500 ≈ **33,554** comments — and long before that, every new comment rewrites a multi-megabyte document and every read of the post loads all of them. Unbounded arrays belong in their own collection, referenced by post id.
+:::
+
+### [mcq] For a MongoDB query `find({status: "open", priority: {$gte: 3}}).sort({created: -1})`, which compound index follows the Equality–Sort–Range rule?
+
+- [ ] `{priority: 1, status: 1, created: -1}`
+- [x] `{status: 1, created: -1, priority: 1}`
+- [ ] `{created: -1, priority: 1, status: 1}`
+- [ ] `{status: 1, priority: 1}` only
+
+Equality fields first narrow to one contiguous range; the sort field next means results come out ordered without an in-memory sort; the range field last is checked within that range. It's the same reasoning as composite B+ tree indexes in SQL.
+
+### [mcq] Which statement about MongoDB transactions is accurate?
+
+- [ ] MongoDB has no transactions at all
+- [ ] Only single-field updates are atomic
+- [x] Single-document writes are atomic; multi-document ACID transactions exist (replica sets since 4.0, sharded clusters since 4.2) but cost more and should be the exception
+- [ ] Every write is automatically part of a multi-document transaction
+
+Good document design keeps data that changes together in one document, so most writes need only single-document atomicity.
+
+### [exercise] Model a blog with posts, authors and comments in a document database. Decide what to embed and what to reference, and justify each choice.
+
+:::solution
+- **Post → author**: reference by `author_id`, plus a small embedded copy of the display fields (`{name, avatar}`) for rendering lists without a second lookup. Authors change rarely; when they do, update the copies in the background.
+- **Post → tags**: embed as an array of strings. Small, bounded, read together, and indexable with a multikey index.
+- **Post → comments**: a separate `comments` collection with `post_id` (indexed with `created_at`), because comments are unbounded, written by many users concurrently and paginated. Optionally embed the latest 3 comments in the post for the list view (a bounded, denormalized subset).
+- **Comment counts**: a counter field on the post updated with `$inc`, instead of counting on every read.
+
+Rule of thumb: embed what's bounded and read together; reference what grows without limit, is shared, or is updated independently.
+:::
+
 ## Quick Revision
 
 - Document = aggregate stored as nested JSON; one read/one atomic write for the common path.

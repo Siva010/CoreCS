@@ -229,6 +229,37 @@ Unilateral action could contradict the coordinator's decision; that's the blocki
 Each participant receives PREPARE, sends a vote, receives COMMIT and sends an ACK: 4 messages × 3 participants = **12**.
 :::
 
+### [numeric 2 unit=compensations] A saga has four steps. Step 3 fails after steps 1 and 2 committed. How many compensating actions run?
+
+:::answer
+Only completed steps need undoing, in reverse order: compensate step 2, then step 1 — **2** compensations. Step 3 failed (its own transaction rolled back) and step 4 never ran.
+:::
+
+### [mcq] In two-phase commit, every participant has voted YES, and the coordinator crashes before sending the decision. What happens to the participants?
+
+- [ ] They commit after a timeout
+- [ ] They abort after a timeout
+- [x] They stay blocked in the prepared state, holding their locks, until the coordinator (or its log) is available again
+- [ ] They elect a new coordinator and commit
+
+A prepared participant promised to obey the coordinator's decision and can't know what it was: committing might contradict an abort decided elsewhere, and aborting might contradict a commit. This blocking is 2PC's fundamental weakness.
+
+### [exercise] Design a saga for "place order" across three services: inventory (reserve stock), payments (charge card) and shipping (create shipment). Give each step's compensation and how you make retries safe.
+
+:::solution
+| Step | Action | Compensation |
+|---|---|---|
+| 1 | Inventory: reserve items (status RESERVED, with expiry) | release the reservation |
+| 2 | Payments: charge the card | refund the charge |
+| 3 | Shipping: create the shipment | cancel the shipment |
+| 4 | Order service: mark order CONFIRMED | — |
+
+- If step 2 fails (card declined): release the reservation, mark the order FAILED.
+- If step 3 fails: refund, then release.
+
+Order the steps so the hardest-to-undo action (charging money) comes after the easiest one (a reservation that can also simply expire). Make every step and compensation **idempotent** with a saga or order id as the idempotency key, because messages will be redelivered. Publish each step's events through a **transactional outbox** so a service's state change and the event announcing it are committed together. Users can observe the intermediate state (stock reserved but not yet paid) — sagas give atomicity eventually, not isolation.
+:::
+
 ## Quick Revision
 
 - No shared log across databases → atomic commit needs coordination.

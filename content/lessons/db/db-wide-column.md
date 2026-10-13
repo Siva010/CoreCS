@@ -229,6 +229,43 @@ Time bucketing keeps partitions manageable; queries spanning days read several p
 QUORUM = ⌊5 / 2⌋ + 1 = 2 + 1 = **3** replicas.
 :::
 
+### [numeric 8.64 ±0.01 unit=MB] A sensor writes one 100-byte reading per second, and the partition key is (sensor_id, day). How large does one partition grow in a day? (1 MB = 10⁶ bytes.)
+
+:::answer
+86,400 readings × 100 bytes = 8,640,000 bytes = **8.64** MB — comfortably small. With the partition key `sensor_id` alone it would grow by that much every day, forever, until reads and compaction of that partition became painful.
+:::
+
+### [mcq] A Cassandra table had millions of rows deleted from one partition, and reads of that partition are now slow and log warnings. Why?
+
+- [ ] Deleted rows are removed immediately but the partition index is stale
+- [x] Deletes write tombstones; reads must scan past them until compaction removes them after `gc_grace_seconds`
+- [ ] The partition moved to another node
+- [ ] Consistency level ONE ignores deletes
+
+A tombstone must survive long enough to reach every replica (or a resurrected value could reappear), so mass deletes inside a partition leave piles of markers that every read scans. Design so that data expires by dropping whole partitions or time windows (TTL with time-window compaction).
+
+### [exercise] Write a Cassandra table for "the latest 50 messages in a channel", where channels can be very busy.
+
+:::solution
+```sql
+CREATE TABLE messages_by_channel (
+  channel_id  uuid,
+  bucket      text,        -- e.g. '2024-06' to bound partition size
+  message_id  timeuuid,
+  author_id   uuid,
+  body        text,
+  PRIMARY KEY ((channel_id, bucket), message_id)
+) WITH CLUSTERING ORDER BY (message_id DESC);
+
+SELECT author_id, body, message_id
+FROM messages_by_channel
+WHERE channel_id = ? AND bucket = ?
+LIMIT 50;
+```
+
+The composite partition key keeps one channel-month together on the same replicas; clustering by a time-ordered `timeuuid` in descending order makes "latest 50" a read of the first 50 rows of one partition. Near a month boundary, the application reads the previous bucket if the current one has fewer than 50 messages.
+:::
+
 ## Quick Revision
 
 - Primary key = ((partition key), clustering columns): partition → nodes; clustering → sort within partition.

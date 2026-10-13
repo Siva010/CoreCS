@@ -216,6 +216,40 @@ The rewriter applies rules such as view expansion and row-level security before 
 
 With a pipelined plan (no blocking sort), execution stops early; with a blocking sort, all input must still be processed.
 
+### [mcq] `SELECT nmae FROM customers` fails with "column nmae does not exist". Which stage reports it?
+
+- [ ] The parser: it's a syntax error
+- [x] The analyzer (semantic analysis), which resolves names against the catalog
+- [ ] The planner, when it estimates costs
+- [ ] The executor, when it reads the first row
+
+The statement is grammatically valid, so parsing succeeds. Analysis looks up every table and column in the system catalog and checks types and permissions; that's where unknown names are rejected.
+
+### [numeric 120 unit=orders] A query joins 5 tables. Considering only left-deep join trees, in how many different orders can the planner join them?
+
+:::answer
+Every permutation of the 5 tables is a distinct left-deep order: 5! = **120**. With 10 tables it's 3,628,800 — which is why planners use dynamic programming over subsets, and PostgreSQL switches to its genetic optimizer (GEQO) at 12 or more FROM items by default.
+:::
+
+### [numeric 5 unit=executions] PostgreSQL plans the first executions of a prepared statement with the actual parameter values. After how many such custom plans does it start comparing against a generic plan?
+
+:::answer
+After **5** custom-plan executions, PostgreSQL compares their average cost with the generic plan's estimate and switches if the generic plan isn't much worse. For skewed columns this can flip a fast plan into a slow one; `plan_cache_mode = force_custom_plan` disables the switch.
+:::
+
+### [exercise] Trace how the iterator (Volcano) model executes `SELECT name FROM customers WHERE city = 'Pune' ORDER BY name LIMIT 3`, assuming a sequential scan. Which operator has to see every row, and which stops early?
+
+:::solution
+The plan is Limit → Sort → Filter (city = 'Pune') → Seq Scan, and execution is driven from the top by repeated `next()` calls:
+
+1. Limit asks Sort for a row.
+2. Sort is **blocking**: before it can return its first row it calls Filter's `next()` until exhaustion. Filter pulls rows from Seq Scan one at a time and passes on only the Pune rows. So every row of `customers` is read.
+3. Sort orders the Pune rows (with LIMIT above it, PostgreSQL uses a top-N heapsort keeping only 3 rows in memory) and returns the first.
+4. Limit returns it, asks for two more, then stops calling `next()`.
+
+The scan sees everything because of the sort. With an index on (city, name), the plan becomes Limit → Index Scan, and the index scan stops after three entries.
+:::
+
 ## Quick Revision
 
 - Pipeline: parse → analyze (catalog, types, permissions) → rewrite (views, RLS) → plan (cost-based) → execute.

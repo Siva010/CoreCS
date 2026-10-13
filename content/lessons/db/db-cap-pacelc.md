@@ -182,6 +182,40 @@ It's a single-object recency guarantee, not ACID consistency.
 
 Only a majority can form quorums, so consistency is preserved at the cost of the minority side's availability.
 
+### [numeric 60 unit=ms] Three replicas: the leader in Mumbai, followers in Singapore (60 ms round trip from Mumbai) and Frankfurt (120 ms). A write commits once a majority, counting the leader, has it. Ignoring disk time, what is the commit latency?
+
+:::answer
+The leader plus one follower is a majority of three, so the leader waits only for the fastest follower: **60** ms. Losing Singapore would raise every commit to 120 ms — the "else, latency" half of PACELC in action.
+:::
+
+### [mcq] A Dynamo-style store, by default, accepts writes on both sides of a partition and replicates asynchronously with eventual consistency. How does PACELC classify it?
+
+- [ ] PC/EC
+- [ ] PC/EL
+- [x] PA/EL
+- [ ] PA/EC
+
+During a Partition it chooses Availability; Else (normal operation) it chooses Latency over consistency by not waiting for replicas.
+
+### [mcq] During a network partition, what does an AP database do with writes arriving on both sides?
+
+- [ ] Rejects all writes until the partition heals
+- [x] Accepts them on both sides and reconciles the divergent versions afterwards (last-write-wins, vector clocks, CRDTs or application merge)
+- [ ] Sends them all to the majority side
+- [ ] Converts them into reads
+
+Availability during a partition means both sides keep serving, so conflicts are inevitable and must be resolved later.
+
+### [exercise] For each feature, choose consistency or availability during a partition and explain what users would see: (a) a shopping cart, (b) a bank account balance used to approve withdrawals, (c) a "likes" counter.
+
+:::solution
+- **(a) Shopping cart → available**. Let both sides accept "add item"; merge carts afterwards (a union). Worst case, a deleted item reappears and the customer removes it again — far better than "can't add to cart".
+- **(b) Account balance → consistent**. A minority side must refuse withdrawals (or allow only small, pre-authorized amounts); otherwise two sides could each approve spending the same money. Users see an error or a delay.
+- **(c) Likes counter → available**. Counts can diverge and be merged (a CRDT counter adds per-node increments). A briefly wrong count costs nothing.
+
+The choice follows from the cost of a wrong answer versus the cost of no answer, per operation — one system can make different choices for different data.
+:::
+
 ## Quick Revision
 
 - Partition ⇒ choose linearizable consistency (refuse on one side) or availability (answer, risk divergence).

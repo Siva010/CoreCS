@@ -226,6 +226,43 @@ The set of rows matching the predicate changed.
 
 Snapshots prevent the others; disjoint writes based on overlapping reads slip through.
 
+### [numeric 9] Stock is 10. Five requests run concurrently; each reads stock = 10, computes 10 − 1 in the application, and writes `UPDATE items SET stock = 9`. What does the database hold afterwards?
+
+:::answer
+Every request writes the same 9, so the final stock is **9** — four sales were lost. The correct result, 5, needs an atomic `UPDATE items SET stock = stock - 1 WHERE stock > 0`, a row lock (`SELECT … FOR UPDATE`), or an optimistic version check. Watch the same lost update in the [isolation lab](lab:isolation).
+:::
+
+### [mcq] T1 reads account A (500). T2 moves 100 from A to B and commits. T1 then reads B (now 600, was 500) and reports the total as 1,100. Which anomaly is this?
+
+- [ ] Dirty read
+- [ ] Lost update
+- [x] Read skew
+- [ ] Phantom
+
+T1 saw A before the transfer and B after it — two committed but mutually inconsistent states. A single snapshot for the whole transaction (Repeatable Read / snapshot isolation) prevents it.
+
+### [mcq] Two transactions each run `SELECT count FROM counters WHERE id = 1` (both get 41) and then `UPDATE counters SET count = 42 WHERE id = 1`. Which anomaly?
+
+- [ ] Phantom
+- [x] Lost update
+- [ ] Dirty read
+- [ ] Write skew
+
+Both read the same value and both write a value computed from it; the second write silently overwrites the first increment.
+
+### [exercise] Hospital rule: at least one doctor must stay on call. Alice and Bob are both on call; each runs, at snapshot isolation, "if count of on-call doctors ≥ 2, take myself off call". Show how both succeed, and two ways to prevent it.
+
+:::solution
+1. T_Alice: `SELECT count(*) FROM doctors WHERE on_call` → 2.
+2. T_Bob: same query → 2 (its snapshot also sees both).
+3. T_Alice: `UPDATE doctors SET on_call = false WHERE name = 'Alice'`; commit.
+4. T_Bob: `UPDATE doctors SET on_call = false WHERE name = 'Bob'`; commit — no conflict, because they updated **different rows**.
+
+Now nobody is on call: **write skew**. Each transaction's check was valid in its snapshot, but their writes together break the invariant.
+
+Fixes: run both at **SERIALIZABLE** (PostgreSQL's SSI detects the read-write dependency cycle and aborts one, which retries and sees count = 1); or lock the rows the decision depends on, `SELECT … FROM doctors WHERE on_call FOR UPDATE`, so the second transaction waits for the first and then re-reads. A third option is to materialize the conflict: make both update a shared row (a per-shift counter) so they collide.
+:::
+
 ## Quick Revision
 
 - Serializable = equivalent to some serial order. Anomalies = interleavings that aren't.

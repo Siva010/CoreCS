@@ -216,6 +216,29 @@ With range sharding, monotonically increasing keys send every new insert to the 
 2⁴¹ ms = 2,199,023,255,552 ms ÷ 1,000 = 2,199,023,256 s ÷ 31,557,600 s per year ≈ **69.7** years from the chosen epoch.
 :::
 
+### [numeric 14 unit=shards] A sharded dataset is 12 TB today and grows 50% a year. Each shard should hold at most 2 TB. How many shards are needed in two years?
+
+:::answer
+12 × 1.5 × 1.5 = 27 TB; 27 ÷ 2 = 13.5, rounded up to **14** shards. Plan resharding before you get there — moving data is easier with headroom (and with many logical shards mapped onto fewer machines).
+:::
+
+### [mcq] A social app shards by user_id. One celebrity's posts get millions of reads per minute, overloading their shard. What helps most?
+
+- [ ] Reshard everything by post_id
+- [x] Treat the hot key specially: cache its data aggressively and/or spread it over several sub-keys (salting) or read replicas
+- [ ] Add more shards; hashing spreads one user over all of them
+- [ ] Switch to range sharding by user_id
+
+A single key always maps to a single shard, so more shards don't help. Hot keys need caching, replication of that key's data, or splitting it into several keys that land on different shards.
+
+### [exercise] Orders are sharded by `customer_id`. The new merchant dashboard needs "all orders for merchant X, newest first". How do you serve it without querying every shard each time?
+
+:::solution
+A query by merchant has no shard key, so the naive answer is **scatter-gather**: send it to every shard and merge the results — fine for rare admin queries, too costly and too slow (the slowest shard decides latency) for a dashboard.
+
+Better: maintain a **second copy indexed by merchant** — a global secondary index or a merchant-sharded table `(merchant_id, created_at, order_id, customer_id, total)`. Keep it updated asynchronously from the orders shards (CDC or an outbox), and accept that it can lag a few seconds. The dashboard reads one merchant shard; for full order details it fetches by (customer_id, order_id) from the owning shard.
+:::
+
 ## Quick Revision
 
 - Shard = independent database with a subset of keys; scales writes and storage (replicas scale reads).

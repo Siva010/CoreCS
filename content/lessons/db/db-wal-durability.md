@@ -234,6 +234,30 @@ Otherwise a crash could leave a page change on disk with no log record to undo o
 
 Deferred modification writes to the database only after commit, so uncommitted transactions left no trace to undo.
 
+### [numeric 200 unit=segments] A server writes 3,200 MB of WAL per hour, in 16 MB segments. How many segments does it fill per hour?
+
+:::answer
+3,200 ÷ 16 = **200** segments an hour — about one every 18 seconds. That's also how many files per hour WAL archiving must copy, and what a replica must replay.
+:::
+
+### [mcq] What problem do PostgreSQL's full-page writes solve?
+
+- [ ] Replicas missing WAL records
+- [x] Torn pages: a crash in the middle of writing an 8 KB page can leave it half old and half new, and a WAL record that describes only a change can't repair it
+- [ ] Slow sequential scans
+- [ ] Deadlocks between checkpoints and backends
+
+After each checkpoint, the first change to a page logs a full image of it. Recovery restores that image first and then replays later changes, so a partly written page on disk doesn't matter.
+
+### [exercise] Immediate modification with undo/redo logging. The log on disk at the crash is: `<T1 start>`, `<T1, A, 1000, 950>`, `<T1, B, 2000, 2050>`, `<T1 commit>`, `<T2 start>`, `<T2, C, 700, 600>`. Records are (transaction, item, old value, new value). What does recovery do, and what are A, B and C afterwards?
+
+:::solution
+- **T1** has a commit record → **redo**: set A = 950 and B = 2050 (redo is idempotent, so it doesn't matter whether those pages were already written).
+- **T2** has a start but no commit → **undo**, scanning backwards: set C back to its old value 700, then write `<T2 abort>` so a second crash doesn't repeat the decision.
+
+Afterwards A = 950, B = 2050, C = 700. With deferred modification, T2's record would hold only the new value and recovery would simply ignore it, because uncommitted changes never reached the data.
+:::
+
 ## Quick Revision
 
 - Log first, apply lazily: COMMIT = commit record durable (fsync); pages written later.

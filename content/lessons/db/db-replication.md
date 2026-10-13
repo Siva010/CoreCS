@@ -230,6 +230,30 @@ Async acknowledges before shipping, so the tail of the log may exist only on the
 
 Without an ORDER BY, which row `LIMIT 1` picks can differ between the source and the replica, so their data diverges. Row-based replication ships the actual changed row.
 
+### [numeric 12 unit=seconds] A replica is 120 MB of WAL behind. It replays 15 MB/s while the primary keeps producing 5 MB/s. How long until it catches up?
+
+:::answer
+It gains on the primary at 15 − 5 = 10 MB/s: 120 ÷ 10 = **12** seconds. If the primary produced 15 MB/s or more, the lag would never shrink — replay speed must exceed the write rate with headroom.
+:::
+
+### [mcq] With PostgreSQL `synchronous_commit = remote_apply` and one synchronous standby, what does a successful COMMIT guarantee?
+
+- [ ] Only that the commit record is in the primary's WAL on disk
+- [ ] That the standby received the WAL in memory
+- [x] That the standby has applied the transaction, so a query on that standby sees it immediately
+- [ ] That every replica, synchronous or not, has applied it
+
+`on` waits for the standby to flush the WAL to disk; `remote_apply` waits until it has been replayed, which gives read-your-writes on that standby at the cost of commit latency.
+
+### [exercise] Reads go to replicas, writes to the primary. A user posts a comment and the next page load doesn't show it. Describe two ways to guarantee read-your-writes.
+
+:::solution
+1. **Route by recency**: after a user writes, send that user's reads to the primary for a short window (say, longer than the worst normal lag), tracked in their session or a cookie.
+2. **Route by position**: after the write, record the primary's WAL position (`pg_current_wal_lsn()`, or the commit's LSN) in the session. Before reading from a replica, require `pg_last_wal_replay_lsn()` on that replica to be at least that position — otherwise wait briefly or fall back to the primary.
+
+Alternatives: `synchronous_commit = remote_apply` for that write (every synchronous standby has it before COMMIT returns), or sticky routing to one replica plus monotonic reads. The general idea is the same: a read must not come from a copy that's older than the user's last write.
+:::
+
 ## Quick Revision
 
 - Leader streams its log; followers replay it (continuous recovery).

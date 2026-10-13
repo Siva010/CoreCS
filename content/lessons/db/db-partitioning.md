@@ -204,6 +204,46 @@ Only a predicate on the partition key lets the planner exclude partitions.
 
 Without global indexes, two partitions could each hold the same id.
 
+### [numeric 2 unit=partitions] `orders` is range-partitioned by month over three years (36 partitions). How many partitions does `WHERE created_at >= '2024-03-25' AND created_at < '2024-04-05'` scan?
+
+:::answer
+The range touches March and April 2024: **2** partitions; the other 34 are pruned at planning time. Pruning only works because the predicate compares the partition key directly with constants.
+:::
+
+### [mcq] The same monthly-partitioned table is queried with `WHERE date_trunc('month', created_at) = DATE '2024-03-01'`. How many partitions are scanned?
+
+- [ ] One: the planner understands date_trunc
+- [x] All of them: the predicate is on an expression, not the partition key, so it can't be used for pruning
+- [ ] Two: the current and the previous month
+- [ ] None: the query fails
+
+Rewrite as a range on the raw column, `created_at >= '2024-03-01' AND created_at < '2024-04-01'`, and pruning works again — the same rule that makes predicates index-friendly.
+
+### [mcq] A multi-tenant table must keep EU and US customers' rows in separate storage for compliance. Which partitioning method fits best?
+
+- [ ] Range on created_at
+- [ ] Hash on customer_id
+- [x] List on region
+- [ ] No partitioning; use a view
+
+List partitioning assigns each discrete value (or set of values) to its own partition, so `region = 'EU'` rows live in their own table, which can sit in its own tablespace and be managed separately.
+
+### [exercise] `events` is partitioned by month and must keep 12 months of data. Write the monthly maintenance DDL for PostgreSQL: create next month's partition and remove the oldest without blocking queries.
+
+:::solution
+```sql
+-- 1. Create the next partition ahead of time
+CREATE TABLE events_2025_07 PARTITION OF events
+  FOR VALUES FROM ('2025-07-01') TO ('2025-08-01');
+
+-- 2. Detach the oldest one without a long exclusive lock (PostgreSQL 14+), then drop or archive it
+ALTER TABLE events DETACH PARTITION events_2024_06 CONCURRENTLY;
+DROP TABLE events_2024_06;   -- or dump it to cold storage first
+```
+
+Dropping a partition removes a month of rows in milliseconds and leaves no dead tuples, unlike `DELETE … WHERE created_at < …`, which rewrites nothing but creates millions of dead rows for VACUUM. Create partitions in advance (a scheduled job or `pg_partman`), and keep a DEFAULT partition only if you monitor it.
+:::
+
 ## Quick Revision
 
 - Partitioning = one logical table, many physical tables, one server. Range (time), list, hash.

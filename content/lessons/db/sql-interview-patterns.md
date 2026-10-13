@@ -455,6 +455,73 @@ ORDER BY c.id;
 `count(o.id)` (not `count(*)`) makes customers without orders show 0 instead of 1: the NULL-padded row has `o.id` NULL.
 :::
 
+### [numeric 3 unit=islands] A user logged in on days 1, 2, 3, 5, 6 and 9 of a month. Subtracting each date's row number from it, how many distinct groups (login streaks) are there?
+
+:::answer
+Day − row number: 1−1 = 0, 2−2 = 0, 3−3 = 0, 5−4 = 1, 6−5 = 1, 9−6 = 3. The distinct values 0, 1 and 3 are the streaks 1–3, 5–6 and 9: **3** islands.
+:::
+
+### [mcq] Salaries are 1, 2, 3 and 4. What do `percentile_cont(0.5)` and `percentile_disc(0.5)` return?
+
+- [x] 2.5 and 2
+- [ ] 2.5 and 2.5
+- [ ] 2 and 3
+- [ ] 3 and 2
+
+`percentile_cont` interpolates between the two middle values; `percentile_disc` returns the first actual value whose cumulative share reaches 0.5.
+
+### [exercise] Return the user_id of everyone who logged in on at least 3 consecutive days. The `logins` table can contain the same (user, day) twice.
+
+:::solution
+```sql
+WITH d AS (SELECT DISTINCT user_id, login_date FROM logins),
+g AS (
+  SELECT user_id,
+         login_date - (row_number() OVER (PARTITION BY user_id ORDER BY login_date))::int AS grp
+  FROM d
+)
+SELECT DISTINCT user_id
+FROM g
+GROUP BY user_id, grp
+HAVING count(*) >= 3;
+```
+
+Deduplicate first: a repeated day gets its own row number and breaks the date − row number arithmetic. "Users with 3 or more logins" is the classic wrong answer, and the grader in the [SQL Playground](lab:sql-playground#login-streaks) rejects it.
+:::
+
+### [exercise] Delete duplicate rows from `logins(user_id, login_date)`, which has no primary key, keeping one copy of each pair.
+
+:::solution
+```sql
+DELETE FROM logins a
+USING logins b
+WHERE a.user_id = b.user_id
+  AND a.login_date = b.login_date
+  AND a.ctid > b.ctid;
+```
+
+Without a key, PostgreSQL's physical row id `ctid` tells copies apart: delete every copy that has a twin with a smaller ctid. With a key, number duplicates with `row_number() OVER (PARTITION BY user_id, login_date ORDER BY id)` and delete those above 1. Then add a unique constraint so it can't recur. Graded (and rolled back) in the [SQL Playground](lab:sql-playground#remove-duplicate-logins).
+:::
+
+### [exercise] For each month of 2024, count the customers who ordered that month and also ordered the following month.
+
+:::solution
+```sql
+WITH m AS (
+  SELECT DISTINCT customer_id, date_trunc('month', order_date)::date AS month
+  FROM orders WHERE customer_id IS NOT NULL
+)
+SELECT a.month, count(*) AS retained
+FROM m a
+JOIN m b ON b.customer_id = a.customer_id AND b.month = (a.month + interval '1 month')::date
+WHERE a.month >= DATE '2024-01-01'
+GROUP BY a.month
+ORDER BY a.month;
+```
+
+Reduce to one row per customer-month first, then self-join on "same customer, next month". `lead(month) OVER (PARTITION BY customer_id ORDER BY month)` compared with month + 1 works too. Graded in the [SQL Playground](lab:sql-playground#month-retention).
+:::
+
 ## Quick Revision
 
 - Work method: grain → sources (fan-out?) → pattern → edge cases → CTE steps.

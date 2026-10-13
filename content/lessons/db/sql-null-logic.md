@@ -248,6 +248,25 @@ Only 7 satisfies `x <> 5`; the two NULL rows evaluate to UNKNOWN and are dropped
 
 Arithmetic and `||` concatenation propagate NULL, and comparing with NULL is UNKNOWN (shown as NULL). Use `concat()` to skip NULLs when concatenating.
 
+### [numeric 2 unit=rows] Column `x` holds 5, NULL, 7, NULL, so `count(*)` returns 4. What does `count(x)` return?
+
+:::answer
+`count(column)` counts only non-NULL values: 5 and 7, so **2**. `count(*)` counts rows regardless of content. The difference is the classic way to count missing values: `count(*) - count(x)`.
+:::
+
+### [exercise] List id, name and city of customers created in 2023, showing 'Unknown' when the city is missing. Then explain why `WHERE city = NULL` would return no rows at all.
+
+:::solution
+```sql
+SELECT id, name, COALESCE(city, 'Unknown') AS city
+FROM customers
+WHERE created_at >= DATE '2023-01-01' AND created_at < DATE '2024-01-01'
+ORDER BY id;
+```
+
+`city = NULL` compares with an unknown value, so the result is UNKNOWN for every row — never TRUE — and WHERE keeps only TRUE rows. Missing values are tested with `IS NULL`; COALESCE replaces them for display. Graded in the [SQL Playground](lab:sql-playground#signups-2023).
+:::
+
 ## Quick Revision
 
 - NULL = unknown → comparisons give UNKNOWN; WHERE/ON/HAVING keep only TRUE.

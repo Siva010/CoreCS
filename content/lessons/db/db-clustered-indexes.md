@@ -187,6 +187,39 @@ That's why secondary lookups take a second traversal and why wide PKs bloat ever
 
 PostgreSQL tables remain heaps; CLUSTER is a one-time reorder.
 
+### [numeric 145 ±3 unit=GB] An InnoDB table's rows total 100 GB. With a sequential primary key the clustered index pages are nearly full; with random UUIDv4 keys, pages average 69% full. Approximately how large is the clustered index with random keys?
+
+:::answer
+100 GB ÷ 0.69 ≈ **145** GB — almost half as much again, before counting secondary indexes, which also store the larger key. More pages also means fewer of them fit in the buffer pool.
+:::
+
+### [numeric 1 unit=traversals] In InnoDB, `users` has primary key `id` and a secondary index on `email`. How many B+ tree traversals does `SELECT id FROM users WHERE email = $1` need?
+
+:::answer
+**1**. The secondary index leaf stores the indexed column *and the primary key*, so the query is covered: it never needs to visit the clustered index. Selecting any other column (`SELECT name …`) would add a second traversal.
+:::
+
+### [mcq] Which primary key is the best fit for an insert-heavy InnoDB table?
+
+- [x] An auto-increment BIGINT or a time-ordered UUIDv7
+- [ ] A random UUIDv4 stored as CHAR(36)
+- [ ] The user's email address
+- [ ] A hash of the whole row
+
+The clustered index is ordered by the primary key, so increasing keys append at the right edge (full pages, hot page cached), and a short key keeps every secondary index small. Natural keys like email are long and can change, which moves the row.
+
+### [exercise] Someone ran `CLUSTER events USING events_created_at_idx` last month, but range queries by time are slow again. Explain why, and suggest better options for time-ordered data in PostgreSQL.
+
+:::solution
+CLUSTER rewrites the table once in index order; it doesn't maintain the order. New and updated rows go wherever free space exists, so correlation decays over time. It also takes an ACCESS EXCLUSIVE lock for the whole rewrite, blocking reads and writes.
+
+Better options:
+- For append-mostly data, physical order already follows time; a **BRIN** index on `created_at` exploits that at tiny size.
+- **Partition by time** (daily/monthly), so a range query touches only the relevant partitions and old data is dropped by partition.
+- If you really need periodic re-clustering, use `pg_repack`, which reorders the table online.
+- Keep updates from scattering rows: a lower `fillfactor` lets updates stay on the same page (HOT).
+:::
+
 ## Quick Revision
 
 - Clustered = table stored in the index's leaves, ordered by its key (one per table). InnoDB: the PK.

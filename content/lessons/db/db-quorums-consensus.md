@@ -221,6 +221,30 @@ W + R > N → R > 2 → R = 3.
 A commit needs a majority: ⌊7 / 2⌋ + 1 = 4 nodes. So up to 7 − 4 = **3** nodes can fail.
 :::
 
+### [numeric 4] N = 5 and reads use R = 2. What is the smallest write quorum W that guarantees every read overlaps the latest write?
+
+:::answer
+Overlap needs R + W > N: W > 5 − 2 = 3, so W = **4**. Small read quorums make writes expensive and vice versa — the classic choices are R = W = 3 (balanced) or R = 1, W = 5 (fast reads, fragile writes).
+:::
+
+### [mcq] When is a log entry committed in Raft?
+
+- [ ] When the leader writes it to its own log
+- [x] When the leader has replicated it to a majority of servers (for an entry from the leader's current term)
+- [ ] When every follower has applied it
+- [ ] When a client reads it
+
+Once a majority stores it, any future leader must have it (elections require votes from a majority, and voters reject candidates with less up-to-date logs), so it can never be lost.
+
+### [exercise] In the [quorum visualizer](viz:quorum), compare N = 3, W = 2, R = 2 with W = 1, R = 1. Then explain why R + W > N alone still doesn't make a leaderless store linearizable.
+
+:::solution
+- **W = 2, R = 2**: any 2-node write set and 2-node read set out of 3 share at least one node, so a read always reaches a replica with the latest acknowledged write.
+- **W = 1, R = 1**: the read can land on a node the write never reached — stale reads are expected.
+
+Overlap guarantees that a read *sees* the latest value somewhere in its responses, not that the system behaves like a single copy. Concurrent writes can be applied in different orders on different replicas; a write that failed partway leaves some replicas updated; sloppy quorums and hinted handoff write to substitute nodes outside the intended set; and two reads concurrent with a write can return new-then-old. Linearizability additionally needs ordering (a consensus log or read repair before returning, as in ABD-style protocols).
+:::
+
 ## Quick Revision
 
 - Quorums: W + R > N ⇒ overlap; not linearizable under partial failures, LWW, sloppy quorums.

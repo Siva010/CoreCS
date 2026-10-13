@@ -234,6 +234,27 @@ Blocking factor = ⌊4096 / 100⌋ = 40 records per block. Blocks = ⌈1,000,000
 
 Hashing scatters neighbouring keys across blocks, so a range needs a full scan; sorted and clustered layouts read a contiguous run.
 
+### [numeric 124 unit=bytes] Records are 300 bytes and blocks 1,024 bytes, with unspanned organization. How many bytes are wasted in each full block?
+
+:::answer
+Blocking factor = ⌊1024 ÷ 300⌋ = 3 records = 900 bytes; 1,024 − 900 = **124** bytes are unusable in every block (about 12%). Spanned organization would use them, at the cost of records that need two block reads.
+:::
+
+### [mcq] A PostgreSQL row has a 50 KB text value, but pages are 8 KB. What happens?
+
+- [ ] The insert fails: a row must fit in one page
+- [ ] The page grows to 64 KB for that row
+- [x] The value is compressed and/or moved to a separate TOAST table, and the row keeps a small pointer to it
+- [ ] The row is split across seven consecutive heap pages
+
+Large values are TOASTed (compressed, then stored out of line in chunks). Queries that don't select that column never read the chunks — another reason to avoid `SELECT *`.
+
+### [exercise] Index entries in PostgreSQL point to (page, slot), not to a byte offset. Explain what the slot array buys, using a row that grows when updated and a page being compacted.
+
+:::solution
+The slot array at the start of the page is an indirection: slot 7 holds the current byte offset of tuple 7. Within a page, tuples can be moved freely — compacted to remove free gaps, or relocated when a variable-length value grows — by updating only the slot's offset. Every index entry still says "page 42, slot 7" and stays valid, so no index has to be touched. Without the indirection, any movement inside the page would require finding and rewriting every index entry pointing at the tuple.
+:::
+
 ## Quick Revision
 
 - Page = unit of I/O and caching (8 KB PG, 16 KB InnoDB). Cost ≈ pages touched.

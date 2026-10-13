@@ -51,6 +51,8 @@ const WIDGETS: Record<string, ComponentType> = {
   quorum: lazy(() => import("./db/Quorum")),
   lsm: lazy(() => import("./db/Lsm")),
   normalization: lazy(() => import("./db/Normalization")),
+  schedules: lazy(() => import("./db/Schedules")),
+  "extendible-hashing": lazy(() => import("./db/ExtendibleHashing")),
 };
 
 export function WidgetById({ id }: { id: string }) {

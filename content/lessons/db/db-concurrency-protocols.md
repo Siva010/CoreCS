@@ -11,7 +11,7 @@ relevance: high
 stage: 2
 prerequisites: [db-locking, db-schedules-serializability]
 related: [db-optimistic-pessimistic, db-mvcc, db-isolation-levels, os-deadlock-handling, db-distributed-sql]
-labs: [db-locks]
+labs: [db-locks, schedules]
 tags: [two phase locking, 2pl, conservative 2pl, strict 2pl, rigorous 2pl, lock conversion, lock upgrade, multiple granularity, intention locks, is ix six, timestamp ordering, thomas write rule, validation based protocol, optimistic concurrency control, wait die, wound wait, starvation]
 ---
 
@@ -98,6 +98,10 @@ Each transaction T gets TS(T) when it starts (older = smaller). Each item X reme
 Every edge in the precedence graph now goes from older to younger timestamp, so cycles are impossible — conflict serializable in timestamp order. Nobody waits, so there are **no deadlocks**; instead transactions restart, a long transaction can be restarted repeatedly (**starvation**), and basic TO allows reading uncommitted values, so practical versions add commit bits or delay reads until the writer commits (strict TO).
 
 **Thomas's write rule.** If T1 (older) wants to write X after T2 (younger) already wrote it — and nobody younger read T1's would-be value — T1's write is obsolete in the timestamp order: the serial order T1, T2 would have overwritten it anyway. So skip it instead of aborting. The resulting schedules are **view** serializable but not always conflict serializable (blind writes, as in the previous lesson).
+
+Step through both rules on your own schedules in the analyzer's **Timestamp ordering** tab: it shows R-TS and W-TS for every item after each operation, and says which check failed.
+
+::lab{id=schedules}
 
 ### Validation-based (optimistic) concurrency control
 
@@ -278,6 +282,25 @@ Acquiring every lock before starting (or none) means a transaction never waits w
 4. W1(X): TS 1 < read_TS(X) = 2 → a younger transaction already read X → **T1 aborts** and restarts.
 
 Thomas's write rule doesn't help: it only skips writes that are obsolete because of a younger **write** with no younger read in between (TS(T) < write_TS but ≥ read_TS). Here the failing check is the read timestamp, so T1 still aborts.
+:::
+
+### [exercise] TS(T1) = 5 (older) and TS(T2) = 10. For each scheme — wait–die and wound–wait — say what happens when (a) T1 requests a lock held by T2, and (b) T2 requests a lock held by T1.
+
+:::solution
+| | (a) older T1 asks, younger T2 holds | (b) younger T2 asks, older T1 holds |
+|---|---|---|
+| **wait–die** | T1 waits | T2 dies (aborts, restarts later with timestamp 10) |
+| **wound–wait** | T1 wounds T2: T2 aborts and releases the lock | T2 waits |
+
+In both schemes waits only go one way by age (wait–die: older waits for younger; wound–wait: younger waits for older), so no cycle can form. Restarting with the original timestamp lets an aborted transaction eventually become the oldest, so it can't starve.
+:::
+
+### [exercise] Validation-based protocol: T1 validated first and finished its write phase after T2 started reading but before T2 validates. T1's write set is {A}. T2's read set is {A, B} and its write set is {C}. Does T2 pass validation? What if T1's write set were {D}?
+
+:::solution
+The phases overlap, so the first condition (T1 finished writing before T2 started reading) doesn't apply. The second condition requires T1's write set to be disjoint from T2's **read** set: {A} ∩ {A, B} = {A}, so it fails — T2 may have read A before T1 wrote it, so T2 **fails validation** and restarts.
+
+With T1's write set {D}: {D} ∩ {A, B} = ∅, and T1 finished writing before T2 validates, so T2 **passes** and enters its write phase.
 :::
 
 ## Quick Revision

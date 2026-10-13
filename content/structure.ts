@@ -91,6 +91,7 @@ export const SUBJECTS: SubjectDef[] = [
       { n: 13, title: "Partitioning & Sharding", summary: "Splitting data across tables and machines, consistent hashing and hot partitions." },
       { n: 14, title: "NoSQL & Caching", summary: "Key-value, document, wide-column and graph models — and when each makes sense." },
       { n: 15, title: "Distributed Databases", summary: "CAP, PACELC, consistency models, quorums, consensus and distributed transactions." },
+      { n: 16, title: "Databases in Practice", summary: "Security, backups and point-in-time recovery, analytics warehouses, and how PostgreSQL and MySQL really differ." },
     ],
     areas: [
       { id: "db-sql", title: "SQL", levels: [2, 3, 4] },
@@ -98,6 +99,7 @@ export const SUBJECTS: SubjectDef[] = [
       { id: "db-internals", title: "Storage & Indexing", levels: [6, 7, 8] },
       { id: "db-transactions", title: "Transactions", levels: [9, 10, 11] },
       { id: "db-distributed", title: "Distributed DB", levels: [12, 13, 14, 15] },
+      { id: "db-practice", title: "In Practice", levels: [16] },
     ],
   },
   {
@@ -198,8 +200,8 @@ export const ROADMAPS: RoadmapDef[] = [
         title: "Interview core: the web and transactions",
         weeks: "Week 5",
         focus: "HTTP, TLS, indexes and isolation — the backend fundamentals.",
-        lessons: ["cn-http-connections", "cn-http-caching", "cn-tls-handshake", "cn-cookies-sessions", "cn-proxies-load-balancers", "db-index-fundamentals", "db-index-types-hashing", "db-composite-covering-indexes", "db-transactions-acid", "db-anomalies", "db-schedules-serializability", "db-isolation-levels", "db-concurrency-protocols"],
-        practice: ["lab:isolation", "lab:btree", "lab:query-plan"],
+        lessons: ["cn-http-connections", "cn-http-caching", "cn-tls-handshake", "cn-cookies-sessions", "cn-proxies-load-balancers", "db-index-fundamentals", "db-index-types-hashing", "db-composite-covering-indexes", "db-transactions-acid", "db-anomalies", "db-schedules-serializability", "db-isolation-levels", "db-concurrency-protocols", "db-security"],
+        practice: ["lab:isolation", "lab:schedules", "lab:extendible-hashing", "lab:btree", "lab:query-plan"],
       },
       {
         title: "Tie it together",
@@ -266,7 +268,7 @@ export const ROADMAPS: RoadmapDef[] = [
         title: "Databases in production",
         weeks: "Weeks 6–7",
         focus: "Plans, locks, MVCC, caching and replication.",
-        lessons: ["db-query-lifecycle", "db-scans-joins", "db-explain", "db-query-optimization", "db-index-design-practice", "db-wal-durability", "db-locking", "db-mvcc", "db-optimistic-pessimistic", "db-replication", "db-redis-caching"],
+        lessons: ["db-query-lifecycle", "db-scans-joins", "db-explain", "db-query-optimization", "db-index-design-practice", "db-wal-durability", "db-locking", "db-mvcc", "db-optimistic-pessimistic", "db-replication", "db-redis-caching", "db-security", "db-backups-pitr", "db-postgres-vs-mysql"],
         practice: ["lab:query-plan", "lab:isolation", "lab:db-locks", "case:missing-index", "case:pool-exhaustion", "case:replication-lag"],
       },
       {
@@ -299,14 +301,14 @@ export const ROADMAPS: RoadmapDef[] = [
         title: "Database internals",
         weeks: "Weeks 1–2",
         focus: "What sits under the SQL.",
-        lessons: ["db-pages-records", "db-buffer-pool", "db-btree", "db-lsm-trees", "db-column-stores", "db-clustered-indexes", "db-specialized-indexes", "db-crash-recovery"],
+        lessons: ["db-pages-records", "db-buffer-pool", "db-btree", "db-lsm-trees", "db-column-stores", "db-data-warehousing", "db-clustered-indexes", "db-specialized-indexes", "db-crash-recovery", "db-postgres-vs-mysql"],
         practice: ["lab:btree", "lab:wal-recovery", "lab:lsm"],
       },
       {
         title: "Distributed data",
         weeks: "Weeks 3–4",
         focus: "Replication, partitioning, consistency and consensus.",
-        lessons: ["db-failover", "db-partitioning", "db-sharding", "db-consistent-hashing", "db-wide-column", "db-cap-pacelc", "db-consistency-models", "db-quorums-consensus", "db-distributed-transactions", "db-distributed-sql"],
+        lessons: ["db-failover", "db-backups-pitr", "db-partitioning", "db-sharding", "db-consistent-hashing", "db-wide-column", "db-cap-pacelc", "db-consistency-models", "db-quorums-consensus", "db-distributed-transactions", "db-distributed-sql"],
         practice: ["lab:replication", "lab:consistent-hashing", "lab:quorum", "case:hot-partition", "case:failover"],
       },
       {

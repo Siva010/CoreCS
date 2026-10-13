@@ -230,6 +230,37 @@ The unique index lets PostgreSQL diff the old and new results row by row while r
 
 Only the first maps each view row to exactly one base-table row.
 
+### [mcq] Which trigger can change the values of the row being inserted?
+
+- [x] `BEFORE INSERT … FOR EACH ROW`
+- [ ] `AFTER INSERT … FOR EACH ROW`
+- [ ] `AFTER INSERT … FOR EACH STATEMENT`
+- [ ] `INSTEAD OF INSERT` on a table
+
+A BEFORE row trigger runs before the row is written and can modify and return NEW (or return NULL to skip the row). AFTER triggers see the final row but can't change it; INSTEAD OF triggers exist only on views.
+
+### [numeric 1 unit=times] An `UPDATE` matches no rows at all. How many times does an `AFTER UPDATE … FOR EACH STATEMENT` trigger on that table fire?
+
+:::answer
+**1** time. Statement-level triggers fire once per statement, even when it affects zero rows; a `FOR EACH ROW` trigger would fire 0 times.
+:::
+
+### [exercise] Create `vip_customers` as a **view** (id, name, spend) of customers whose non-cancelled spend exceeds 300,000. Is the view updatable, and when would you materialize it instead?
+
+:::solution
+```sql
+CREATE VIEW vip_customers AS
+SELECT c.id, c.name, sum(o.total) AS spend
+FROM customers c
+JOIN orders o ON o.customer_id = c.id
+WHERE o.status <> 'cancelled'
+GROUP BY c.id, c.name
+HAVING sum(o.total) > 300000;
+```
+
+It isn't automatically updatable: it has a join, GROUP BY and an aggregate, so a row in the view doesn't correspond to one base row. A plain view re-runs its query on every read and is always current; materialize it (`CREATE MATERIALIZED VIEW` plus scheduled `REFRESH`) when the query is expensive and slightly stale data is acceptable. The [SQL Playground](lab:sql-playground#vip-table) grades a view or a table for this exercise.
+:::
+
 ## Quick Revision
 
 - View = named query, expanded at plan time; no storage, no speedup; updatable when simple.

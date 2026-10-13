@@ -300,6 +300,37 @@ Conditions on the optional side of a LEFT JOIN go in ON; in WHERE they discard t
 Matched pairs: key 2 (1 row) and key 3 (1 row) = 2. Unmatched from A: key 1 = 1 row. Unmatched from B: the two rows with key 4 = 2 rows. Total 2 + 1 + 2 = **5**.
 :::
 
+### [numeric 12 unit=rows] Table A has 4 rows and B has 3 rows, and every row in both has `key = 1`. How many rows does `A JOIN B ON A.key = B.key` return?
+
+:::answer
+Every A row matches every B row: 4 × 3 = **12**. Joining on a non-unique key multiplies rows — the usual cause of inflated sums after a join.
+:::
+
+### [exercise] Return every department's name and number of employees, including departments with none (they must show 0). Why is `count(*)` wrong here?
+
+:::solution
+```sql
+SELECT d.name, count(e.id) AS headcount
+FROM departments d
+LEFT JOIN employees e ON e.department_id = d.id
+GROUP BY d.id, d.name;
+```
+
+For a department with no employees, the LEFT JOIN produces one row with NULLs on the employee side. `count(*)` counts that row and reports 1; `count(e.id)` ignores the NULL and reports 0. Graded in the [SQL Playground](lab:sql-playground#headcount).
+:::
+
+### [exercise] Return every employee's name and their manager's name, keeping the person at the top (who has no manager).
+
+:::solution
+```sql
+SELECT e.name AS employee, m.name AS manager
+FROM employees e
+LEFT JOIN employees m ON m.id = e.manager_id;
+```
+
+A self join uses the same table under two aliases. It must be a LEFT JOIN: with an inner join the top manager (manager_id NULL) has no match and disappears. Graded in the [SQL Playground](lab:sql-playground#employee-managers).
+:::
+
 ## Quick Revision
 
 - Join = pair rows where ON is true; outer joins add unmatched rows padded with NULL.

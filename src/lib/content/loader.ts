@@ -7,6 +7,7 @@ import type { RootContent, List, ListItem } from "mdast";
 import type { Root as HastRoot } from "hast";
 import { SUBJECTS, STAGES, ROADMAPS } from "@content/structure";
 import { WIDGETS, getWidget } from "@/lib/registry";
+import { SQL_EXERCISES } from "@/lib/sql/exercises";
 import {
   DEPTHS,
   QUESTION_TYPES,
@@ -506,7 +507,7 @@ function renderer() {
   const uthIds = new Set(s.walkthroughs.map((w) => w.meta.id));
   const trapIds = new Set(s.traps.map((t) => t.meta.id));
   rendererCache = createRenderer(
-    (scheme, id) => {
+    (scheme, id, hash) => {
       switch (scheme) {
         case "lesson":
           return s.lessonsById.get(id)?.meta.href ?? null;
@@ -514,6 +515,8 @@ function renderer() {
         case "viz": {
           const w = getWidget(id);
           if (!w) return null;
+          // lab:sql-playground#<exercise-id> opens that graded exercise, so the id must exist.
+          if (id === "sql-playground" && hash && !SQL_EXERCISES.some((e) => `#${e.id}` === hash)) return null;
           const preferLab = scheme === "lab" ? w.kinds.includes("lab") : !w.kinds.includes("viz");
           return preferLab ? `/labs/${id}` : `/visualizations/${id}`;
         }

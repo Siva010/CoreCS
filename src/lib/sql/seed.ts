@@ -133,10 +133,15 @@ CREATE TABLE logins (
   user_id     int NOT NULL REFERENCES customers(id),
   login_date  date NOT NULL
 );
+-- The filter must depend on the day as well as the customer: a condition that
+-- only mentions c is pushed down to the customers scan and evaluated once per
+-- customer, which makes every user log in on all days or none.
 INSERT INTO logins
 SELECT c.id, DATE '2024-06-01' + d
 FROM customers c CROSS JOIN generate_series(0, 29) AS d
-WHERE random() < CASE WHEN c.id % 5 = 0 THEN 0.8 ELSE 0.25 END
+WHERE c.id < 38
+  AND ('x' || substr(md5(c.id || ':' || d), 1, 7))::bit(28)::int % 100
+      < CASE WHEN c.id % 5 = 0 THEN 70 WHEN c.id % 3 = 0 THEN 10 ELSE 30 END
 ORDER BY c.id, d;
 INSERT INTO logins VALUES (3, '2024-06-10'), (3, '2024-06-10'), (7, '2024-06-02');
 

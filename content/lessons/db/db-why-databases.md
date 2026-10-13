@@ -245,6 +245,32 @@ Changes to the internal (physical) schema are absorbed by the internal–concept
 
 `GRANT`/`REVOKE` control permissions. `TRUNCATE` is DDL, `SAVEPOINT` is TCL, `MERGE` is DML.
 
+### [mcq] The `customers` table is split into `customers` and `customer_addresses`, and a view with the old shape is created so existing reports keep working unchanged. Which property does this demonstrate?
+
+- [ ] Physical data independence
+- [x] Logical data independence
+- [ ] Referential integrity
+- [ ] Atomicity
+
+The conceptual (logical) schema changed; the external schema seen by the reports didn't, because the view now maps the new tables to the old shape. Changing indexes or storage without touching queries would be physical data independence.
+
+### [numeric 20 unit=seconds] Orders live in an unsorted 10 GB file read sequentially at 500 MB/s. How long does finding one order by id take in the worst case? (1 GB = 1,000 MB.)
+
+:::answer
+Without an index the whole file may have to be read: 10,000 MB ÷ 500 MB/s = **20** seconds per lookup. A B+ tree index answers the same question with about 3–4 page reads — under a millisecond on SSD. That gap is one of the reasons a DBMS exists.
+:::
+
+### [exercise] A small company keeps orders in one CSV file per day, edited by two apps. Name four problems they will hit and the DBMS mechanism that solves each.
+
+:::solution
+- **Lost or interleaved writes** when two apps append at once → concurrency control (locks/MVCC) and transactions.
+- **Half-written files after a crash** (an order without its lines) → atomicity and durability through the write-ahead log.
+- **Slow questions across thousands of files** ("all orders by customer 42 this year") → a query language plus indexes and an optimizer.
+- **Invalid or duplicate data** (an order for a non-existent customer, the same order twice) → constraints: primary keys, foreign keys, CHECK.
+
+Others worth naming: access control (roles and GRANT instead of file permissions), backups and point-in-time recovery, and data independence (changing the format without rewriting every reader).
+:::
+
 ## Quick Revision
 
 - A DBMS solves once what every application would otherwise solve badly: fast access, concurrency, atomicity, durability, integrity, security, evolution.

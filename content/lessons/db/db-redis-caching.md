@@ -224,6 +224,46 @@ Misses = 2% of 20,000 = **400** reads/s. At 90% hit ratio it would be 2,000/s �
 
 Delete-on-write plus TTL narrows the stale-data window.
 
+### [numeric 5 unit=times] A service handles 20,000 reads per second. Its cache hit ratio drops from 98% to 90% after a deploy. By what factor does database read traffic grow?
+
+:::answer
+Misses go from 2% × 20,000 = 400/s to 10% × 20,000 = 2,000/s: **5**× more database reads, from an 8-point drop in hit ratio. Always size the database for the miss rate you'd see on a cold or degraded cache.
+:::
+
+### [numeric 3.1 ±0.05 unit=GB] A Redis instance must hold 10 million keys: 60-byte keys, 200-byte values and roughly 50 bytes of per-key overhead. About how much memory is that? (1 GB = 10⁹ bytes.)
+
+:::answer
+10,000,000 × (60 + 200 + 50) = 10,000,000 × 310 bytes = **3.1** GB, before fragmentation and replication buffers. Short key names and compact encodings matter at this scale.
+:::
+
+### [mcq] Redis is used purely as a cache. Which `maxmemory-policy` fits, rather than the default?
+
+- [ ] `noeviction` (the default): writes fail when memory is full
+- [x] `allkeys-lru` or `allkeys-lfu`: evict the least recently or least frequently used keys
+- [ ] `volatile-ttl` on a cache where no key has a TTL
+- [ ] Turn off maxmemory
+
+With `noeviction`, a full cache starts rejecting writes; a cache should forget cold data instead. `volatile-*` policies only evict keys that have a TTL.
+
+### [exercise] A product page's cache key expires every 60 s, and at that moment 2,000 concurrent requests all miss and hit the database. Describe and sketch protections against this stampede.
+
+:::solution
+```text
+value = cache.get(key)
+if value is fresh: return value
+if cache.set(lock_key, "1", NX, PX=5000):        # only one request recomputes
+    value = db.load(); cache.set(key, value, EX=60 + random(0, 10))   # jittered TTL
+    cache.del(lock_key)
+    return value
+return value if value exists else wait_briefly_and_retry()   # others serve stale or wait
+```
+
+- **Single flight**: a short lock (`SET lock NX PX`) lets one request rebuild while the rest wait briefly or get the old value.
+- **Serve stale while revalidating**: store the value with a soft expiry inside it and a longer hard TTL, so a stale copy is always available during the rebuild.
+- **Jitter TTLs** so keys created together don't expire together.
+- **Early refresh**: refresh hot keys shortly before expiry (probabilistically, or from a background job).
+:::
+
 ## Quick Revision
 
 - Cache = fast copy; trade staleness and complexity for latency and DB protection.

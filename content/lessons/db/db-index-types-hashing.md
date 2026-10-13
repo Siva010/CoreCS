@@ -10,6 +10,8 @@ minutes: 45
 relevance: high
 stage: 2
 prerequisites: [db-index-fundamentals, db-pages-records]
+visualizations: [extendible-hashing]
+labs: [extendible-hashing]
 related: [db-btree, db-clustered-indexes, db-specialized-indexes, db-consistent-hashing, db-composite-covering-indexes]
 tags: [dense index, sparse index, primary index, clustering index, secondary index, multilevel index, isam, static hashing, extendible hashing, linear hashing, global depth, local depth, directory doubling, overflow chain, hash index]
 ---
@@ -106,6 +108,10 @@ Keep a **directory** of 2^d pointers indexed by the first (or last) d bits of th
 ::::
 
 Only the overflowing bucket splits; the directory is small (pointers only) and doubles rarely. Lookups stay at one directory access plus one bucket read. Weakness: a pathological hash distribution can force repeated doubling for one hot region.
+
+Try it: load the textbook example, insert 20 (the directory doubles), then 9 (a split without doubling), then load the skewed keys and watch splitting fail.
+
+::lab{id=extendible-hashing}
 
 ### Linear hashing
 
@@ -267,6 +273,22 @@ When d′ = d there is no spare directory entry to point at a new bucket, so the
 - [ ] Any index on a sorted file
 
 Records with neighbouring values of a non-ordering field are scattered, so every value needs its own pointer.
+
+### [numeric 4 unit=pointers] In an extendible hash file with global depth 4, a bucket has local depth 2. How many directory entries point to it?
+
+:::answer
+2^(global − local) = 2^(4 − 2) = **4**. The bucket uses only the last 2 bits, so the 4 slots that agree on those 2 bits (and differ in the other 2) all share it. You can check this in the [Extendible Hashing lab](lab:extendible-hashing), which shows the pointer count on every bucket.
+:::
+
+### [exercise] Start from global depth 1 and bucket capacity 2, with h(k) = k and the last bits as the index. Insert 4, 6, 1, 3, 5, 8. When does the directory double, when does a bucket split without doubling, and what is the final directory?
+
+:::solution
+- 4 (…100) and 6 (…110) end in 0 → bucket B0 = [4, 6]. 1 (…1) and 3 (…11) → B1 = [1, 3].
+- **5** (…101) → B1 is full and its local depth (1) equals the global depth (1): **double** the directory to 4 slots, split B1 on the second bit: 1 (…01) stays, 3 (…11) moves to a new bucket B2. Then 5 (…01) goes into B1 = [1, 5].
+- **8** (…1000) → slot 00 → B0, which is full but has local depth 1 < global depth 2: **split without doubling** on the second bit: 4 (…00) stays, 6 (…10) moves to new bucket B3, and slot 10 is re-pointed to B3. Then 8 → B0 = [4, 8].
+
+Final (global depth 2): 00 → [4, 8], 01 → [1, 5], 10 → [6], 11 → [3], all buckets with local depth 2. Load the "Split without doubling" preset in the [Extendible Hashing lab](lab:extendible-hashing) and insert 8 to watch it.
+:::
 
 ## Quick Revision
 

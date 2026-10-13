@@ -200,6 +200,30 @@ Steal requires undo information at recovery; no-force (not flushing pages at com
 Hit ratio = hits / accesses = 9,900 / 10,000 = 0.99 = **99**%. Note what the 1% costs: 100 misses at ~100 µs is 10 ms, about the same as all 9,900 hits at ~1 µs (9.9 ms) — half the time spent on 1% of the accesses.
 :::
 
+### [numeric 4.98 ±0.01 unit=µs] The buffer pool hit ratio is 98%. A hit costs 1 µs and a miss (an SSD read) costs 200 µs. What is the average page access time?
+
+:::answer
+0.98 × 1 + 0.02 × 200 = 0.98 + 4 = **4.98** µs. The 2% of misses account for 80% of the time — so going from a 98% to a 99% hit ratio cuts the average to 2.99 µs, a 40% improvement.
+:::
+
+### [mcq] A nightly report sequentially scans a 500 GB table on a server with a 64 GB buffer pool. Under plain LRU replacement, what is the main risk?
+
+- [ ] The scan fails because the table doesn't fit in memory
+- [x] The scan evicts the hot working set, so daytime queries hit disk until the cache warms up again
+- [ ] Dirty pages from the scan must be flushed before every read
+- [ ] Nothing — LRU always keeps frequently used pages
+
+Sequential flooding: each scanned page is "most recently used" once and pushes out pages that are actually hot. PostgreSQL gives large scans a small ring buffer; InnoDB inserts new pages at the midpoint of its LRU list.
+
+### [mcq] A buffer pool uses **steal** (uncommitted dirty pages may be written to disk) and **no-force** (commit doesn't flush data pages). What must the log provide for crash recovery?
+
+- [ ] Nothing: the data files are always consistent
+- [ ] Redo only
+- [ ] Undo only
+- [x] Both undo and redo
+
+Steal means disk can contain uncommitted changes, which must be undone; no-force means committed changes may exist only in the log, which must be redone. That combination is why ARIES-style recovery has both phases.
+
 ## Quick Revision
 
 - Buffer pool = fixed frames + page table (page id → frame); pin counts; dirty flags.

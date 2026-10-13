@@ -205,6 +205,27 @@ Hence batched loading and background merges.
 A row store reads all 40 × 8 = 320 bytes per row; the column store reads 2 × 8 = 16 bytes. 320 / 16 = **20** times less — before compression, which usually widens the gap further.
 :::
 
+### [numeric 50 unit=runs] A `country` column has 1,000,000 rows and 50 distinct values, and the table is sorted by country. How many (value, count) runs does run-length encoding store?
+
+:::answer
+Sorted data puts each value's rows together, so each distinct value is one run: **50** runs instead of a million values. Unsorted, the same column could need close to a million runs — sort order is a compression decision.
+:::
+
+### [numeric 100 unit=MB] A 100-million-row string column averages 12 bytes per value but has only 200 distinct values. With dictionary encoding using 1-byte codes, how many MB does the encoded column take, ignoring the dictionary? (1 MB = 10⁶ bytes.)
+
+:::answer
+200 distinct values fit in one byte (up to 256 codes): 100,000,000 × 1 byte = **100** MB, versus about 1,200 MB uncompressed. Comparisons and grouping can run on the 1-byte codes directly.
+:::
+
+### [mcq] A column store keeps each block's min and max `order_date` (a zone map), and the table is sorted by `order_date`. What does `WHERE order_date = DATE '2024-06-01'` read?
+
+- [ ] Every block, because zone maps only help with ranges
+- [x] Only the blocks whose [min, max] range contains 2024-06-01
+- [ ] Only the first block
+- [ ] The whole column, but in parallel
+
+Blocks whose range can't contain the date are skipped without reading them. Because the table is sorted, only one or two blocks qualify; on unsorted data almost every block's range would include the date.
+
 ## Quick Revision
 
 - Column store = each column stored separately → read only needed columns.

@@ -265,6 +265,41 @@ Testing a nullable column also matches customers whose real orders lack a coupon
 
 Test a column that can't be NULL in a real match — the joined table's primary key or the join key (`o.id IS NULL`).
 
+### [numeric 0 unit=rows] `customers` has ids 1–10. `orders.customer_id` contains 1, 2, 3 and one NULL. How many rows does `SELECT * FROM customers WHERE id NOT IN (SELECT customer_id FROM orders)` return?
+
+:::answer
+For id 4, `4 NOT IN (1, 2, 3, NULL)` means `4 <> 1 AND 4 <> 2 AND 4 <> 3 AND 4 <> NULL`, and the last comparison is UNKNOWN, so the whole condition is UNKNOWN — never TRUE. **0** rows. `NOT EXISTS` returns the 7 customers you meant.
+:::
+
+### [exercise] Return the id and name of customers who have never placed an order, in a way that stays correct when `orders.customer_id` contains NULLs.
+
+:::solution
+```sql
+SELECT c.id, c.name
+FROM customers c
+WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id);
+```
+
+NOT EXISTS asks "is there a matching row?", which is TRUE or FALSE, never UNKNOWN, so NULLs in `orders` can't affect it. Try NOT IN first in the [SQL Playground](lab:sql-playground#never-ordered) and watch it return nothing.
+:::
+
+### [exercise] Return customers who bought every product in the Toys category (relational division).
+
+:::solution
+```sql
+SELECT c.id, c.name
+FROM customers c
+WHERE NOT EXISTS (
+  SELECT 1 FROM products p
+  WHERE p.category = 'Toys'
+    AND NOT EXISTS (
+      SELECT 1 FROM orders o JOIN order_items oi ON oi.order_id = o.id
+      WHERE o.customer_id = c.id AND oi.product_id = p.id));
+```
+
+"Bought every toy" = "there is no toy they didn't buy": an anti join inside an anti join. The counting alternative — group by customer and compare `count(DISTINCT product_id)` with the number of toys — works too, as long as you count distinct products. Graded in the [SQL Playground](lab:sql-playground#all-toys).
+:::
+
 ## Quick Revision
 
 - Semi join = "has a match" (EXISTS/IN), anti join = "has no match" (NOT EXISTS / LEFT JOIN … key IS NULL).

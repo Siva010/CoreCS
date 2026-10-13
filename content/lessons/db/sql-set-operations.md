@@ -197,6 +197,39 @@ UNION removes duplicates from the combined result.
 
 EXCEPT removes rows present in B (2) and deduplicates what remains. `EXCEPT ALL` would return 1, 1.
 
+### [numeric 3 unit=rows] A has rows 1, 1, 2, 2, 2 and B has rows 1, 2, 2, 3. How many rows does `A INTERSECT ALL B` return?
+
+:::answer
+INTERSECT ALL keeps each value min(count in A, count in B) times: value 1 → min(2, 1) = 1, value 2 → min(3, 2) = 2, value 3 → min(0, 1) = 0. Total **3** rows. Plain INTERSECT would return 2 rows (1 and 2).
+:::
+
+### [exercise] Return the ids of customers who ordered in January–March 2024 but not in April–June 2024, using a set operation.
+
+:::solution
+```sql
+SELECT customer_id FROM orders
+WHERE order_date >= DATE '2024-01-01' AND order_date < DATE '2024-04-01' AND customer_id IS NOT NULL
+EXCEPT
+SELECT customer_id FROM orders
+WHERE order_date >= DATE '2024-04-01' AND order_date < DATE '2024-07-01';
+```
+
+EXCEPT returns distinct rows of the first query that don't appear in the second. Unlike NOT IN, it treats NULLs as equal to each other, but excluding guest orders (NULL customer) up front keeps the result meaningful. Graded in the [SQL Playground](lab:sql-playground#q1-not-q2).
+:::
+
+### [exercise] List every city that is either a department location or a customer city, each once, alphabetically.
+
+:::solution
+```sql
+SELECT location AS city FROM departments
+UNION
+SELECT city FROM customers WHERE city IS NOT NULL
+ORDER BY city;
+```
+
+UNION removes duplicates across both inputs; UNION ALL would keep them (and is cheaper when duplicates are impossible or wanted). The final ORDER BY sorts the combined result and uses the first query's column name. Graded in the [SQL Playground](lab:sql-playground#all-cities).
+:::
+
 ## Quick Revision
 
 - Set operations stack or compare whole rows; columns match by position; names come from the first query.

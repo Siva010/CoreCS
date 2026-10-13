@@ -2,8 +2,8 @@
 
 **Understand the machine. Master the interview.**
 
-A mechanism-first curriculum covering Operating Systems, Computer Networks and Databases (with SQL), built as a Next.js site: 153 concept lessons, 900+ interview questions, 380 practice
-items, 40 browser labs and visualizations (including a real PostgreSQL compiled to WebAssembly), 18 incident case studies, 16 "under the hood" walkthroughs and a page of interview traps.
+A mechanism-first curriculum covering Operating Systems, Computer Networks and Databases (with SQL), built as a Next.js site: 157 concept lessons, 930+ interview questions, nearly 600 practice
+items, 39 interactive labs and visualizations (including a real PostgreSQL compiled to WebAssembly with 64 graded SQL exercises), 18 incident case studies, 16 "under the hood" walkthroughs and a page of interview traps.
 
 The goal isn't to list answers to memorize. It's to teach enough of the underlying systems that the answers become consequences of understanding.
 
@@ -44,7 +44,7 @@ Other scripts:
   `::viz{id=…}`, `lesson:`/`lab:`/`case:` links), Mermaid diagrams and syntax highlighting. `content/structure.ts` defines subjects, levels, stages and roadmaps.
 - **Widgets**: `src/components/widgets/` — one component per simulator, lazily loaded by id from `src/lib/registry.ts`.
 - **SQL labs**: PGlite (PostgreSQL in WebAssembly) runs in a Web Worker (`public/vendor/sql-worker.js`), so a runaway query can be cancelled by terminating the worker. Seeds, exercises and
-  grading live in `src/lib/sql/`.
+  grading live in `src/lib/sql/`; `npx tsx scripts/_verify-sql.mts` runs every reference solution against the real seed and checks that classic wrong answers are rejected.
 - **Progress**: a Zustand store persisted to `localStorage` (`src/lib/progress/`), with SM-2 style spaced repetition, mastery estimation and a revision queue. Nothing leaves the browser.
 - **Search**: a static `/search-index.json` consumed by MiniSearch in the ⌘K palette.
 
@@ -72,7 +72,7 @@ content-hashed `_next/static` files, and an explicit JSON content type for the e
 |---|---|---|
 | Operating Systems | 45 | 12 (mental model → processes → concurrency → scheduling → sync → deadlocks → memory → virtual memory → storage/IO → kernel boundary → performance → isolation) |
 | Computer Networks | 42 | 12 (how data travels → models → Ethernet → IP → TCP → UDP → DNS → HTTP → TLS → web infrastructure → performance → advanced) |
-| Databases & SQL | 58 | 16 (why databases → relational model → SQL → joins → advanced SQL → modeling → storage → indexing → execution → transactions → concurrency → recovery → replication → sharding → NoSQL → distributed) |
+| Databases & SQL | 62 | 17 (why databases → relational model → SQL → joins → advanced SQL → modeling → storage → indexing → execution → transactions → concurrency → recovery → replication → sharding → NoSQL → distributed → in practice) |
 | Cross-domain connections | 8 | 2 (end-to-end journeys, unifying patterns) |
 
 Every lesson declares its prerequisites, so the curriculum is a dependency graph rather than a list; the validator rejects cycles, unknown references and stage inversions.

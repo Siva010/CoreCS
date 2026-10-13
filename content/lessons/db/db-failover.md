@@ -199,6 +199,32 @@ A majority (2 of 3) exists only on the B–C side; A must stop acting as leader.
 
 Data in flight (the lag) can be lost; the time to detect, promote and reroute is the outage.
 
+### [numeric 1000 unit=writes] A primary commits 5,000 writes per second, and its asynchronous replica typically lags 200 ms. If the primary dies and that replica is promoted, about how many acknowledged writes are lost?
+
+:::answer
+5,000 writes/s × 0.2 s = **1,000** writes acknowledged to clients but not yet on the replica. That's the RPO of asynchronous failover; synchronous replication to at least one standby reduces it to zero at the cost of commit latency.
+:::
+
+### [numeric 2 unit=nodes] A 5-node cluster elects leaders by majority vote. How many nodes can fail while it can still elect a leader?
+
+:::answer
+A majority of 5 is 3, so 5 − 3 = **2** nodes can fail. A 4-node cluster also tolerates only 1 failure (majority 3), which is why consensus clusters use odd sizes.
+:::
+
+### [exercise] Write the failover steps for a PostgreSQL primary with two asynchronous replicas, R1 and R2. Include how you avoid split brain.
+
+:::solution
+1. **Detect**: health checks fail for longer than the timeout; confirm from more than one vantage point so a network blip isn't mistaken for a dead primary.
+2. **Choose**: compare `pg_last_wal_receive_lsn()` on R1 and R2 and promote the more up-to-date one, to lose the least data.
+3. **Fence the old primary** before promoting: power it off through the infrastructure API (STONITH), detach its virtual IP, or block its port at the firewall — so if it was only paused, it can't accept writes when it wakes.
+4. **Promote**: `SELECT pg_promote();` on the chosen replica.
+5. **Reroute clients**: move the virtual IP, update the proxy (HAProxy/PgBouncer) or DNS with a short TTL; make sure connection pools reconnect.
+6. **Re-point** the other replica to follow the new primary.
+7. **Afterwards**: rebuild the old primary as a replica (`pg_rewind` or a fresh base backup); estimate lost writes from the LSN difference; review why it failed.
+
+Tools like Patroni automate steps 1–6 with a consensus store (etcd) holding a leader lease, which is also what prevents two nodes from both believing they're the primary.
+:::
+
 ## Quick Revision
 
 - Failover = detect → decide (consensus) → fence → promote → reroute → rebuild old primary.

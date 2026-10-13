@@ -274,6 +274,35 @@ GRANT orders_writer TO svc_ingest;
 No `UPDATE`/`DELETE` is granted, so those statements fail with "permission denied". Granting to a role (not directly to the user) keeps permissions manageable when people and services change.
 :::
 
+### [mcq] Which statement removes every row but keeps the table, can't take a WHERE clause, resets nothing about the schema — and in PostgreSQL can be rolled back?
+
+- [ ] `DELETE FROM orders`
+- [x] `TRUNCATE orders`
+- [ ] `DROP TABLE orders`
+- [ ] `ALTER TABLE orders RESET`
+
+TRUNCATE deallocates the table's storage instead of deleting rows one by one, so it's fast and fires no row triggers; in PostgreSQL it's transactional. (In MySQL it causes an implicit commit.) DELETE can filter with WHERE; DROP removes the table itself.
+
+### [numeric 394900 unit=rupees] Support's five salaries are 115,000, 62,000, 64,000, 60,000 and 58,000. After `UPDATE employees SET salary = salary * 1.10 WHERE department_id = 5`, what is Support's total payroll?
+
+:::answer
+The old total is 359,000; a 10% raise on every row gives 359,000 × 1.10 = **394,900**. Run the statement in the [SQL Playground](lab:sql-playground#support-raise), where data-changing exercises are graded and then rolled back.
+:::
+
+### [exercise] Delete every pending order placed before 2023-04-01 together with its order items. Why does deleting from `orders` first fail?
+
+:::solution
+```sql
+DELETE FROM order_items
+WHERE order_id IN (SELECT id FROM orders WHERE status = 'pending' AND order_date < DATE '2023-04-01');
+
+DELETE FROM orders
+WHERE status = 'pending' AND order_date < DATE '2023-04-01';
+```
+
+`order_items.order_id` references `orders(id)`. Deleting a parent row that still has children would leave dangling references, so the database rejects it with a foreign-key violation. Delete children first, or define the foreign key with `ON DELETE CASCADE` if that's the intended lifecycle. Graded in the [SQL Playground](lab:sql-playground#purge-stale-pending).
+:::
+
 ## Quick Revision
 
 - DML finds rows like SELECT, then writes: indexes matter for writes too.

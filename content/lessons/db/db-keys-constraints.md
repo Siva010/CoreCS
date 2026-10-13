@@ -256,6 +256,33 @@ The exclusion constraint's index also serves lookups by `room_id`.
 A super key is any attribute set containing a key. Every super key here must contain A, and may include any subset of the other three attributes: 2³ = **8** super keys ({A}, {A,B}, {A,C}, {A,D}, {A,B,C}, {A,B,D}, {A,C,D}, {A,B,C,D}).
 :::
 
+### [mcq] `orders.customer_id REFERENCES customers(id) ON DELETE SET NULL`. A customer with three orders is deleted. What happens?
+
+- [ ] The delete fails because orders reference the customer
+- [ ] The three orders are deleted too
+- [x] The three orders remain, with customer_id set to NULL
+- [ ] The orders keep the old customer_id, now dangling
+
+SET NULL keeps the children and clears the reference (the column must be nullable). The default, NO ACTION / RESTRICT, would reject the delete; CASCADE would delete the orders.
+
+### [numeric 3 unit=rows] A PostgreSQL table has `UNIQUE (a, b)`. You insert (1, NULL), (1, NULL), (1, 2), (1, 2) as four separate statements. How many succeed?
+
+:::answer
+NULL is never equal to NULL, so the two (1, NULL) rows don't conflict. The first (1, 2) succeeds and the second violates the constraint: **3** rows. `UNIQUE NULLS NOT DISTINCT` (PostgreSQL 15+) would reject the second (1, NULL) as well.
+:::
+
+### [exercise] Enforce "each user can have at most one *active* subscription" in `subscriptions(id, user_id, plan, status)`, while allowing any number of cancelled ones.
+
+:::solution
+```sql
+CREATE UNIQUE INDEX one_active_subscription
+  ON subscriptions (user_id)
+  WHERE status = 'active';
+```
+
+A partial unique index applies uniqueness only to rows matching its WHERE clause. A plain `UNIQUE (user_id, status)` would wrongly allow only one cancelled subscription too. Because it's enforced by the index, two concurrent inserts of an active subscription for the same user can't both succeed.
+:::
+
 ## Quick Revision
 
 - Super key ⊇ candidate key (minimal) → one chosen as primary; others are alternate keys (UNIQUE).

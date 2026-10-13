@@ -182,6 +182,35 @@ The new node ends up owning about 1/5 of the ring, and only those keys move: **2
 
 More points per node → many small arcs → load averages out.
 
+### [numeric 80 unit=%] With plain `hash(key) mod N`, a cluster grows from 4 to 5 nodes. What percentage of keys move to a different node?
+
+:::answer
+A key stays only if hash mod 4 = hash mod 5, which holds for 4 of every 20 hash values: 1 − 4/20 = **80**%. On a consistent-hashing ring, only the new node's share moves, about 1/5 = 20%.
+:::
+
+### [numeric 10 unit=%] A ring with many virtual nodes per server has 10 servers. One server is removed. About what percentage of keys move?
+
+:::answer
+Only the removed server's keys move, and it held about 1/10 of them: **10**%. They spread over the remaining servers because its virtual nodes were scattered around the ring.
+:::
+
+### [mcq] A ring-based store keeps 3 replicas of each key. Where are they placed?
+
+- [ ] On the 3 vnodes immediately clockwise from the key, even if they belong to the same server
+- [x] On the next 3 **distinct physical servers** found walking clockwise from the key (skipping vnodes of servers already chosen)
+- [ ] On 3 random servers
+- [ ] On the servers whose names hash closest to the key
+
+Replicas must be on different machines (and ideally different racks or zones), so the walk skips positions owned by a server that already holds a copy.
+
+### [exercise] In the [consistent hashing lab](lab:consistent-hashing), add a fifth node first with mod-N hashing and then with the ring, and note how many keys move. Then set virtual nodes to 1. What do you observe, and why?
+
+:::solution
+- **mod-N, 4 → 5 nodes**: around 80% of keys move, because changing N changes almost every key's remainder.
+- **Ring**: around 20% move — only keys in the arcs the new node takes over.
+- **1 virtual node per server**: the load becomes visibly uneven — some servers own long arcs and others short ones, because positions are random. Many virtual nodes per server average out those arc lengths (and spread a departing server's load across many others instead of one neighbour).
+:::
+
 ## Quick Revision
 
 - mod N remaps ~N/(N+1) of keys on growth; ring moves ~1/(N+1).

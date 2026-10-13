@@ -331,6 +331,47 @@ Subtracting two `date` values gives an integer number of days in PostgreSQL. The
 10 ÷ 3 = 3 remainder 1, so the first bucket takes one extra row: sizes are 4, 3, 3. Bucket 1 has **4** rows.
 :::
 
+### [numeric 35] Daily values are 10, 20, 30, 40 in date order. What does `avg(v) OVER (ORDER BY day ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)` return on the fourth day?
+
+:::answer
+The frame is the current row and the one before it: (30 + 40) ÷ 2 = **35**. On the first day the frame holds only one row, so the result is 10.
+:::
+
+### [exercise] For each department, return everyone earning the third-highest distinct salary in that department. Why is `row_number()` wrong here?
+
+:::solution
+```sql
+SELECT department_id, name, salary
+FROM (
+  SELECT e.*, dense_rank() OVER (PARTITION BY department_id ORDER BY salary DESC) AS r
+  FROM employees e
+  WHERE department_id IS NOT NULL
+) t
+WHERE r = 3;
+```
+
+`row_number()` gives tied salaries different numbers, so of two people earning the third-highest salary only one would be returned. `dense_rank()` gives ties the same rank and doesn't skip numbers; `rank()` would skip numbers after a tie higher up. Graded in the [SQL Playground](lab:sql-playground#third-in-department).
+:::
+
+### [exercise] For every day of June 2024, return the day, that day's revenue (0 if there were no orders) and the 7-day moving average, rounded to 2 decimals.
+
+:::solution
+```sql
+WITH days AS (
+  SELECT d::date AS day FROM generate_series(DATE '2024-06-01', DATE '2024-06-30', interval '1 day') d
+), daily AS (
+  SELECT days.day, COALESCE(sum(o.total), 0) AS revenue
+  FROM days LEFT JOIN orders o ON o.order_date = days.day AND o.status <> 'cancelled'
+  GROUP BY days.day
+)
+SELECT day, revenue,
+       round(avg(revenue) OVER (ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW), 2) AS avg_7d
+FROM daily ORDER BY day;
+```
+
+Without the calendar, days with no orders are missing rows, and "6 preceding rows" would reach back more than 6 days. The status filter goes in the ON clause so empty days survive the LEFT JOIN. Graded in the [SQL Playground](lab:sql-playground#moving-average).
+:::
+
 ## Quick Revision
 
 - `f() OVER (PARTITION BY … ORDER BY … frame)` — aggregate/rank/offset without collapsing rows.

@@ -227,6 +227,42 @@ WHERE status = 'paid'
 Remove the functions from the indexed columns (store status normalized, or index `lower(status)` if it can't be), express the year as a half-open timestamp range, and select only the columns needed. The index now seeks to `status = 'paid'` and scans the date range.
 :::
 
+### [numeric 12000 unit=rows] A 1,000,000-row table: `city = 'Pune'` matches 10% of rows and `state = 'Maharashtra'` matches 12%. Assuming the columns are independent, how many rows does the planner estimate for `WHERE city = 'Pune' AND state = 'Maharashtra'`?
+
+:::answer
+Independence means multiplying selectivities: 0.10 × 0.12 = 0.012, and 0.012 × 1,000,000 = **12,000** rows. In reality every Pune row is in Maharashtra, so the true count is 100,000 — an 8× underestimate. `CREATE STATISTICS … (dependencies) ON city, state` teaches PostgreSQL the correlation.
+:::
+
+### [exercise] A paginated list uses `ORDER BY created_at DESC, id DESC LIMIT 50 OFFSET 100000` and page 2,001 takes seconds. Rewrite it with keyset pagination and give the supporting index.
+
+:::solution
+```sql
+CREATE INDEX ON orders (created_at DESC, id DESC);
+
+-- first page
+SELECT id, created_at, total FROM orders
+ORDER BY created_at DESC, id DESC
+LIMIT 50;
+
+-- next page: pass the last row's (created_at, id) from the previous page
+SELECT id, created_at, total FROM orders
+WHERE (created_at, id) < ($1, $2)
+ORDER BY created_at DESC, id DESC
+LIMIT 50;
+```
+
+OFFSET makes the database produce and discard 100,000 rows before returning 50. The row-value comparison seeks straight to the position after the last row seen, so every page costs the same. The `id` tie-breaker keeps the order total, so no row is skipped or repeated. The trade-off: you can go to "next" and "previous", not jump to page 2,001.
+:::
+
+### [mcq] `SELECT * FROM jobs WHERE status = 'failed'` takes 2 ms with a literal, but 3 seconds when the app sends it as a prepared statement with `status = $1`. What is the most likely cause?
+
+- [ ] The prepared statement skips the index because parameters can't use indexes
+- [x] After several executions PostgreSQL switched to a generic plan chosen for an average status value (a sequential scan), which is wrong for the rare 'failed'
+- [ ] The network adds 3 seconds of latency for prepared statements
+- [ ] Prepared statements always disable parallel query
+
+Skewed values and generic plans don't mix. Options: `plan_cache_mode = force_custom_plan` for that statement or role, a partial index for the rare value, or not preparing that query.
+
 ## Quick Revision
 
 - Slow = too much work: wrong estimates → wrong algorithm, or a query shape that forces extra work.

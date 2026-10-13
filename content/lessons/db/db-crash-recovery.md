@@ -211,6 +211,31 @@ MVCC visibility makes rollback a status flag rather than a data change.
 
 The old (shadow) page table stays valid until the switch, so a crash before commit leaves the database unchanged.
 
+### [numeric 60 unit=seconds] Checkpoints run every 5 minutes. The server generates 40 MB of WAL per second, and recovery replays WAL at 200 MB/s. What is the worst-case redo time after a crash?
+
+:::answer
+A crash just before the next checkpoint leaves 5 × 60 × 40 = 12,000 MB of WAL to replay: 12,000 ÷ 200 = **60** seconds. More frequent checkpoints shorten recovery but write dirty pages more often (and add full-page images to the WAL).
+:::
+
+### [mcq] Why does ARIES write a compensation log record (CLR) for each change it undoes?
+
+- [ ] So replicas can replay the undo
+- [x] So that if the system crashes during recovery, the next recovery knows which changes were already undone and doesn't undo them again
+- [ ] CLRs replace the commit record of loser transactions
+- [ ] To make redo faster
+
+CLRs are redo-only records with a pointer to the next record to undo. Recovery after a crash during undo redoes the CLRs and continues undoing where it stopped.
+
+### [exercise] ARIES with this log. LSN 10: T1 updates page P1. LSN 20: T2 updates P2. LSN 30: T1 commits. LSN 40: checkpoint — dirty page table {P2 (recLSN 20)}, active transactions {T2}. LSN 50: T2 updates P3. Crash. What do analysis, redo and undo do?
+
+:::solution
+- **Analysis** (from the checkpoint at 40): start with active {T2} and dirty pages {P2: 20}. LSN 50 adds P3 with recLSN 50. At the end T2 has no commit record → **loser**. T1 committed at 30.
+- **Redo** starts at the smallest recLSN, 20: redo LSN 20 on P2 and LSN 50 on P3 if each page's pageLSN is older than the record. LSN 10 isn't redone: P1 wasn't in the dirty page table at the checkpoint, so its change was already on disk.
+- **Undo** T2's changes newest first: undo LSN 50 (write a CLR), then LSN 20 (write a CLR), then write T2's end record.
+
+Result: T1's update survives, T2's updates are gone — and if the system crashes again mid-undo, the CLRs prevent undoing anything twice.
+:::
+
 ## Quick Revision
 
 - Crash leaves files with missing committed changes (no-force) and present uncommitted ones (steal).

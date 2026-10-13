@@ -236,6 +236,27 @@ Leaf splits add a separator to the parent; only a root split adds a level.
 p·6 + (p − 1)·9 ≤ 512 → 15p − 9 ≤ 512 → 15p ≤ 521 → p ≤ 34.7, so **34**.
 :::
 
+### [numeric 63 unit=entries] Block size 1,024 bytes, key 9 bytes, record pointer 7 bytes, next-leaf pointer 6 bytes. What is the order p_leaf (maximum key–pointer pairs) of a B+ tree leaf node?
+
+:::answer
+p_leaf × (9 + 7) + 6 ≤ 1024 → 16 × p_leaf ≤ 1018 → p_leaf ≤ 63.6, so p_leaf = **63**.
+:::
+
+### [numeric 291312 unit=records] Internal nodes have order 68 (up to 68 children) and leaves hold up to 63 records. At most how many records can a B+ tree with three levels (root, one internal level, leaves) index?
+
+:::answer
+The root has up to 68 children, each internal node up to 68 leaves: 68 × 68 = 4,624 leaves, each with up to 63 entries: 4,624 × 63 = **291,312** records. Nodes are rarely full, so real capacity is lower — about (0.69 × 68)² × (0.69 × 63) ≈ 95,000 at typical fill.
+:::
+
+### [mcq] Why are B+ tree leaves linked to their neighbours?
+
+- [ ] So a lookup can skip the root
+- [x] So a range scan can read consecutive leaves without climbing back up the tree
+- [ ] To make inserts cheaper than in a B tree
+- [ ] So that deleted keys can be found by garbage collection
+
+Find the first key with one root-to-leaf descent, then follow sibling pointers: a range of k leaves costs height + k reads instead of a descent per leaf.
+
 ## Quick Revision
 
 - Wide, shallow, sorted: fanout in the hundreds → 3–4 levels for billions of keys; upper levels cached.

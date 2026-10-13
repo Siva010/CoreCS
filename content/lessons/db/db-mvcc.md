@@ -220,6 +220,54 @@ From this snapshot's point of view, 250 hasn't committed, so the version is stil
 
 Vacuum can't remove versions newer than the oldest snapshot's horizon.
 
+### [numeric 51 unit=versions] In PostgreSQL, a reporting transaction takes its snapshot and stays open for 10 minutes. Meanwhile one row is updated 50 times by short, committed transactions. How many versions of that row exist in the table until the report finishes (assuming no HOT pruning)?
+
+:::answer
+VACUUM may remove a dead version only if no snapshot could still need it, and the report's snapshot is older than all 50 updates. So the original version (still visible to the report), the 49 intermediate ones and the current one all stay: 1 + 50 = **51** tuples. Multiply by every hot row to see why one long transaction bloats a busy database.
+:::
+
+### [mcq] A tuple's xmin belongs to a transaction that **aborted**. Who can see the tuple?
+
+- [ ] Transactions that started before the abort
+- [ ] Only the aborted transaction's own session
+- [x] Nobody — it's dead immediately and only waits for VACUUM
+- [ ] Everyone, until VACUUM removes it
+
+Visibility requires the creating transaction to have committed (and be in the snapshot's past). An aborted insert's tuple never becomes visible, which is why rollback in PostgreSQL is instant.
+
+### [mcq] What does VACUUM's "freezing" protect against?
+
+- [ ] Running out of disk space
+- [x] Transaction-id wraparound: very old tuples are marked frozen, so they stay visible after the 32-bit transaction counter wraps around
+- [ ] Deadlocks between autovacuum and queries
+- [ ] Torn pages after a crash
+
+Transaction ids are compared modulo 2³², so an old xmin would eventually look like it's in the future. Freezing marks tuples as "older than every transaction"; if it falls far behind, PostgreSQL refuses new transactions to protect the data.
+
+### [exercise] A table keeps growing although its row count is stable, and autovacuum runs often. Write the queries you'd use to find what's preventing cleanup, and the settings that prevent a repeat.
+
+:::solution
+```sql
+-- 1. Long-running or idle-in-transaction sessions holding an old snapshot
+SELECT pid, state, now() - xact_start AS xact_age, left(query, 60) AS query
+FROM pg_stat_activity
+WHERE xact_start IS NOT NULL
+ORDER BY xact_start
+LIMIT 10;
+
+-- 2. Replication slots pinning old rows (and WAL)
+SELECT slot_name, active, xmin, catalog_xmin FROM pg_replication_slots;
+
+-- 3. Dead tuples and vacuum history
+SELECT relname, n_live_tup, n_dead_tup, last_autovacuum
+FROM pg_stat_user_tables
+ORDER BY n_dead_tup DESC
+LIMIT 10;
+```
+
+Also check `backend_xmin` of replicas with `hot_standby_feedback` on, and long-running prepared transactions (`pg_prepared_xacts`). Prevention: `idle_in_transaction_session_timeout`, statement and transaction timeouts for reporting roles, drop unused slots (and alert on inactive ones). Bloat that already exists needs `VACUUM FULL` or `pg_repack`, because ordinary VACUUM frees space for reuse but rarely shrinks the file.
+:::
+
 ## Quick Revision
 
 - Updates create versions (PG heap tuples with xmin/xmax; InnoDB in place + undo). Snapshots + visibility rules pick the right version.

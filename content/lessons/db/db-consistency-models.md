@@ -190,6 +190,40 @@ Monotonic reads forbid going back in time within a session; eventual consistency
 
 Causal consistency can be provided with local operations and asynchronous propagation.
 
+### [numeric 33.3 ±0.2 unit=%] N = 3, W = 1, R = 1. Right after a write is acknowledged by one replica (before it propagates), a read goes to one replica chosen at random. What is the chance it sees the write?
+
+:::answer
+Only 1 of 3 replicas has it: 1/3 ≈ **33.3**%. With W + R ≤ N, nothing guarantees the read set overlaps the write set; W = 2 and R = 2 would make every read include at least one replica with the write.
+:::
+
+### [mcq] Which statement about linearizability and serializability is correct?
+
+- [ ] They are two names for the same guarantee
+- [x] Serializability is about transactions over many objects (some serial order exists); linearizability is about single operations on one object matching real-time order. Strict serializability is both.
+- [ ] Linearizability is weaker than eventual consistency
+- [ ] Serializability requires real-time ordering
+
+A serializable database may order your transaction "before" one that finished earlier in real time; a linearizable register may not.
+
+### [mcq] In a Raft-replicated store, what must a linearizable read do?
+
+- [ ] Read from any follower
+- [ ] Read from the leader's local state without any check
+- [x] Be served by a leader that has confirmed it is still the leader (a ReadIndex round or a valid lease) and has applied all committed entries
+- [ ] Wait for every node to acknowledge
+
+A deposed leader that doesn't know it was replaced could return stale data, so the leader must confirm leadership with a majority (or rely on a clock-based lease) before answering.
+
+### [exercise] Name the session guarantee each scenario violates: (a) a user updates their profile, refreshes, and sees the old profile; (b) a reply to a comment appears before the comment itself; (c) a notification count shows 5, then 3, then 5 on successive refreshes.
+
+:::solution
+- **(a) Read-your-writes**: the refresh read from a replica that hadn't applied the user's own write.
+- **(b) Causal consistency** (consistent prefix): the reply causally depends on the comment, but a replica applied them out of order.
+- **(c) Monotonic reads**: successive reads went to replicas at different points in time, so the user saw time go backwards.
+
+Fixes: route a user's reads after their writes to the primary or to a replica that has caught up to their last write position (a); propagate dependencies or a causal timestamp (b); pin a session to one replica, or reject replicas behind the last position the client saw (c).
+:::
+
 ## Quick Revision
 
 - Ladder: linearizable > sequential > causal > session guarantees > eventual.

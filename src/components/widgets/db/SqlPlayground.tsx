@@ -1,14 +1,14 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { CircleCheck, Eye, Lightbulb, Play, RotateCcw, Table2 } from "lucide-react";
+import { ArrowRight, CircleCheck, Eye, Lightbulb, Play, RotateCcw, Table2 } from "lucide-react";
 import { PLAYGROUND_SEED, PLAYGROUND_TABLES } from "@/lib/sql/seed";
-import { SQL_EXERCISES, compareResults, type SqlExercise } from "@/lib/sql/exercises";
-import { describeSqlError, formatValue, type SqlResult } from "@/lib/sql/pglite";
+import { SQL_EXERCISES, SQL_SECTIONS, compareResults, type SqlExercise } from "@/lib/sql/exercises";
+import { describeSqlError, formatValue, type SqlDatabase, type SqlResult } from "@/lib/sql/pglite";
 import { useManifest } from "@/components/providers/Providers";
 import { useProgress } from "@/lib/progress/store";
 import { Btn, Explain, Panel, inputCls } from "../ui";
-import { DbStatusBanner, RunOutput, SqlEditor, runUserSql, useSqlDatabase, type RunOutcome } from "./sqlUi";
+import { DbStatusBanner, ResultTable, RunOutput, SqlEditor, runUserSql, useSqlDatabase, type RunOutcome } from "./sqlUi";
 import { cn } from "@/lib/utils";
 
 const SOLVED_KEY = "ccia-sql-solved-v1";
@@ -20,7 +20,38 @@ LEFT JOIN employees e ON e.department_id = d.id
 GROUP BY d.id, d.name
 ORDER BY headcount DESC;`;
 
-const LEVEL_LABEL: Record<number, string> = { 1: "Basics", 2: "Joins & aggregation", 3: "Window functions", 4: "Interview patterns" };
+// Exercises in the order the sidebar lists them: by section, then as written.
+const ORDERED = SQL_SECTIONS.flatMap((s) => SQL_EXERCISES.filter((e) => e.section === s.id));
+
+// Data-modification exercises run inside a transaction the playground rolls back,
+// so the learner's SQL must not open or end transactions itself.
+const TX_CONTROL = /(^|;)\s*(begin|commit|rollback|end|abort|start\s+transaction|savepoint|release)\b/i;
+function controlsTransaction(sql: string) {
+  const code = sql.replace(/--[^\n]*/g, "").replace(/'(?:[^']|'')*'/g, "''");
+  return TX_CONTROL.test(code);
+}
+
+interface RolledBack {
+  outcome: RunOutcome;
+  after: SqlResult | null;
+  afterError?: string;
+}
+
+/** Runs statements in a transaction, reads `check` inside it, then rolls everything back. */
+async function runRolledBack(db: SqlDatabase, sql: string, check: string): Promise<RolledBack> {
+  await db.exec("BEGIN");
+  try {
+    const outcome = await runUserSql(db, sql);
+    if (outcome.error) return { outcome, after: null };
+    try {
+      return { outcome, after: await db.queryArrays(check) };
+    } catch (e) {
+      return { outcome, after: null, afterError: describeSqlError(e) };
+    }
+  } finally {
+    await db.exec("ROLLBACK").catch(() => undefined);
+  }
+}
 
 function loadSolved(): Set<string> {
   try {
@@ -51,6 +82,7 @@ export default function SqlPlayground() {
   const [selected, setSelected] = useState<string>(FREE_PLAY);
   const [drafts, setDrafts] = useState<Record<string, string>>({ [FREE_PLAY]: FREE_PLAY_SQL });
   const [outcome, setOutcome] = useState<RunOutcome | null>(null);
+  const [after, setAfter] = useState<SqlResult | null>(null);
   const [verdict, setVerdict] = useState<{ ok: boolean; message: string } | null>(null);
   const [showHint, setShowHint] = useState(false);
   const [showSolution, setShowSolution] = useState(false);
@@ -62,8 +94,10 @@ export default function SqlPlayground() {
   useEffect(() => setSolved(loadSolved()), []);
 
   const exercise: SqlExercise | undefined = SQL_EXERCISES.find((e) => e.id === selected);
-  const sql = drafts[selected] ?? `-- ${exercise?.title}\n-- Return: ${exercise?.columns.join(", ")}\n`;
+  const sql = drafts[selected] ?? `-- ${exercise?.title}\n-- ${exercise?.check ? "Write the statement(s) that make the change." : `Return: ${exercise?.columns.join(", ")}`}\n`;
   const lessonHref = (id: string) => manifest.lessons.find((l) => l.id === id)?.href;
+  const position = ORDERED.findIndex((e) => e.id === selected);
+  const nextExercise = position >= 0 ? ORDERED[position + 1] : ORDERED[0];
 
   useEffect(() => {
     if (!db || !showSchema || schema.length) return;
@@ -76,24 +110,99 @@ export default function SqlPlayground() {
       .catch(() => setSchema([]));
   }, [db, showSchema, schema.length]);
 
-  const select = (id: string) => {
+  const select = useCallback((id: string, updateUrl = true) => {
     setSelected(id);
     setOutcome(null);
+    setAfter(null);
     setVerdict(null);
     setShowHint(false);
     setShowSolution(false);
-  };
+    if (updateUrl) {
+      try {
+        history.replaceState(null, "", id === FREE_PLAY ? location.pathname + location.search : `#${id}`);
+      } catch {
+        /* sandboxed frames may forbid history access */
+      }
+    }
+  }, []);
+
+  // Lessons link to lab:sql-playground#<exercise-id>; open that exercise.
+  useEffect(() => {
+    const fromHash = () => {
+      const id = decodeURIComponent(location.hash.slice(1));
+      if (SQL_EXERCISES.some((e) => e.id === id)) select(id, false);
+    };
+    fromHash();
+    window.addEventListener("hashchange", fromHash);
+    return () => window.removeEventListener("hashchange", fromHash);
+  }, [select]);
 
   const run = useCallback(async () => {
     if (!db || busy) return;
-    setBusy(true);
     setVerdict(null);
+    setAfter(null);
+    if (exercise?.check) {
+      if (controlsTransaction(sql)) {
+        setVerdict({ ok: false, message: "Leave out BEGIN / COMMIT / ROLLBACK: the playground wraps your statements in a transaction and rolls it back after every run." });
+        return;
+      }
+      setBusy(true);
+      const r = await runRolledBack(db, sql, exercise.check);
+      setOutcome(r.outcome);
+      setAfter(r.after);
+      if (r.afterError) setVerdict({ ok: false, message: `Your statements ran, but the check couldn't read the result: ${r.afterError}` });
+      setBusy(false);
+      return;
+    }
+    setBusy(true);
     setOutcome(await runUserSql(db, sql));
     setBusy(false);
-  }, [db, busy, sql]);
+  }, [db, busy, sql, exercise]);
+
+  const markSolved = useCallback(
+    (ex: SqlExercise) => {
+      if (solved.has(ex.id)) return;
+      const next = new Set(solved).add(ex.id);
+      setSolved(next);
+      saveSolved(next);
+      logHistory({ kind: "lab", title: `SQL exercise: ${ex.title}`, href: "/labs/sql-playground" });
+    },
+    [solved, logHistory],
+  );
 
   const check = useCallback(async () => {
     if (!db || !exercise || busy) return;
+    const fmt = (r: SqlResult) => r.rows.map((row) => row.map(formatValue));
+    setVerdict(null);
+    setAfter(null);
+
+    if (exercise.check) {
+      if (controlsTransaction(sql)) {
+        setVerdict({ ok: false, message: "Leave out BEGIN / COMMIT / ROLLBACK: the playground wraps your statements in a transaction and rolls it back after every run." });
+        return;
+      }
+      setBusy(true);
+      const mine = await runRolledBack(db, sql, exercise.check);
+      setOutcome(mine.outcome);
+      setAfter(mine.after);
+      if (mine.outcome.error) {
+        setVerdict({ ok: false, message: "Fix the error first. Nothing was changed: the transaction was rolled back." });
+      } else if (!mine.after) {
+        setVerdict({ ok: false, message: `Your statements ran, but the check couldn't read the result: ${mine.afterError ?? "unknown error"}` });
+      } else {
+        const expected = await runRolledBack(db, exercise.solution, exercise.check);
+        if (!expected.after) {
+          setVerdict({ ok: false, message: `Couldn't run the reference solution: ${expected.outcome.error ?? expected.afterError}` });
+        } else {
+          const result = compareResults(fmt(mine.after), fmt(expected.after), exercise.ordered);
+          setVerdict(result.ok ? { ok: true, message: "Correct — your change leaves the data exactly as expected. (It was rolled back, so you can run it again.)" } : { ok: false, message: `The data after your change differs from the expected state. ${result.message}` });
+          if (result.ok) markSolved(exercise);
+        }
+      }
+      setBusy(false);
+      return;
+    }
+
     setBusy(true);
     const mine = await runUserSql(db, sql);
     setOutcome(mine);
@@ -110,26 +219,16 @@ export default function SqlPlayground() {
     }
     try {
       const expected: SqlResult = await db.queryArrays(exercise.solution);
-      const fmt = (r: SqlResult) => r.rows.map((row) => row.map(formatValue));
       const result = compareResults(fmt(last), fmt(expected), exercise.ordered);
       setVerdict(result);
-      if (result.ok && !solved.has(exercise.id)) {
-        const next = new Set(solved).add(exercise.id);
-        setSolved(next);
-        saveSolved(next);
-        logHistory({ kind: "lab", title: `SQL exercise: ${exercise.title}`, href: "/labs/sql-playground" });
-      }
+      if (result.ok) markSolved(exercise);
     } catch (e) {
       setVerdict({ ok: false, message: `Couldn't run the reference solution: ${describeSqlError(e)}` });
     }
     setBusy(false);
-  }, [db, exercise, busy, sql, solved, logHistory]);
+  }, [db, exercise, busy, sql, markSolved]);
 
-  const grouped = useMemo(() => {
-    const g = new Map<number, SqlExercise[]>();
-    for (const e of SQL_EXERCISES) g.set(e.level, [...(g.get(e.level) ?? []), e]);
-    return [...g.entries()];
-  }, []);
+  const grouped = useMemo(() => SQL_SECTIONS.map((s) => ({ ...s, items: SQL_EXERCISES.filter((e) => e.section === s.id) })).filter((g) => g.items.length), []);
 
   const tables = useMemo(() => {
     const m = new Map<string, ColumnInfo[]>();
@@ -145,12 +244,12 @@ export default function SqlPlayground() {
         Exercise ({solved.size}/{SQL_EXERCISES.length} solved)
         <select value={selected} onChange={(e) => select(e.target.value)} className={cn(inputCls, "font-sans")}>
           <option value={FREE_PLAY}>Free play</option>
-          {grouped.map(([level, items]) => (
-            <optgroup key={level} label={`L${level} · ${LEVEL_LABEL[level]}`}>
-              {items.map((e) => (
+          {grouped.map((g) => (
+            <optgroup key={g.id} label={g.title}>
+              {g.items.map((e) => (
                 <option key={e.id} value={e.id}>
                   {solved.has(e.id) ? "✓ " : ""}
-                  {e.title}
+                  {e.title} (L{e.level})
                 </option>
               ))}
             </optgroup>
@@ -158,9 +257,9 @@ export default function SqlPlayground() {
         </select>
       </label>
 
-      <div className="grid gap-4 lg:grid-cols-[250px_minmax(0,1fr)]">
+      <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
         <Panel title={`Exercises · ${solved.size}/${SQL_EXERCISES.length} solved`} className="hidden self-start lg:block">
-          <nav className="max-h-[520px] space-y-3 overflow-y-auto text-[13px] thin-scroll">
+          <nav className="max-h-[640px] space-y-3 overflow-y-auto text-[13px] thin-scroll">
             <button
               type="button"
               onClick={() => select(FREE_PLAY)}
@@ -168,13 +267,16 @@ export default function SqlPlayground() {
             >
               Free play
             </button>
-            {grouped.map(([level, items]) => (
-              <div key={level}>
-                <div className="mb-1 px-2 eyebrow">
-                  L{level} · {LEVEL_LABEL[level]}
+            {grouped.map((g) => (
+              <div key={g.id}>
+                <div className="mb-1 flex items-baseline justify-between px-2">
+                  <span className="eyebrow">{g.title}</span>
+                  <span className="font-mono text-2xs text-subtle tabular-nums">
+                    {g.items.filter((e) => solved.has(e.id)).length}/{g.items.length}
+                  </span>
                 </div>
                 <ul className="space-y-0.5">
-                  {items.map((e) => (
+                  {g.items.map((e) => (
                     <li key={e.id}>
                       <button
                         type="button"
@@ -182,7 +284,8 @@ export default function SqlPlayground() {
                         className={cn("flex w-full items-start gap-2 rounded-md px-2 py-1 text-left", selected === e.id ? "bg-accent/10 text-accent" : "text-muted hover:bg-surface-2 hover:text-fg")}
                       >
                         <CircleCheck className={cn("mt-0.5 h-3.5 w-3.5 shrink-0", solved.has(e.id) ? "text-ok" : "text-border-strong")} />
-                        <span>{e.title}</span>
+                        <span className="flex-1">{e.title}</span>
+                        <span className="mt-0.5 font-mono text-2xs text-subtle">L{e.level}</span>
                       </button>
                     </li>
                   ))}
@@ -199,14 +302,22 @@ export default function SqlPlayground() {
                 <span>L{exercise.level}</span>
                 <span>·</span>
                 <span>{exercise.topic}</span>
+                {exercise.check && <span className="rounded-full bg-warn/15 px-2 py-0.5 text-warn normal-case">changes data · rolled back</span>}
                 {solved.has(exercise.id) && <span className="rounded-full bg-ok/15 px-2 py-0.5 text-ok normal-case">solved</span>}
               </div>
               <h3 className="text-[16px] font-semibold text-fg">{exercise.title}</h3>
               <p className="mt-1 text-[14px] text-muted">{exercise.prompt}</p>
-              <p className="mt-2 text-[12.5px] text-subtle">
-                Expected columns: <span className="font-mono text-muted">{exercise.columns.join(", ")}</span>
-                {exercise.ordered ? " · row order matters" : " · any row order"}
-              </p>
+              {exercise.check ? (
+                <p className="mt-2 text-[12.5px] text-subtle">
+                  Your statements run in a transaction that is rolled back afterwards, so the database never changes. Graded by reading the data afterwards with:{" "}
+                  <code className="font-mono text-muted">{exercise.check.replace(/\s+/g, " ")}</code>
+                </p>
+              ) : (
+                <p className="mt-2 text-[12.5px] text-subtle">
+                  Expected columns: <span className="font-mono text-muted">{exercise.columns.join(", ")}</span>
+                  {exercise.ordered ? " · row order matters" : " · any row order"}
+                </p>
+              )}
               <div className="mt-3 flex flex-wrap gap-2">
                 <Btn variant="ghost" onClick={() => setShowHint((v) => !v)}>
                   <Lightbulb className="h-3.5 w-3.5" /> {showHint ? "Hide hint" : "Hint"}
@@ -226,7 +337,8 @@ export default function SqlPlayground() {
           ) : (
             <p className="text-[13.5px] text-muted">
               Seven tables — departments, employees, customers, products, orders, order_items, logins — with deliberate traps: employees without a department, a department without employees,
-              guest orders with a NULL customer, customers who never ordered, salary ties and duplicate logins.
+              guest orders with a NULL customer, customers who never ordered, salary ties and duplicate logins. {SQL_EXERCISES.length} graded exercises, from a first SELECT to
+              relational division and safe data changes.
             </p>
           )}
 
@@ -244,7 +356,7 @@ export default function SqlPlayground() {
             <Btn variant="ghost" onClick={() => setShowSchema((v) => !v)}>
               <Table2 className="h-3.5 w-3.5" /> {showSchema ? "Hide schema" : "Schema"}
             </Btn>
-            <Btn variant="ghost" onClick={() => { restart(); setOutcome(null); setVerdict(null); setSchema([]); }} title="Rebuild the database from scratch">
+            <Btn variant="ghost" onClick={() => { restart(); setOutcome(null); setAfter(null); setVerdict(null); setSchema([]); }} title="Rebuild the database from scratch">
               <RotateCcw className="h-3.5 w-3.5" /> Reset database
             </Btn>
             <span className="text-[12px] text-subtle">{exercise ? "Ctrl/⌘ + Enter checks your answer" : "Ctrl/⌘ + Enter runs"}</span>
@@ -274,10 +386,26 @@ export default function SqlPlayground() {
             </Panel>
           )}
 
-          {verdict && <Explain tone={verdict.ok ? "good" : "bad"}>{verdict.message}</Explain>}
+          {verdict && (
+            <Explain tone={verdict.ok ? "good" : "bad"}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>{verdict.message}</span>
+                {verdict.ok && nextExercise && (
+                  <Btn onClick={() => select(nextExercise.id)}>
+                    Next: {nextExercise.title} <ArrowRight className="h-3.5 w-3.5" />
+                  </Btn>
+                )}
+              </div>
+            </Explain>
+          )}
           <Panel title="Result">
             <RunOutput outcome={outcome} />
           </Panel>
+          {after && (
+            <Panel title="Data after your change (rolled back)">
+              <ResultTable result={after} className="max-h-96" />
+            </Panel>
+          )}
         </div>
       </div>
     </div>

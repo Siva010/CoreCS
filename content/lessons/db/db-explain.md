@@ -218,6 +218,52 @@ Per-loop time is up to 0.024 ms; 0.024 ms × 500,000 = 12,000 ms ≈ **12 s**.
 
 Reading millions of rows to return a dozen means no index narrowed the search.
 
+### [numeric 2500 unit=times] A node shows `rows=100` in its estimate and `actual … rows=250000 loops=1`. By what factor did the planner underestimate?
+
+:::answer
+250,000 ÷ 100 = **2,500**×. An underestimate this large usually leads to a plan built for small inputs — a nested loop or a hash table sized too small — and is the first thing to fix: run ANALYZE, raise the column's statistics target, or add extended statistics for correlated columns.
+:::
+
+### [mcq] A Sort node shows `Sort Method: external merge  Disk: 120000kB`. What does it mean, and what helps?
+
+- [ ] The sort used an index; nothing to do
+- [x] The sort didn't fit in `work_mem` and spilled to temporary files; raise `work_mem` for this query or avoid the sort with an index that provides the order
+- [ ] The table is too big for the buffer pool
+- [ ] The query is reading from a replica
+
+PostgreSQL sorts in memory up to `work_mem` per sort node, then switches to an external merge sort on disk. An index matching the ORDER BY can remove the sort entirely.
+
+### [mcq] With `EXPLAIN (ANALYZE, BUFFERS)`, a node shows `shared hit=200 read=90000`. What does `read=90000` mean?
+
+- [ ] 90,000 rows were returned
+- [x] 90,000 pages were not in PostgreSQL's buffer pool and had to be requested from the operating system (page cache or disk)
+- [ ] 90,000 pages were written
+- [ ] The node read 90,000 bytes
+
+Hits come from shared buffers; reads go to the OS, which may serve them from its page cache or from disk. A large read count on a repeated query suggests the working set doesn't fit in memory.
+
+### [exercise] The query "10 most recent paid orders with customer names" produces this plan. Where does the time go, and what single index would fix it?
+
+```text
+Limit  (actual time=5210.4..5210.5 rows=10 loops=1)
+  ->  Sort  (actual time=5210.4..5210.4 rows=10 loops=1)
+        Sort Key: o.created_at DESC
+        Sort Method: top-N heapsort  Memory: 26kB
+        ->  Hash Join  (actual time=40.1..5100.2 rows=1840000 loops=1)
+              Hash Cond: (o.customer_id = c.id)
+              ->  Seq Scan on orders o  (actual time=0.01..2100.5 rows=1840000 loops=1)
+                    Filter: (status = 'paid')
+                    Rows Removed by Filter: 160000
+              ->  Hash  (actual time=39.8..39.8 rows=50000 loops=1)
+                    ->  Seq Scan on customers c  (actual time=0.01..20.3 rows=50000 loops=1)
+```
+
+:::solution
+Almost all of the 5.2 s is spent producing 1.84 million joined rows — scanning every paid order (2.1 s) and joining each to its customer (to 5.1 s) — only for the Sort to keep 10 of them. The work is proportional to all paid orders, not to the 10 wanted.
+
+Fix: `CREATE INDEX ON orders (status, created_at DESC);`. The plan becomes Limit → Nested Loop → Index Scan on orders (status = 'paid', newest first) → Index Scan on customers by primary key. It reads 10 index entries and 10 customer rows and stops: milliseconds instead of seconds.
+:::
+
 ## Quick Revision
 
 - EXPLAIN = estimates only; EXPLAIN (ANALYZE, BUFFERS) = runs it, adds actual rows/time/loops/pages. Roll back writes.

@@ -253,6 +253,31 @@ InvoiceLines(invoice_no → Invoices, product_code → Products, qty, unit_price
 
 In C → B, C is not a super key, so BCNF fails. But B is prime (part of key AB), so the 3NF condition "LHS is a super key **or** RHS is prime" holds. No partial dependency of a non-prime attribute exists (there are none), so 2NF holds too.
 
+### [numeric 4 unit=tables] R(A, B, C, D, E) with F = { A → B, B → C, D → E } and candidate key AD. How many tables does 3NF synthesis produce?
+
+:::answer
+F is already a minimal cover. One table per dependency: (A, B), (B, C), (D, E). None of them contains the key AD, so add (A, D) to make the decomposition lossless. **4** tables.
+:::
+
+### [mcq] `EmployeeSkills(emp, skill, language)`: an employee's skills and languages are independent, so every skill is paired with every language. Which decomposition fixes it, and which normal form is that?
+
+- [ ] (emp, skill, language) is already in BCNF, so nothing to fix
+- [x] (emp, skill) and (emp, language) — 4NF, removing the multivalued dependencies
+- [ ] (skill, language) and (emp, skill) — 3NF
+- [ ] (emp) and (skill, language) — 2NF
+
+The table is all-key, so it's in BCNF, yet it repeats every combination: emp →→ skill and emp →→ language are independent multivalued dependencies. 4NF splits them, and adding a language becomes one row instead of one per skill.
+
+### [exercise] `Enrollment(student_id, student_name, course_id, course_title, instructor, grade)`, key (student_id, course_id). Give one insertion, one update and one deletion anomaly, then a decomposition that removes them.
+
+:::solution
+- **Insertion**: a new course can't be recorded until someone enrolls (course_id is part of the key).
+- **Update**: renaming a course means updating every enrollment row; miss one and the table disagrees with itself.
+- **Deletion**: if the last student drops a course, its title and instructor disappear.
+
+Dependencies: student_id → student_name, course_id → course_title, instructor (partial dependencies on the key). Decompose into `Student(student_id, student_name)`, `Course(course_id, course_title, instructor)` and `Enrollment(student_id, course_id, grade)` — 3NF (and BCNF here), lossless because each split shares a key.
+:::
+
 ## Quick Revision
 
 - Anomalies: update, insert, delete — all from storing a fact more than once.

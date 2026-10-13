@@ -264,6 +264,29 @@ Every R tuple matches every S tuple because they all share B = 7, so the join is
 
 "For all" questions are division; joins only express "for some".
 
+### [numeric 3 unit=tuples] R(A, B) contains (1, a), (1, b), (2, a), (3, a), (3, b). How many tuples does the relational-algebra projection π_A(R) contain?
+
+:::answer
+A relation is a set, so projection removes duplicates: {1, 2, 3} → **3** tuples. SQL's `SELECT A FROM R` works on bags and returns 5 rows unless you write `SELECT DISTINCT A`.
+:::
+
+### [mcq] Which set of relational-algebra operators is enough to express all the others (join, intersection, division)?
+
+- [ ] σ, π, ⋈, ∩
+- [x] σ, π, ∪, −, ×, ρ
+- [ ] π, ⋈, ÷
+- [ ] σ, ∪, ∩
+
+Selection, projection, union, set difference, Cartesian product and rename are the fundamental operators. Join is σ over ×, intersection is R − (R − S), and division can be written with π, × and −.
+
+### [exercise] With `Employee(eid, name, did)` and `Dept(did, dname)`, write a relational-algebra expression for the names of employees in the Sales department, then rewrite it the way an optimizer would.
+
+:::solution
+Direct translation: **π_name(σ_dname='Sales'(Employee ⋈ Dept))**.
+
+Optimized: push the selection down to the relation it mentions and project early — **π_name(Employee ⋈ σ_dname='Sales'(Dept))**. The join now sees one Dept tuple instead of every department, so it touches only Sales employees. Both are equivalent by the algebra's rules (selection commutes with join when it mentions only one side), which is exactly the freedom a query optimizer uses.
+:::
+
 ## Quick Revision
 
 - Relation = set of tuples with typed attributes; no row order; atomic values. SQL tables are bags.

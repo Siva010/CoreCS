@@ -239,6 +239,35 @@ Use savepoints if you need to recover from an expected error inside a transactio
 
 It was partially committed; without a durable commit record, recovery treats it as never committed.
 
+### [numeric 10000 unit=commits/s] Each fsync of the log takes 2 ms. Without batching, one log can complete at most 500 commits per second. With group commit flushing 20 transactions' commit records per fsync, what is the maximum?
+
+:::answer
+500 fsyncs per second × 20 commits each = **10,000** commits per second. Each transaction still waits for one fsync; it just shares it with others. That's why commit throughput rises with concurrency until the disk's bandwidth, not its latency, is the limit.
+:::
+
+### [mcq] All of a transaction's statements have run and COMMIT was issued, but the commit record is still being written to the log. Which state is it in?
+
+- [ ] Active
+- [x] Partially committed
+- [ ] Committed
+- [ ] Failed
+
+It becomes committed only when the commit record is on stable storage. A crash in this window means it never committed, and recovery treats it as aborted.
+
+### [exercise] Write a transfer of 500 from account 1 to account 2 that is atomic and can't overdraw account 1. What happens if the second UPDATE fails?
+
+:::solution
+```sql
+BEGIN;
+UPDATE accounts SET balance = balance - 500 WHERE id = 1 AND balance >= 500;
+-- the application checks the affected row count; 0 rows → ROLLBACK and report "insufficient funds"
+UPDATE accounts SET balance = balance + 500 WHERE id = 2;
+COMMIT;
+```
+
+The guard `balance >= 500` and the subtraction happen in one statement under the row lock, so two concurrent transfers can't both pass the check. If the second UPDATE fails (account 2 missing, a constraint, a crash), nothing is committed: ROLLBACK — or recovery after a crash — undoes the first UPDATE, so money is never destroyed or created. A CHECK (balance >= 0) constraint is a good second line of defence.
+:::
+
 ## Quick Revision
 
 - Transaction = all-or-nothing, isolated, durable unit of work.

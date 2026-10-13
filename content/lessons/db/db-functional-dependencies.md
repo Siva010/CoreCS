@@ -228,6 +228,33 @@ A⁺ = {A, B, C}; {A, B} is a super key but not minimal.
 Supersets of {A}: 2³ = 8. Supersets of {B}: 8. Supersets of both {A, B}: 2² = 4, counted twice. Total 8 + 8 − 4 = **12**.
 :::
 
+### [numeric 14 unit=super-keys] R(A, B, C, D) has exactly three candidate keys: {A}, {B} and {C}. How many super keys does R have?
+
+:::answer
+A super key is any subset containing at least one candidate key, i.e. containing A, B or C. Of the 2⁴ = 16 subsets, only {} and {D} contain none of them: 16 − 2 = **14**.
+:::
+
+### [mcq] Given A → B and A → C, which dependency follows by Armstrong's rules?
+
+- [x] A → BC
+- [ ] B → C
+- [ ] BC → A
+- [ ] A → BCD
+
+The union rule (derived from augmentation and transitivity) combines dependencies with the same left side. Nothing lets you derive dependencies out of B or C, or introduce D.
+
+### [exercise] R(A, B, C, D, E) with F = { AB → C, C → D, D → E, E → A }. Find all candidate keys and the highest normal form R satisfies.
+
+:::solution
+B never appears on a right-hand side, so every key contains B; B⁺ = {B}, so B alone isn't a key. Try B with each other attribute:
+- AB⁺: AB → C → D → E = ABCDE ✓
+- BC⁺: C → D → E → A, then AB → C = ABCDE ✓
+- BD⁺: D → E → A, AB → C = ABCDE ✓
+- BE⁺: E → A, AB → C → D = ABCDE ✓
+
+Candidate keys: **AB, BC, BD, BE** (all minimal, since B alone isn't a key). Every attribute appears in some key, so all are prime, and 3NF holds (every FD's right side is prime). BCNF fails: C → D has a left side that isn't a super key. Highest normal form: **3NF**.
+:::
+
 ## Quick Revision
 
 - X → Y: equal X ⇒ equal Y. A business rule, not a data pattern.

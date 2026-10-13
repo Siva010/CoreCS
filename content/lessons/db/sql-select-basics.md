@@ -241,6 +241,37 @@ The half-open range works for both `date` and `timestamp` columns and remains sa
 
 `_` consumes exactly one character, then `a` must follow, then anything.
 
+### [mcq] `WHERE category = 'Books' OR category = 'Toys' AND price < 2000` returns which rows?
+
+- [ ] Books and Toys that cost under 2,000
+- [x] Every book, plus toys under 2,000
+- [ ] Only toys under 2,000
+- [ ] An error: AND and OR can't be mixed
+
+AND binds tighter than OR, so this is `Books OR (Toys AND price < 2000)`. Write `category IN ('Books', 'Toys') AND price < 2000`, or add parentheses. Try both versions in the [SQL Playground](lab:sql-playground#cheap-books-toys) — the grader rejects the unparenthesized one.
+
+### [numeric 15 unit=rows] A query matches 95 rows. The app shows 20 rows per page with `LIMIT 20 OFFSET n`. How many rows does the last page (`OFFSET 80`) contain?
+
+:::answer
+OFFSET 80 skips four full pages (80 rows); 95 − 80 = **15** rows remain. The database still reads and discards the first 80 rows to produce them, which is why deep OFFSET pages get slower and keyset pagination (`WHERE (order_date, id) < (…)`) scales better.
+:::
+
+### [exercise] Label every product as 'budget' (under 2,000), 'mid' (under 10,000) or 'premium', cheapest first. Then explain what goes wrong if the `WHEN price < 10000` branch is written first.
+
+:::solution
+```sql
+SELECT name, price,
+       CASE WHEN price < 2000  THEN 'budget'
+            WHEN price < 10000 THEN 'mid'
+            ELSE 'premium'
+       END AS band
+FROM products
+ORDER BY price;
+```
+
+CASE returns the first branch that matches. With `price < 10000` first, every budget product (also under 10,000) would be labelled 'mid' and the 'budget' branch would never run. Check your query in the [SQL Playground](lab:sql-playground#price-bands).
+:::
+
 ## Quick Revision
 
 - Logical order: FROM → WHERE → GROUP BY → HAVING → SELECT → DISTINCT → ORDER BY → LIMIT.
