@@ -1,10 +1,11 @@
 // Server-renderable content blocks used by the Markdown renderer.
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { Children, isValidElement, type ReactNode } from "react";
 import { Brain, FlaskConical, Info, Lightbulb, MessagesSquare, Server, Flame, TriangleAlert, ArrowRight, Scale, ListOrdered } from "lucide-react";
 import { cn, DEPTH_META } from "@/lib/utils";
 import { getWidget } from "@/lib/registry";
 import type { Depth } from "@/lib/content/types";
+import { DepthGate } from "./DepthGate";
 
 // Each callout is a neutral panel with a 2px left border and an uppercase label in its tone colour.
 const CALLOUTS = {
@@ -31,21 +32,38 @@ export function Callout({ type = "note", title, children }: { type?: string; tit
   );
 }
 
+function textOf(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textOf).join("");
+  if (isValidElement<{ children?: ReactNode }>(node)) return textOf(node.props.children);
+  return "";
+}
+
+/** The block's own subsection headings, so a collapsed block can say what it covers. */
+function headingsOf(children: ReactNode): string[] {
+  return Children.toArray(children)
+    .filter((c) => isValidElement(c) && (c.type === "h3" || c.type === "h4"))
+    .map((c) => textOf(c).trim())
+    .filter(Boolean);
+}
+
 export function DepthBlock({ level = "advanced", title, children }: { level?: string; title?: string; children?: ReactNode }) {
   const d = (level in DEPTH_META ? level : "advanced") as Depth;
   const meta = DEPTH_META[d];
   return (
-    <section data-depth={d} className="my-6 rounded-lg border border-border bg-surface px-4 py-3.5" style={{ borderLeftWidth: 2, borderLeftColor: `var(--d-${d})` }}>
-      <div className={cn("mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs font-semibold tracking-[0.12em] uppercase", meta.text)}>
-        <span aria-hidden className="size-1.5 rounded-full bg-current" />
-        <span>{meta.label}</span>
-        {title && <span className="font-medium tracking-normal text-fg normal-case">— {title}</span>}
-        <span className="font-normal tracking-normal text-subtle normal-case">
-          {d === "advanced" ? "· optional for entry-level interviews" : d === "senior" ? "· conceptual awareness, not a requirement" : ""}
-        </span>
-      </div>
-      <div className="[&>*:first-child]:mt-0 [&>*:last-child]:mb-0">{children}</div>
-    </section>
+    <DepthGate depth={d} label={meta.label} title={title} topics={headingsOf(children)} textClass={meta.text}>
+      <section data-depth-full className="my-6 rounded-lg border border-border bg-surface px-4 py-3.5" style={{ borderLeftWidth: 2, borderLeftColor: `var(--d-${d})` }}>
+        <div className={cn("mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs font-semibold tracking-[0.12em] uppercase", meta.text)}>
+          <span aria-hidden className="size-1.5 rounded-full bg-current" />
+          <span>{meta.label}</span>
+          {title && <span className="font-medium tracking-normal text-fg normal-case">— {title}</span>}
+          <span className="font-normal tracking-normal text-subtle normal-case">
+            {d === "advanced" ? "· optional for entry-level interviews" : d === "senior" ? "· conceptual awareness, not a requirement" : ""}
+          </span>
+        </div>
+        <div className="[&>*:first-child]:mt-0 [&>*:last-child]:mb-0">{children}</div>
+      </section>
+    </DepthGate>
   );
 }
 

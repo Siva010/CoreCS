@@ -287,14 +287,25 @@ body {
 .dark .hljs-name, .dark .hljs-selector-id, .dark .hljs-selector-class { color: #7ee787; }
 
 /* ───────── Depth filtering ─────────
-   data-maxdepth on the lesson root hides deeper :::depth blocks. */
-[data-maxdepth="beginner"] [data-depth="core"],
-[data-maxdepth="beginner"] [data-depth="advanced"],
-[data-maxdepth="beginner"] [data-depth="senior"],
-[data-maxdepth="core"] [data-depth="advanced"],
-[data-maxdepth="core"] [data-depth="senior"],
-[data-maxdepth="advanced"] [data-depth="senior"] {
+   data-maxdepth on the lesson root hides deeper :::depth blocks, leaving a
+   one-line placeholder the reader can click to open that block (data-open). */
+[data-depth-placeholder] {
   display: none;
+}
+:is(
+    [data-maxdepth="beginner"] [data-depth="core"],
+    [data-maxdepth="beginner"] [data-depth="advanced"],
+    [data-maxdepth="beginner"] [data-depth="senior"],
+    [data-maxdepth="core"] [data-depth="advanced"],
+    [data-maxdepth="core"] [data-depth="senior"],
+    [data-maxdepth="advanced"] [data-depth="senior"]
+  ):not([data-open]) {
+  & > [data-depth-full] {
+    display: none;
+  }
+  & > [data-depth-placeholder] {
+    display: flex;
+  }
 }
 
 /* ───────── Revision modes ─────────

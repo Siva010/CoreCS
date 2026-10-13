@@ -126,7 +126,7 @@ export function LessonShell({ lessonId, depthBlocks = {}, children }: { lessonId
           )}
           {hidden > 0 && (
             <p className="mt-1.5 text-xs text-subtle">
-              {hidden} deep-dive section{hidden === 1 ? "" : "s"} hidden — the mechanism detail interviewers probe in follow-ups. Raise the depth to read {hidden === 1 ? "it" : "them"}.
+              {hidden} deep-dive section{hidden === 1 ? "" : "s"} hidden — the mechanism detail interviewers probe in follow-ups. Raise the depth, or click Show where {hidden === 1 ? "it sits" : "one sits"} in the lesson.
             </p>
           )}
         </div>
