@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 
 export function Panel({ title, right, children, className }: { title?: ReactNode; right?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <div className={cn("rounded-xl border border-border bg-surface", className)}>
+    <div className={cn("rounded-lg border border-border bg-surface", className)}>
       {(title || right) && (
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2">
           <div className="text-[12px] font-semibold tracking-wide text-muted uppercase">{title}</div>

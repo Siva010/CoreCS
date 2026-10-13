@@ -6,9 +6,9 @@ export function DepthBadge({ depth, className, compact }: { depth: Depth; classN
   return (
     <span
       title={m.blurb}
-      className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11.5px] font-medium whitespace-nowrap", m.border, m.bg, m.text, className)}
+      className={cn("inline-flex items-center gap-1.5 text-2xs font-semibold tracking-[0.1em] whitespace-nowrap uppercase", m.text, className)}
     >
-      <span aria-hidden className="text-[9px]">{m.emoji}</span>
+      <span aria-hidden className="size-1.5 rounded-full bg-current" />
       {compact ? m.short : m.label}
     </span>
   );
@@ -17,8 +17,8 @@ export function DepthBadge({ depth, className, compact }: { depth: Depth; classN
 export function SubjectBadge({ subject, className }: { subject: SubjectId; className?: string }) {
   const s = SUBJECT_STYLE[subject];
   return (
-    <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11.5px] font-medium", s.border, s.bg, s.text, className)}>
-      <span className={cn("h-1.5 w-1.5 rounded-full", s.dot)} />
+    <span className={cn("inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-0.5 text-2xs font-medium text-muted", className)}>
+      <span className={cn("size-1.5 rounded-full", s.dot)} />
       {SUBJECT_SHORT[subject]}
     </span>
   );
@@ -26,7 +26,7 @@ export function SubjectBadge({ subject, className }: { subject: SubjectId; class
 
 export function Pill({ children, className, title }: { children: React.ReactNode; className?: string; title?: string }) {
   return (
-    <span title={title} className={cn("inline-flex items-center gap-1 rounded-full border border-border bg-surface px-2 py-0.5 text-[11.5px] text-muted", className)}>
+    <span title={title} className={cn("inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-2xs text-muted", className)}>
       {children}
     </span>
   );
@@ -62,9 +62,9 @@ export function DifficultyMeter({ difficulty }: { difficulty: number }) {
 export function PageHeader({ eyebrow, title, description, children }: { eyebrow?: React.ReactNode; title: React.ReactNode; description?: React.ReactNode; children?: React.ReactNode }) {
   return (
     <header className="mb-8 border-b border-border pb-8">
-      {eyebrow && <div className="mb-3 text-[12px] font-semibold tracking-wider text-subtle uppercase">{eyebrow}</div>}
-      <h1 className="text-3xl font-semibold tracking-tight text-balance text-fg sm:text-4xl">{title}</h1>
-      {description && <p className="mt-3 max-w-3xl text-[16px] leading-relaxed text-pretty text-muted">{description}</p>}
+      {eyebrow && <p className="eyebrow mb-3">{eyebrow}</p>}
+      <h1 className="text-3xl font-semibold tracking-tight text-balance text-fg">{title}</h1>
+      {description && <p className="mt-2 max-w-3xl text-sm leading-relaxed text-pretty text-muted">{description}</p>}
       {children}
     </header>
   );

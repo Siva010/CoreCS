@@ -147,6 +147,30 @@ When the core queries traverse relationships of variable or significant depth �
 
 Each node physically stores references to its relationships (and they to their endpoint nodes), so moving from a node to its neighbors follows pointers rather than performing an index lookup per hop. Traversal cost depends on the edges visited, not the overall size of the graph.
 
+### [L2 · compare] Graph database vs recursive CTE in PostgreSQL for hierarchy and path queries?
+
+A recursive CTE handles trees and shallow graphs well — org charts, category trees, bill of materials — inside your existing database, with joins on indexed edge tables. For deep, variable-length traversals over highly connected data (fraud rings, recommendations, shortest paths across millions of edges), each recursive step becomes a large join, while a graph database follows stored pointers and offers path algorithms and pattern syntax. Start with SQL; move when traversals dominate and get slow.
+
+### [L2 · how] Write a Cypher query for "friends of Asha's friends who are not already her friends".
+
+:::answer
+```cypher
+MATCH (a:Person {name: 'Asha'})-[:FRIEND_OF]-(f:Person)-[:FRIEND_OF]-(fof:Person)
+WHERE fof <> a AND NOT (a)-[:FRIEND_OF]-(fof)
+RETURN DISTINCT fof.name;
+```
+
+The pattern describes the path; `NOT (a)-[:FRIEND_OF]-(fof)` excludes existing friends and `DISTINCT` removes people reached through several mutual friends.
+:::
+
+### [L1 · compare] Property graph vs RDF triple store?
+
+A property graph (Neo4j, Neptune with openCypher/Gremlin) has nodes and typed edges that both carry key–value properties — natural for application data. RDF stores everything as subject–predicate–object triples with global identifiers (IRIs), queried with SPARQL, and is built for integrating and reasoning over linked data and ontologies. Property graphs are the common choice for application features; RDF for knowledge graphs and standards-based data exchange.
+
+### [L2 · conceptual] Why are graph databases hard to scale horizontally?
+
+Partitioning a graph cuts edges: any traversal that crosses a partition boundary becomes a network hop, and real graphs (social, fraud, knowledge) have no clean partitioning that keeps most neighbourhoods together. So many graph databases scale reads with replicas while keeping the whole graph on one large machine, and distributed graph systems accept slower cross-partition traversals or use clever placement for specific workloads.
+
 ## Practice
 
 ### [mcq] Which query is the most natural fit for a graph database?
@@ -174,3 +198,4 @@ Traversals fan out through every edge of a highly connected node.
 - Great for variable-depth traversal (fraud, recommendations, dependencies, access graphs).
 - Weak at bulk aggregation and sharding; watch supernodes and unbounded traversals.
 - Recursive CTEs cover trees/shallow graphs in SQL; graph stores are usually derived views, not systems of record.
+- Recursive CTEs for trees/shallow graphs; graph databases for deep variable-length traversals. Property graph (props on nodes and edges, Cypher/Gremlin) vs RDF (triples, SPARQL).

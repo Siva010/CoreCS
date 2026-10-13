@@ -84,6 +84,29 @@ COMMIT;                        -- or ROLLBACK;
 
 Full isolation (serializability) is expensive, so databases default to weaker levels — PostgreSQL *Read Committed*, MySQL *Repeatable Read* — that permit certain anomalies. Choosing and understanding the level is the subject of the next lessons ([Anomalies](lesson:db-anomalies), [Isolation Levels](lesson:db-isolation-levels)).
 
+### Transaction states
+
+The textbook state diagram, and what each state means in a real engine:
+
+```mermaid
+stateDiagram-v2
+    state "Partially committed" as PC
+    [*] --> Active: BEGIN
+    Active --> PC: COMMIT issued
+    PC --> Committed: commit record durable
+    Active --> Failed: error or crash
+    PC --> Failed: crash before log flush
+    Failed --> Aborted: changes undone
+    Committed --> [*]
+    Aborted --> [*]: retry or report
+```
+
+- **Active**: executing statements.
+- **Partially committed**: all statements done, but the commit isn't durable yet — the database is writing the commit record to the log.
+- **Committed**: the commit record is on stable storage; the effects survive any crash.
+- **Failed**: something went wrong; in PostgreSQL every further statement errors with "current transaction is aborted" until you `ROLLBACK`.
+- **Aborted**: rolled back; the application may retry (deadlocks and serialization failures are designed to be retried) or give up.
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
@@ -175,6 +198,18 @@ A client began a transaction, took row or table locks (e.g., via UPDATE or SELEC
 
 No. The API call can't be rolled back if the transaction later aborts, and the transaction holds locks and a snapshot for the duration of a slow network call. Instead: create the order as 'pending' and commit; call the provider with an idempotency key; record the result in a second transaction; reconcile failures with retries or webhooks. For reliably emitting events, write them to an outbox table in the same transaction and publish asynchronously.
 
+### [L1 · conceptual] Describe the states of a transaction.
+
+Active (executing), partially committed (last statement finished, commit being made durable), committed (commit record durable in the log), failed (an error or crash stopped it) and aborted (its effects undone). From aborted, the application may restart the transaction — the right move for deadlocks and serialization failures — or report the error. The key subtlety is partially committed: the work is done but not yet durable, so a crash at that moment aborts it.
+
+### [L2 · how] What is a savepoint, and when is it useful?
+
+A named point inside a transaction you can roll back to without abandoning the whole transaction: `SAVEPOINT s1; … ROLLBACK TO SAVEPOINT s1;`. Useful for "try this optional step; if it fails, continue without it" (insert an audit row, ignore a duplicate) and in PostgreSQL to recover from an error without aborting the outer transaction. ORMs implement nested transactions with savepoints. Each savepoint costs a subtransaction, so thousands of them in one transaction can hurt performance.
+
+### [L1 · conceptual] What is autocommit, and why does it matter?
+
+With autocommit on (the default in most drivers and consoles), each statement is its own transaction, committed immediately. Multi-statement work like a transfer must be wrapped in an explicit `BEGIN … COMMIT`, or a failure between statements leaves partial changes. The opposite trap: turning autocommit off in a console and forgetting to commit, leaving an open transaction that holds locks and blocks vacuum.
+
 ## Practice
 
 ### [mcq] Which ACID property is primarily the application's responsibility?
@@ -195,6 +230,15 @@ The database enforces constraints you declare; business invariants you don't enc
 
 Use savepoints if you need to recover from an expected error inside a transaction.
 
+### [mcq] A transaction's last statement has executed and COMMIT was issued, but the commit record hasn't reached disk when the server crashes. After recovery, the transaction is…
+
+- [ ] Committed — all statements finished
+- [ ] Partially committed, awaiting a retry
+- [x] Aborted — its changes are not visible
+- [ ] Committed only on replicas
+
+It was partially committed; without a durable commit record, recovery treats it as never committed.
+
 ## Quick Revision
 
 - Transaction = all-or-nothing, isolated, durable unit of work.
@@ -202,3 +246,5 @@ Use savepoints if you need to recover from an expected error inside a transactio
 - Autocommit by default; PostgreSQL aborts the transaction on any error; savepoints for partial rollback.
 - Keep transactions short; never hold them across network calls or user think time.
 - Relaxed durability (async commit) loses recent commits, never consistency; fsync=off can corrupt.
+- States: active → partially committed → committed; or → failed → aborted (then retry or report). Durable commit record = committed.
+- Savepoints roll back part of a transaction; autocommit makes every statement its own transaction.

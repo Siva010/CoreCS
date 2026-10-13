@@ -199,6 +199,18 @@ A nullable `deleted_at` column; application queries filter `deleted_at IS NULL` 
 
 Default to shared tables with `tenant_id` on every tenant-owned table, tenant-first composite keys/indexes, and row-level security as a guard against missing filters. Route the few large tenants to dedicated databases (or shards) behind the same schema, using a tenant → database directory in the application. This keeps migrations uniform, isolates noisy neighbours, and makes `tenant_id` the future shard key.
 
+### [L2 · design] How would you store money and prices?
+
+As exact numbers: `numeric(19,4)` or integer minor units (`amount_paise bigint`), always with a currency code. Never `float`/`double`, which can't represent 0.10 exactly and accumulate rounding errors. Decide rounding rules in one place, store the price paid on the order line (a snapshot), and keep currency conversion rates as their own dated table rather than converting in place.
+
+### [L2 · compare] When would you use an enum type, a CHECK constraint or a lookup table for a status column?
+
+A CHECK constraint (`status IN ('pending','paid','shipped')`) is simplest and easy to change. A database enum is compact and typed, but removing or renaming a value is awkward. A lookup table with a foreign key is best when values change often, carry metadata (labels, sort order, active flags) or are managed by users. All three beat free text, which accumulates "Paid", "paid" and "PAID".
+
+### [L2 · design] Why is the EAV (entity–attribute–value) pattern usually a mistake, and what would you use instead?
+
+EAV stores each attribute as a row (`entity_id, attribute, value`), so every query becomes a pivot of self-joins, values lose their types, and constraints (NOT NULL, ranges, foreign keys) become impossible. Prefer real columns for known attributes and a `jsonb` column (with GIN or expression indexes and CHECK constraints) for genuinely variable attributes; keep EAV for rare cases like user-defined custom fields with heavy metadata.
+
 ## Practice
 
 ### [mcq] Why can random UUIDv4 primary keys slow down inserts on a large InnoDB table?
@@ -219,6 +231,15 @@ Random keys destroy append locality; time-ordered UUIDs avoid it.
 
 UNIQUE(email, deleted_at) allows duplicates among active rows because NULLs are distinct in unique indexes.
 
+### [mcq] Why is `price double precision` a poor choice for an order total?
+
+- [ ] It can't be indexed
+- [x] Binary floating point can't represent most decimal fractions exactly, so sums drift
+- [ ] It uses more storage than numeric
+- [ ] It can't be negative
+
+0.1 + 0.2 = 0.30000000000000004 in binary floating point. Money needs exact decimal arithmetic.
+
 ## Quick Revision
 
 - Ids: bigint internal (+ public UUID) or UUIDv7; random UUIDv4 hurts B+ tree locality. Never `int`.
@@ -226,3 +247,4 @@ UNIQUE(email, deleted_at) allows duplicates among active rows because NULLs are 
 - Soft delete taxes every query and unique constraint → partial unique indexes; consider audit tables instead.
 - Columns for queried/constrained data; jsonb for genuinely variable data; avoid EAV.
 - Multi-tenancy: shared + tenant_id (+ RLS) by default; tenant-first indexes; dedicated DBs for giants.
+- Money: `numeric` or integer minor units + currency, never float. Status: CHECK / enum / lookup table — not free text. Avoid EAV; use columns + `jsonb`.

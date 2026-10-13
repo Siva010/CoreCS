@@ -181,6 +181,18 @@ Maintain a global lookup table/index mapping email → user_id (itself sharded b
 
 Move that tenant to a dedicated shard (directory-based routing makes it a routing change after an online data move), possibly with more powerful hardware or further sharding within the tenant by a secondary key (e.g., project_id). Add caching and rate limits for its hottest paths. Longer-term: design routing so any tenant can be relocated without code changes.
 
+### [L2 · design] How do you generate unique IDs across shards?
+
+Options: UUIDs (v7 for time order) generated anywhere; Snowflake-style 64-bit IDs (timestamp + machine/shard id + per-millisecond sequence) — compact, roughly time-ordered, no coordination; per-shard sequences with a shard prefix or interleaved ranges (shard k uses k, k+N, k+2N…); or a central ID service handing out blocks. Avoid a single global sequence on the hot path — it becomes a bottleneck and a single point of failure.
+
+### [L2 · how] How do you run a query that spans all shards, like "top 10 products by revenue this week"?
+
+Scatter-gather: send the query to every shard, have each compute a partial result (its own top-N by revenue, or partial sums per product), then merge at the router. Correctness needs care: for "top 10" each shard must return enough rows, or partial sums per product must be combined before ranking (a product's revenue is split across shards). Latency is set by the slowest shard, so keep such queries off the request path or serve them from a warehouse.
+
+### [L3 · design] Why do systems map many virtual shards onto fewer physical servers?
+
+With, say, 4,096 logical shards on 16 servers, each server holds 256 of them. Adding servers means moving whole logical shards — a bulk copy plus a routing-table update — rather than rehashing every key; hot shards can be moved individually; and the key → logical-shard function never changes. It's the same idea as virtual nodes in consistent hashing.
+
 ## Practice
 
 ### [numeric 75 unit=%] With naive `hash(key) mod N` sharding, you grow from 3 to 4 shards. What percentage of keys must move to a different shard? (Assume uniform hashes.)
@@ -198,6 +210,12 @@ A key stays only if `h mod 3 = h mod 4`. In each block of 12 consecutive hash va
 
 With range sharding, monotonically increasing keys send every new insert to the last range's shard.
 
+### [numeric 69.7 ±0.5] A Snowflake-style ID reserves 41 bits for a millisecond timestamp. For about how many years does it last before wrapping?
+
+:::answer
+2⁴¹ ms = 2,199,023,255,552 ms ÷ 1,000 = 2,199,023,256 s ÷ 31,557,600 s per year ≈ **69.7** years from the chosen epoch.
+:::
+
 ## Quick Revision
 
 - Shard = independent database with a subset of keys; scales writes and storage (replicas scale reads).
@@ -205,3 +223,4 @@ With range sharding, monotonically increasing keys send every new insert to the 
 - Range (locality, hotspot risk with monotonic keys) vs hash (balance, scattered ranges) vs directory (flexible, extra service).
 - Hard parts: non-key lookups (global indexes), cross-shard joins/transactions/uniqueness, global ids, hot keys, resharding.
 - Use many logical shards on few servers; move tenants online via copy + CDC + routing flip. Shard last, not first.
+- Cross-shard IDs: UUIDv7, Snowflake (time + node + sequence), interleaved per-shard ranges. Scatter-gather merges partial results; virtual shards make resharding a move, not a rehash.

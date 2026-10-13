@@ -158,6 +158,18 @@ Three nodes across zones: one primary, one synchronous replica (quorum sync "ANY
 
 Replication was asynchronous: those commits were acknowledged by the old primary after its local flush but hadn't reached the replica that got promoted. They exist only in the old primary's WAL (divergent history). Recover them by inspecting the old primary's data/WAL before rewinding it, reconcile manually, and decide whether synchronous replication (RPO 0 at higher latency) is required for this data.
 
+### [L1 · conceptual] What are RPO and RTO? Give realistic numbers.
+
+RPO (recovery point objective) is how much data you can lose, measured in time: with synchronous replication to a standby it's ~0; with asynchronous replication it's the replication lag at the moment of failure (often under a second, sometimes minutes); with only nightly backups it's up to 24 hours. RTO (recovery time objective) is how long you can be down: automated failover ~10–60 s, manual failover minutes to an hour, restoring a large backup hours. Both drive the architecture and its cost.
+
+### [L2 · how] How does a planned switchover differ from a failover?
+
+A switchover is deliberate (maintenance, upgrades, moving regions): stop writes or drain connections, wait until the target replica has replayed everything (zero data loss), promote it, demote the old primary to a replica, and repoint clients — with seconds of write unavailability. A failover is forced by failure: the old primary can't be asked to cooperate, so you must decide from incomplete information, fence it, and accept whatever wasn't replicated.
+
+### [L2 · conceptual] What is a fencing token?
+
+A number that increases every time leadership changes (a term or epoch), handed to the leader by the consensus system. The leader attaches it to every write; storage or downstream services remember the highest token they've seen and reject writes with a lower one. A paused old leader that wakes up and writes is rejected even though it still believes it's the leader — protection that doesn't depend on its clock.
+
 ## Practice
 
 ### [mcq] Which mechanism prevents a paused old leader that wakes up from corrupting data, even if its clock is wrong?
@@ -178,6 +190,15 @@ The resource rejects any request carrying an epoch lower than the latest it has 
 
 A majority (2 of 3) exists only on the B–C side; A must stop acting as leader.
 
+### [mcq] A system uses asynchronous replication with typical lag of 200 ms and automated failover in 30 s. What are its approximate RPO and RTO?
+
+- [ ] RPO 30 s, RTO 200 ms
+- [x] RPO ~200 ms (more under lag spikes), RTO ~30 s
+- [ ] RPO 0, RTO 0
+- [ ] RPO 0, RTO 30 s
+
+Data in flight (the lag) can be lost; the time to detect, promote and reroute is the outage.
+
 ## Quick Revision
 
 - Failover = detect → decide (consensus) → fence → promote → reroute → rebuild old primary.
@@ -185,3 +206,4 @@ A majority (2 of 3) exists only on the B–C side; A must stop acting as leader.
 - Fencing: STONITH, resource revocation, lease-based self-demotion, fencing tokens.
 - RPO 0 needs a synchronous replica; async failover loses the lag.
 - Clients must reconnect and retry idempotently; beware DNS caching and cold caches.
+- RPO = data you may lose (sync ≈ 0, async ≈ lag); RTO = time down. Switchover = planned, zero-loss; failover = forced, fence first. Fencing tokens reject stale leaders.

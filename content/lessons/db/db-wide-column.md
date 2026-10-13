@@ -117,7 +117,7 @@ The coordinator asks enough replicas to satisfy CL (one full data read + digests
 
 ### Lightweight transactions
 
-`INSERT … IF NOT EXISTS` / `UPDATE … IF col = x` run Paxos among replicas: linearizable compare-and-set for one partition, at ~4 round trips. Use for rare uniqueness checks (usernames), not for every write. Newer versions (Cassandra 5 with Accord) move toward general transactions.
+`INSERT … IF NOT EXISTS` / `UPDATE … IF col = x` run Paxos among replicas: linearizable compare-and-set for one partition, at ~4 round trips. Use for rare uniqueness checks (usernames), not for every write. General multi-partition transactions are being added through the Accord protocol (CEP-15), which landed after Cassandra 5.0 — check your version before relying on them.
 
 ### Bigtable/HBase contrast
 
@@ -191,6 +191,18 @@ Each partition has N replicas. A write succeeds when W replicas acknowledge; a r
 
 A replica missed the delete (was down or dropped the write). Tombstones on other replicas were garbage-collected after gc_grace_seconds, but repair hadn't run within that window, so the replica still holding the old data propagated it back via read repair or anti-entropy — "zombie" data. Fix: run repairs more frequently than gc_grace_seconds, and avoid delete-heavy designs.
 
+### [L1 · compare] Partition key vs clustering key in Cassandra?
+
+The partition key decides **where** the data lives: it's hashed onto the ring to choose the replica nodes, and all rows with the same partition key are stored and read together. Clustering columns decide the **sort order** of rows inside a partition and allow range conditions and ordering on them. Queries must supply the full partition key; ranges are allowed only on clustering columns, in order.
+
+### [L2 · numerical] With replication factor 5, how many replicas must respond for QUORUM, and how many node failures can QUORUM reads and writes tolerate?
+
+QUORUM = ⌊RF / 2⌋ + 1 = ⌊5 / 2⌋ + 1 = 3. Reads and writes at QUORUM keep working while at least 3 of the 5 replicas are up, so they tolerate 2 failures, and W + R = 6 > 5 guarantees overlap.
+
+### [L2 · why] Why are Cassandra secondary indexes and `ALLOW FILTERING` usually avoided?
+
+Secondary indexes are local to each node, so a query on an indexed column without the partition key must ask many (often all) nodes and merge — latency and load grow with cluster size. `ALLOW FILTERING` lets a query scan partitions and filter, which is a cluster-wide scan in disguise. The idiomatic fix is another table keyed for that query (denormalization), maintained on write.
+
 ## Practice
 
 ### [mcq] With RF = 3, which read/write consistency combination guarantees read-write overlap?
@@ -211,6 +223,12 @@ A replica missed the delete (was down or dropped the write). Tombstones on other
 
 Time bucketing keeps partitions manageable; queries spanning days read several partitions.
 
+### [numeric 3] A Cassandra keyspace has replication factor 5. How many replicas must acknowledge a QUORUM write?
+
+:::answer
+QUORUM = ⌊5 / 2⌋ + 1 = 2 + 1 = **3** replicas.
+:::
+
 ## Quick Revision
 
 - Primary key = ((partition key), clustering columns): partition → nodes; clustering → sort within partition.
@@ -218,3 +236,4 @@ Time bucketing keeps partitions manageable; queries spanning days read several p
 - Bound partitions (time buckets); avoid tombstone-heavy designs; use TTL + TWCS for time series.
 - Tunable CL; W + R > RF for overlap; LWW conflicts depend on clocks; repair within gc_grace.
 - LSM storage + consistent hashing + leaderless replication = linear write scale, weak ad-hoc querying.
+- Partition key → which nodes; clustering columns → order within the partition. QUORUM = ⌊RF/2⌋ + 1. Avoid secondary indexes / ALLOW FILTERING — add a query table.

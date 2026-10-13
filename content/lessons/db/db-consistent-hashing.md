@@ -153,6 +153,18 @@ With a single position per node, arcs are uneven and a failed node's whole range
 
 Consistent hashing with ~100–200 vnodes per node (or rendezvous hashing for small clusters), clients sharing membership from a coordination service; optionally replicate hot keys to the next node for failover. Add nodes gradually (warm them by shadow-filling or slowly increasing their weight), use request coalescing and stale-while-revalidate at the application to avoid stampedes during movement, and handle hot keys with local caches or key splitting.
 
+### [L2 · how] How does a Dynamo-style database replicate keys using the ring?
+
+A key's position on the ring determines its coordinator (the first node clockwise); its replicas are the next N − 1 **distinct physical** nodes clockwise (skipping vnodes of nodes already chosen, and ideally spreading across racks or zones). That list is the key's preference list. Reads and writes go to the replicas in it with quorum rules; if one is down, a node further along accepts the write temporarily (hinted handoff).
+
+### [L2 · compare] Consistent hashing vs rendezvous (highest-random-weight) hashing?
+
+Both move only ~1/N of keys when a node joins or leaves. Consistent hashing places nodes on a ring and needs a sorted structure plus virtual nodes for balance; lookups are a binary search. Rendezvous hashing scores every node with hash(key, node) and picks the highest — no ring, naturally balanced, easy weighting and replica selection (take the top R scores), but O(N) work per lookup, which is fine for tens of nodes.
+
+### [L2 · why] Why does `hash(key) mod N` work badly for caches but fine for a fixed set of database shards?
+
+When N changes, `mod N` reassigns almost every key; for a cache that means a near-total miss storm hitting the database. A fixed set of logical shards (N never changes; only their placement on servers does) doesn't have that problem, which is why sharded databases often use mod over many virtual shards plus a directory, while caches and dynamic clusters use consistent or rendezvous hashing.
+
 ## Practice
 
 ### [numeric 20 unit=%] A cluster with 4 nodes (many vnodes each) adds a fifth node. About what percentage of keys move?
@@ -177,3 +189,4 @@ More points per node → many small arcs → load averages out.
 - Virtual nodes: balance, spread failover load, weights.
 - Replicas: next R distinct nodes clockwise (across zones).
 - Alternatives: rendezvous (HRW), jump hash, directory. Hot keys still need special handling.
+- Replicas = next N−1 distinct physical nodes clockwise (preference list). Rendezvous hashing: highest hash(key, node) wins — O(N) lookup, no ring.

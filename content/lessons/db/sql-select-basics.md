@@ -195,6 +195,18 @@ The ORDER BY isn't deterministic — for example ordering only by `created_at` w
 
 Applying a function to the column makes the predicate non-sargable: the index is ordered by `created_at`, not by `date(created_at)`, so the database must scan all rows. Rewrite as a half-open range on the bare column: `created_at >= '2024-03-01' AND created_at < '2024-03-02'`, or create an expression index on `date(created_at)` if that form is required.
 
+### [L1 · compare] DISTINCT vs GROUP BY — are they the same?
+
+For removing duplicates, `SELECT DISTINCT city FROM customers` and `SELECT city FROM customers GROUP BY city` return the same rows and usually get the same plan (sort or hash on city). The difference is intent: GROUP BY exists to compute aggregates per group (`count(*)`, `sum(total)`); DISTINCT just deduplicates the final output rows over *all* selected columns. A habitual `DISTINCT` is often a sign of a join that multiplies rows ([Joins](lesson:sql-joins)).
+
+### [L1 · how] How do LIKE wildcards work, and how do you search for a literal `%` or `_`?
+
+`%` matches any sequence of characters (including none) and `_` matches exactly one character: `'A_h%'` matches "Asha" and "Ashwin". To match the characters themselves, escape them: `WHERE code LIKE '50\%%' ESCAPE '\'` finds values starting with "50%". Matching is case-sensitive in PostgreSQL (use `ILIKE` or `lower()`) and depends on collation in MySQL; only a fixed prefix can use a B+ tree index.
+
+### [L2 · debugging] `WHERE created_at BETWEEN '2024-01-01' AND '2024-01-31'` misses orders from 31 January. Why?
+
+`created_at` is a timestamp, and the literal `'2024-01-31'` means midnight at the start of 31 January, so everything later that day is excluded. Use a half-open range: `created_at >= '2024-01-01' AND created_at < '2024-02-01'`. It's correct for any precision and stays sargable.
+
 ## Practice
 
 ### [mcq] Which query fails?
@@ -220,6 +232,15 @@ ORDER BY salary DESC, name;
 The half-open range works for both `date` and `timestamp` columns and remains sargable.
 :::
 
+### [mcq] Which values match `name LIKE '_a%'`?
+
+- [ ] Only names starting with "a"
+- [x] Names whose second character is "a" (e.g. "Ravi", "Max")
+- [ ] Names containing "a" anywhere
+- [ ] Names ending in "a"
+
+`_` consumes exactly one character, then `a` must follow, then anything.
+
 ## Quick Revision
 
 - Logical order: FROM → WHERE → GROUP BY → HAVING → SELECT → DISTINCT → ORDER BY → LIMIT.
@@ -227,3 +248,5 @@ The half-open range works for both `date` and `timestamp` columns and remains sa
 - Half-open ranges for time; `BETWEEN` is inclusive.
 - Keep predicates sargable: no functions on indexed columns, no leading `%`.
 - DISTINCT is over the whole row and often hides a bad join.
+- LIKE: `%` = any run of characters, `_` = exactly one; escape literals with `ESCAPE`. Only fixed prefixes use B+ tree indexes.
+- DISTINCT = dedupe output rows; GROUP BY = buckets for aggregates. Same plan for pure dedupe.

@@ -22,7 +22,7 @@ export function LevelCount({ ids }: { ids: string[] }) {
   const lessons = useProgress((s) => s.lessons);
   const done = hydrated ? ids.filter((id) => lessons[id]?.completedAt).length : 0;
   return (
-    <span className="font-mono text-[12px] text-subtle">
+    <span className="text-xs text-subtle tabular-nums">
       {done}/{ids.length}
     </span>
   );
@@ -30,7 +30,7 @@ export function LevelCount({ ids }: { ids: string[] }) {
 
 export function MeterBar({ value, className, colorClass = "bg-accent" }: { value: number; className?: string; colorClass?: string }) {
   return (
-    <div className={cn("h-2 w-full overflow-hidden rounded-full bg-surface-2", className)} role="meter" aria-valuenow={Math.round(value)} aria-valuemin={0} aria-valuemax={100}>
+    <div className={cn("h-1 w-full overflow-hidden rounded-full bg-surface-2", className)} role="meter" aria-valuenow={Math.round(value)} aria-valuemin={0} aria-valuemax={100}>
       <div className={cn("h-full rounded-full transition-all", colorClass)} style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
     </div>
   );
@@ -56,16 +56,19 @@ export function SubjectMasteryCard({ subject, href }: { subject: SubjectId; href
   const { hydrated, subj, overall, areas } = useSubjectMastery(subject);
   const style = SUBJECT_STYLE[subject];
   const body = (
-    <div className="rounded-xl border border-border bg-surface p-4">
+    <div className="rounded-lg border border-border bg-surface p-4">
       <div className="flex items-baseline justify-between gap-2">
-        <div className={cn("font-semibold", style.text)}>{subj.title}</div>
-        <div className="font-mono text-sm text-fg">{hydrated ? overall.score : 0}%</div>
+        <div className="flex items-center gap-2 text-sm font-medium text-fg">
+          <span className={cn("size-1.5 rounded-full", style.dot)} aria-hidden />
+          {subj.title}
+        </div>
+        <div className="text-sm text-fg tabular-nums">{hydrated ? overall.score : 0}%</div>
       </div>
-      <MeterBar value={hydrated ? overall.score : 0} className="mt-2" colorClass={style.dot} />
-      <div className="mt-1 text-[12px] text-subtle">
+      <MeterBar value={hydrated ? overall.score : 0} className="mt-3" colorClass={style.dot} />
+      <div className="mt-2 text-xs text-subtle">
         {hydrated ? overall.completed : 0}/{overall.total} lessons · {hydrated ? overall.attempted : 0} answers graded
       </div>
-      <ul className="mt-3 space-y-1 text-[13px]">
+      <ul className="mt-3 space-y-1 border-t border-border pt-3 text-xs">
         {areas.map(({ area, m }) => (
           <li key={area.id} className="flex items-center justify-between gap-2">
             <span className="text-muted">{area.title}</span>
@@ -76,7 +79,7 @@ export function SubjectMasteryCard({ subject, href }: { subject: SubjectId; href
     </div>
   );
   return href ? (
-    <Link href={href} className="block transition-transform hover:-translate-y-0.5">
+    <Link href={href} className="block transition-opacity hover:opacity-90">
       {body}
     </Link>
   ) : (
@@ -100,15 +103,15 @@ export function ContinueLearning() {
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       {resume && (
-        <Link href={resume.href} className="rounded-xl border border-accent/40 bg-accent/5 p-4 hover:bg-accent/10">
-          <div className="text-[11px] font-semibold tracking-wider text-accent uppercase">Continue where you left off</div>
-          <div className="mt-1 font-medium text-fg">{resume.title}</div>
+        <Link href={resume.href} className="rounded-lg border border-border bg-surface p-4 transition-colors hover:border-border-strong" style={{ borderLeftWidth: 2, borderLeftColor: "var(--accent)" }}>
+          <div className="eyebrow" style={{ color: "var(--accent)" }}>Continue where you left off</div>
+          <div className="mt-1.5 text-sm font-medium text-fg">{resume.title}</div>
         </Link>
       )}
       {nextUp && nextUp.id !== resume?.id && (
-        <Link href={nextUp.href} className="rounded-xl border border-border bg-surface p-4 hover:border-accent/40">
-          <div className="text-[11px] font-semibold tracking-wider text-subtle uppercase">Next unlocked concept</div>
-          <div className="mt-1 font-medium text-fg">{nextUp.title}</div>
+        <Link href={nextUp.href} className="rounded-lg border border-border bg-surface p-4 transition-colors hover:border-border-strong">
+          <div className="eyebrow">Next unlocked concept</div>
+          <div className="mt-1.5 text-sm font-medium text-fg">{nextUp.title}</div>
         </Link>
       )}
     </div>

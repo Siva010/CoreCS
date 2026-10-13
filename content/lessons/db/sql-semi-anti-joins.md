@@ -215,6 +215,27 @@ HAVING count(DISTINCT p.id) = (SELECT count(*) FROM products WHERE category = 'B
 ```
 :::
 
+### [L2 · how] How does the database actually execute `NOT EXISTS`?
+
+As an **anti join**: the planner turns the correlated subquery into a join operator that emits an outer row only when no match exists. With large inputs it's usually a Hash Anti Join (build a hash table on `orders.customer_id`, probe with each customer, emit on a miss); with an index on the inner key it can be a Nested Loop Anti Join that probes the index once per outer row and stops at the first hit. It is not "run the subquery once per row" — check EXPLAIN for `Anti Join`.
+
+### [L2 · sql] Customers who ordered in 2024 but not in 2025.
+
+:::answer
+```sql
+SELECT c.id, c.name
+FROM customers c
+WHERE EXISTS (SELECT 1 FROM orders o
+              WHERE o.customer_id = c.id
+                AND o.order_date >= '2024-01-01' AND o.order_date < '2025-01-01')
+  AND NOT EXISTS (SELECT 1 FROM orders o
+                  WHERE o.customer_id = c.id
+                    AND o.order_date >= '2025-01-01' AND o.order_date < '2026-01-01');
+```
+
+A semi join and an anti join on the same table. `IN (…) AND NOT IN (…)` would break the moment `orders.customer_id` contains a NULL (guest checkouts).
+:::
+
 ## Practice
 
 ### [mcq] orders.customer_id contains some NULLs. What does `SELECT count(*) FROM customers WHERE id NOT IN (SELECT customer_id FROM orders)` return?
@@ -235,6 +256,15 @@ Any NULL in the NOT IN list makes the predicate UNKNOWN for every row.
 
 Testing a nullable column also matches customers whose real orders lack a coupon.
 
+### [mcq] You write the anti join `customers c LEFT JOIN orders o ON o.customer_id = c.id WHERE o.coupon_code IS NULL`. What's wrong?
+
+- [ ] Nothing — it finds customers with no orders
+- [x] It also returns customers whose orders simply have no coupon
+- [ ] It returns no rows when coupon_code is nullable
+- [ ] LEFT JOIN can't express an anti join
+
+Test a column that can't be NULL in a real match — the joined table's primary key or the join key (`o.id IS NULL`).
+
 ## Quick Revision
 
 - Semi join = "has a match" (EXISTS/IN), anti join = "has no match" (NOT EXISTS / LEFT JOIN … key IS NULL).
@@ -242,3 +272,4 @@ Testing a nullable column also matches customers whose real orders lack a coupon
 - NOT IN + NULL → empty result. Use NOT EXISTS.
 - Optimizers plan EXISTS/NOT EXISTS as hash/merge/nested-loop semi/anti joins; index the correlated column.
 - Relational division ("bought all") = double NOT EXISTS or count comparison.
+- `NOT EXISTS` runs as a Hash/Nested-Loop **Anti Join**; "in A but not B" = EXISTS + NOT EXISTS.

@@ -158,6 +158,18 @@ Serializability: concurrent transactions over multiple objects produce the same 
 
 Read-your-writes (a session guarantee): the write went to the primary, but the read went to a lagging replica. Fix by routing the user's reads to the primary for a short period after writes, or by tracking the write's log position/version and only reading from replicas that have applied it; sticky sessions additionally give monotonic reads.
 
+### [L2 · how] How would you implement read-your-writes on top of asynchronous replicas?
+
+After a write, record its position (LSN, GTID or a version/timestamp) in the user's session or a cookie. For the next reads, either send them to the primary for a short window, or send them to a replica only if it has replayed at least that position (PostgreSQL `pg_last_wal_replay_lsn()`; MySQL `WAIT_FOR_EXECUTED_GTID_SET`). Other users can still read from any replica — the guarantee is per session.
+
+### [L2 · conceptual] Give an example where causal consistency matters but full linearizability is unnecessary.
+
+Comments: Bob replies to Alice's comment. Anyone who sees Bob's reply must also be able to see Alice's comment — otherwise the reply refers to nothing. That's causal ordering. Whether two unrelated comments on different posts appear in the same order everywhere doesn't matter, so the system doesn't need a single global real-time order (linearizability) and can stay available and fast across regions.
+
+### [L2 · compare] Strong consistency vs eventual consistency — what does each cost?
+
+Strong (linearizable) reads and writes must coordinate with a leader or a quorum on every operation: extra round trips (large across regions) and unavailability when a majority can't be reached. Eventual consistency answers from any replica immediately — low latency, high availability — but readers can see stale or reordered data and concurrent writes need conflict resolution. Most systems mix them per operation.
+
 ## Practice
 
 ### [mcq] A client reads x = 5, then later reads x = 3 (an older value) from another replica. Which guarantee is violated?
@@ -185,3 +197,4 @@ Causal consistency can be provided with local operations and asynchronous propag
 - Session guarantees (read-your-writes, monotonic reads/writes, writes-follow-reads) fix most UX issues cheaply.
 - Eventual: converge eventually; conflicts via LWW (lossy), version vectors, CRDTs.
 - Serializable (transactions, any order) vs strict serializable (+ real time).
+- Read-your-writes: remember the write's LSN/GTID and read from the primary or a replica past it. Causal = causes before effects (replies after posts) without global order.

@@ -159,6 +159,18 @@ TrueTime exposes clock uncertainty as an interval. Spanner assigns a commit time
 
 When you need multi-node write scale or datasets beyond one machine *and* want to keep cross-shard ACID transactions, joins, secondary indexes and automatic rebalancing/failover — especially for multi-region survivability with data locality. Stay with PostgreSQL (possibly with application sharding or Citus) when one node suffices, latency per transaction matters most, you rely on PostgreSQL-specific features/extensions, or the team's operational experience is there.
 
+### [L2 · compare] Spanner vs CockroachDB — how do they order transactions?
+
+Spanner uses TrueTime, a clock API with bounded uncertainty backed by GPS and atomic clocks, and waits out that uncertainty at commit (commit wait) to give external consistency (strict serializability). CockroachDB runs on ordinary clocks with hybrid logical clocks and a configured maximum offset; when a read encounters a value inside its uncertainty window it restarts at a higher timestamp. It provides serializable isolation without specialized hardware, with strict serializability not guaranteed in every case.
+
+### [L2 · how] What are follower reads and when would you use them?
+
+Reads served by any replica (not just the leaseholder) at a timestamp slightly in the past — e.g. 5 seconds ago — that every replica is guaranteed to have. They avoid cross-region round trips to the leader, so they're fast and cheap, at the cost of bounded staleness. Good for dashboards, catalogs and analytics; not for reads that decide a write.
+
+### [L2 · debugging] Inserts into a distributed SQL table with an auto-incrementing primary key are slow and one node is hot. Why?
+
+The table is range-partitioned by primary key, so increasing keys always land in the last range, owned by one leaseholder: every insert goes to the same node and that range splits repeatedly. Use a random or hashed key (UUIDs, a hash-sharded index on the sequential column) so inserts spread across ranges and nodes.
+
 ## Practice
 
 ### [mcq] In range-sharded distributed SQL, what is the unit of replication and consensus?
@@ -186,3 +198,4 @@ Hash-sharded indexes or UUIDs spread inserts across ranges.
 - Latency = consensus round trips × geography; geo-partition to keep writes local; follower reads for bounded staleness.
 - CP under partitions; retries required under contention; avoid sequential keys.
 - Choose it when you truly need scale-out + SQL/ACID; single-node PostgreSQL is faster per operation.
+- Spanner: TrueTime + commit wait → strict serializability. CockroachDB: HLC + max offset + uncertainty restarts → serializable. Follower reads = bounded-staleness, local, cheap. Sequential PKs → one hot range.

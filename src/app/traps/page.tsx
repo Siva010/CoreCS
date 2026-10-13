@@ -32,7 +32,7 @@ export default async function TrapsPage() {
             <h2 className={cn("mb-4 text-sm font-semibold tracking-wider uppercase", SUBJECT_STYLE[s].text)}>{getSubject(s).title}</h2>
             <div className="space-y-4">
               {items.map((t) => (
-                <article key={t.meta.id} id={t.meta.id} className="scroll-mt-20 rounded-2xl border border-border bg-surface p-5">
+                <article key={t.meta.id} id={t.meta.id} className="scroll-mt-20 rounded-lg border border-border bg-surface p-5">
                   <h3 className="mb-2 text-lg font-semibold text-fg">{t.meta.title}</h3>
                   <Prose>
                     <Rendered hast={t.hast} />

@@ -2,7 +2,7 @@
 title: "Database Locking: Row Locks, 2PL, Gap Locks and Deadlocks"
 subject: db
 level: 10
-order: 3
+order: 4
 summary: "Shared and exclusive locks, lock granularity and intention locks, two-phase locking, SELECT … FOR UPDATE / SKIP LOCKED, gap and next-key locks, lock queues behind DDL, and how databases detect and resolve deadlocks."
 depth: core
 difficulty: 3
@@ -123,6 +123,10 @@ Prevention (the OS deadlock conditions again — [Deadlock Handling](lesson:os-d
 
 ::lab{id=db-locks}
 
+### Beyond these mechanics
+
+The theory behind these locks — the 2PL variants, intention locks for multiple granularity, timestamp ordering and wait-die / wound-wait — is in [Concurrency Control Protocols](lesson:db-concurrency-protocols).
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
@@ -211,6 +215,18 @@ Workers run `SELECT … FROM jobs WHERE status = 'pending' ORDER BY created_at L
 
 ALTER TABLE needs ACCESS EXCLUSIVE, which conflicts with every other lock. A long-running query held ACCESS SHARE on orders, so the ALTER waited. Because lock requests queue in order, every new query on orders (needing ACCESS SHARE or ROW EXCLUSIVE) queued behind the waiting ALTER, so the table was effectively unavailable until the long query finished and the ALTER ran. Use lock_timeout with retries, and check for long transactions before migrating.
 
+### [L1 · compare] Row-level vs table-level locking?
+
+Row locks allow concurrent transactions to change different rows of the same table — maximal concurrency, more lock-management overhead. Table locks are cheap to manage but serialize all writers (and, in exclusive mode, readers). Databases use row locks for DML and table-level lock modes for DDL and bulk operations, coordinated with intention locks; SQL Server can escalate many row locks into a table lock to save memory.
+
+### [L2 · how] How does the database detect a deadlock, and how does it pick a victim?
+
+It maintains a wait-for graph — an edge from each waiting transaction to the one holding the lock it needs — and looks for a cycle (PostgreSQL after `deadlock_timeout`, InnoDB immediately on each wait). When it finds one, it aborts one transaction in the cycle, typically the one that's cheapest to roll back (fewest changes) or the one that triggered detection; the error tells the application to retry. Logging deadlocks (`log_lock_waits`, `SHOW ENGINE INNODB STATUS`) reveals the lock order to fix.
+
+### [L2 · design] How do you prevent deadlocks in application code?
+
+Acquire locks in a consistent global order (e.g., update accounts in ascending id), keep transactions short and free of network calls, lock what you'll update at read time (`FOR UPDATE`) instead of upgrading later, make locking statements use indexes so they don't lock extra rows or gaps, and retry deadlock victims automatically. Use `lock_timeout` so a blocked request fails fast instead of piling up.
+
 ## Practice
 
 ### [mcq] T1 holds a shared lock on row R. Which request is granted immediately?
@@ -236,3 +252,4 @@ Updates to one row are serialized: 1000 ms / 5 ms = **200** transactions per sec
 - InnoDB gap/next-key locks prevent phantoms — and cause surprising waits/deadlocks.
 - Deadlock = waits-for cycle → victim aborted → retry. Prevent with consistent lock order and short transactions.
 - DDL needs ACCESS EXCLUSIVE; lock queues make waiting DDL block everyone → lock_timeout.
+- Deadlock detection = cycle in the wait-for graph → abort a victim → retry. Prevent with consistent lock order, short transactions, FOR UPDATE instead of upgrades, indexed locking statements.

@@ -2,7 +2,7 @@
 title: "Clustered vs Secondary Indexes: Where the Rows Actually Live"
 subject: db
 level: 7
-order: 3
+order: 4
 summary: "Index-organized tables (InnoDB, SQL Server) versus heap tables with separate indexes (PostgreSQL); why InnoDB secondary lookups go through the primary key; how primary-key choice shapes insert speed, locality and index size; and what CLUSTER actually does."
 depth: advanced
 difficulty: 3
@@ -155,6 +155,18 @@ InnoDB clusters rows by primary key. Random keys insert into random leaf pages, 
 
 It clusters each customer's orders together, turning per-customer reads into a few contiguous page reads. Costs: inserts land in each customer's region (more splits than pure appends), every secondary index stores the wider PK, lookups by `id` alone need a secondary unique index on `id`, and foreign keys referencing orders must use the composite key or that unique index. Worth it when per-customer range reads dominate and the table far exceeds memory; measure first.
 
+### [L1 · conceptual] How many clustered indexes can a table have, and why?
+
+One — the rows can be physically stored in only one order. In InnoDB the clustered index is the primary key (or the first UNIQUE NOT NULL index, or a hidden row id). Every other index is secondary and leads back to the row through the clustering key.
+
+### [L2 · how] Why can an InnoDB lookup through a secondary index cost two tree traversals, and when doesn't it?
+
+The secondary index's leaf stores the primary-key value, not the row's location, so after finding the entry InnoDB searches the clustered index by that primary key to fetch the row — two B+ tree descents. It doesn't when the query needs only columns in the secondary index plus the primary key (which every secondary entry carries), making the secondary index covering.
+
+### [L2 · compare] Heap table (PostgreSQL) vs index-organized table (InnoDB) — what are the trade-offs?
+
+Heap: rows go wherever there's space; every index (including the primary key) points to a physical row location, so secondary lookups take one heap read, but range scans by key touch scattered pages and updates may need new entries in every index. Index-organized: rows live in primary-key order, so key lookups and key ranges are fast and rows of one customer can sit together; but secondary lookups need a second traversal, the primary key is copied into every secondary index (keep it short), and random primary keys fragment the whole table.
+
 ## Practice
 
 ### [mcq] In InnoDB, what do secondary index leaf entries contain besides the indexed columns?
@@ -182,3 +194,4 @@ PostgreSQL tables remain heaps; CLUSTER is a one-time reorder.
 - InnoDB secondary lookup = secondary traversal → PK → clustered traversal; secondaries store the PK.
 - PK choice (InnoDB): short, stable, increasing. Random UUIDs → splits and bloat; wide PKs → fat secondaries.
 - Clustering key = free locality for one access pattern — choose it deliberately.
+- One clustered index per table (rows have one physical order). InnoDB secondary lookup = secondary tree → PK → clustered tree, unless covering.

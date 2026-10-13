@@ -114,7 +114,7 @@ export default function Encapsulation() {
         />
         <StepControls s={s} total={all.length} />
       </div>
-      <div className="text-[12px] font-semibold tracking-wider text-subtle uppercase">{st.where}</div>
+      <div className="eyebrow">{st.where}</div>
       <Panel title={st.title} right={<span className="font-mono text-[12px] text-subtle">~{total} bytes</span>}>
         <div className="flex flex-col-reverse gap-1.5">
           {st.headers.map((h, i) => (

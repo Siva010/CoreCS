@@ -99,6 +99,15 @@ EXECUTE by_customer(42);
 
 Parsing and analysis happen once. PostgreSQL plans the first executions with the actual parameter values (**custom plans**); after five, it compares against a **generic plan** (parameter-independent) and switches to it if not noticeably worse. Most drivers use prepared statements implicitly; parameters also prevent SQL injection.
 
+### Heuristic vs cost-based optimization
+
+Two layers of optimization work together:
+
+- **Heuristic (rule-based) rewrites** that are almost always good, applied regardless of data: push selections down so rows are filtered early, push projections down so fewer columns flow up, turn `σ` over `×` into a join, flatten subqueries into joins, remove redundant joins and conditions. They come from relational-algebra equivalences ([Relational Model](lesson:db-relational-model)).
+- **Cost-based choices** that depend on the data: which index, which join algorithm, which join order, whether to sort or hash. The planner estimates rows and cost for alternatives from statistics and picks the cheapest.
+
+Old optimizers (and some embedded databases) were mostly rule-based ("use an index if one exists"); every major database today is cost-based on top of heuristic rewrites.
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
@@ -175,6 +184,18 @@ The planner's choice depends on statistics (row counts, value distributions, cor
 
 Custom plans are made for the actual parameter values (good for skewed data, but planning each time); generic plans are made once for any value (saves planning, but chooses one strategy for all values). If data is skewed, a generic plan optimized for common values can be catastrophically slow for rare ones, or vice versa.
 
+### [L2 · compare] Rule-based (heuristic) vs cost-based optimization?
+
+Heuristic rewrites apply equivalences that are nearly always beneficial — push selections and projections down, convert cross products with conditions into joins, unnest subqueries — without looking at data sizes. Cost-based optimization enumerates alternative physical plans (access paths, join orders, algorithms) and picks the lowest estimated cost using statistics. Real planners do both: rewrite first, then cost the remaining choices. Rule-based alone fails when the "obvious" rule (always use the index) is wrong for the data.
+
+### [L2 · conceptual] What statistics does the planner use, and where do they come from?
+
+Per table: row count and page count. Per column: fraction of NULLs, number of distinct values, most common values with their frequencies, a histogram of the rest, and correlation between column order and physical order. Optionally multi-column statistics for correlated columns. They're gathered by sampling with `ANALYZE` (run automatically by autovacuum in PostgreSQL) — so a bulk load followed immediately by queries can run on stale statistics.
+
+### [L2 · trace] Name three equivalence rules an optimizer uses and say why each helps.
+
+Pushing a selection below a join (`σ(R ⋈ S) = σ(R) ⋈ S` when the condition mentions only R) shrinks the join's input. Join commutativity and associativity (`(R ⋈ S) ⋈ T = R ⋈ (S ⋈ T)`) let the planner start with the most selective pair to keep intermediate results small. Combining a selection with a cross product into a join (`σ_{R.a = S.b}(R × S) = R ⋈_{a=b} S`) lets it use a join algorithm instead of materializing every pair.
+
 ## Practice
 
 ### [mcq] Which component replaces a view reference with the view's defining query?
@@ -202,3 +223,4 @@ With a pipelined plan (no blocking sort), execution stops early; with a blocking
 - Executor: iterator tree pulling rows; pipelined vs blocking operators; LIMIT stops early.
 - Prepared statements skip parse/plan; generic plans can misfire on skewed data.
 - Bad plans usually mean bad row estimates.
+- Heuristic rewrites (push σ/π down, × + σ → ⋈, unnest subqueries) + cost-based choices (access path, join order, algorithm) from statistics.

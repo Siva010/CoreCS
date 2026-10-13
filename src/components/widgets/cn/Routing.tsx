@@ -135,7 +135,7 @@ export default function Routing() {
 
   return (
     <div className="space-y-4">
-      <div className="overflow-x-auto rounded-xl border border-border bg-surface p-3 thin-scroll">
+      <div className="overflow-x-auto rounded-lg border border-border bg-surface p-3 thin-scroll">
         <div className="flex min-w-[640px] items-center justify-between gap-2 font-mono text-[11.5px]">
           {[
             ["Host A", "192.168.1.20"],

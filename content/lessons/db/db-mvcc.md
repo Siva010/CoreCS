@@ -2,7 +2,7 @@
 title: "MVCC: How Readers and Writers Stop Blocking Each Other"
 subject: db
 level: 10
-order: 4
+order: 6
 summary: "Multi-version concurrency control from the inside: row versions with xmin/xmax, snapshots and visibility rules, PostgreSQL's heap versions vs InnoDB's undo logs, vacuum and purge, transaction-id wraparound, and why long transactions cause bloat."
 depth: advanced
 difficulty: 4
@@ -188,6 +188,18 @@ Vacuum can only remove row versions that no active snapshot might need. A long-r
 
 PostgreSQL stores every version in the heap with xmin/xmax; updates insert new tuples (and index entries unless HOT); rollback is instant (mark xid aborted); vacuum removes dead tuples, and 32-bit xids require freezing to avoid wraparound. InnoDB updates rows in place in the clustered index and keeps prior versions in the undo log; old snapshots reconstruct versions by walking undo chains; rollback applies undo; purge cleans undo. PostgreSQL is more prone to bloat under heavy updates; InnoDB to undo growth and slow reads for old snapshots.
 
+### [L1 · conceptual] What is a snapshot in MVCC?
+
+A description of which transactions' effects a reader may see: in PostgreSQL, the lowest still-running xid, the next xid to be assigned, and the list of transactions in progress between them. A row version is visible if its creator committed before the snapshot and its deleter (if any) hadn't. At Read Committed a new snapshot is taken per statement; at Repeatable Read, once per transaction.
+
+### [L2 · how] What does VACUUM do, and how is it different from VACUUM FULL?
+
+Plain VACUUM removes dead row versions that no snapshot can see, removes their index entries, marks the space reusable, updates the visibility map and freezes old tuples — while the table stays fully readable and writable. It doesn't return space to the operating system (except truncating empty pages at the end of the file). VACUUM FULL rewrites the table compactly and does shrink it, but takes an exclusive lock for the duration; `pg_repack` achieves the same online.
+
+### [L2 · debugging] A table's size doubled in a week although its row count is stable. What do you check?
+
+Dead tuples and autovacuum activity (`pg_stat_user_tables.n_dead_tup`, `last_autovacuum`), and the oldest running transaction or snapshot holder: long-running queries, sessions idle in transaction, replication slots or `hot_standby_feedback` replicas pinning the xmin horizon. Then tune autovacuum for that table (lower scale factor, more workers or I/O budget), kill or time out the stale sessions, and reclaim existing bloat with `pg_repack`.
+
 ## Practice
 
 ### [mcq] A tuple has xmin = 200 (committed) and xmax = 250 (committed). A snapshot taken when 200 had committed but 250 was still running sees…
@@ -215,3 +227,4 @@ Vacuum can't remove versions newer than the oldest snapshot's horizon.
 - Cleanup: VACUUM (dead tuples, visibility map, freezing) / purge (undo). Space is reused, rarely returned.
 - Long transactions pin the horizon → bloat / history growth everywhere.
 - PostgreSQL: HOT updates, xid wraparound and freezing. InnoDB: slow rollback of big transactions, long undo chains.
+- Snapshot = (xmin, xmax, in-progress list). VACUUM reclaims dead versions in place (online); VACUUM FULL / pg_repack rewrite to shrink.

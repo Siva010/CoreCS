@@ -38,7 +38,7 @@ export default async function CaseStudyPage({ params }: { params: Promise<{ slug
     <div className="px-4 py-10 sm:px-6 lg:px-10">
       <div className="grid gap-10 xl:grid-cols-[minmax(0,1fr)_240px]">
         <article className="min-w-0 max-w-3xl">
-          <div className="mb-3 flex items-center gap-2 text-[12px] font-semibold tracking-wider text-subtle uppercase">
+          <div className="mb-3 flex items-center gap-2 eyebrow">
             <Link href="/case-studies" className="hover:text-fg">Case Studies</Link>
             <span>/</span>
             <SubjectBadge subject={c.meta.subject} />
@@ -69,7 +69,7 @@ export default async function CaseStudyPage({ params }: { params: Promise<{ slug
         <aside className="hidden xl:block">
           <div className="sticky top-20 space-y-6">
             <nav className="text-[13px]">
-              <div className="mb-2 text-[11px] font-semibold tracking-wider text-subtle uppercase">Investigation path</div>
+              <div className="mb-2 eyebrow">Investigation path</div>
               <ol className="space-y-1 border-l border-border">
                 {c.sections.map((s) => (
                   <li key={s.id}>
@@ -81,7 +81,7 @@ export default async function CaseStudyPage({ params }: { params: Promise<{ slug
               </ol>
             </nav>
             <div>
-              <div className="mb-2 text-[11px] font-semibold tracking-wider text-subtle uppercase">Concepts used</div>
+              <div className="mb-2 eyebrow">Concepts used</div>
               <ul className="space-y-1.5 text-[13px]">
                 {c.meta.concepts.map((id) => {
                   const l = getLesson(id);

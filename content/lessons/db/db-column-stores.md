@@ -163,6 +163,22 @@ Row stores keep complete rows together, making single-row reads, inserts and upd
 
 A column contains values of a single type and often low cardinality or sorted order, so dictionary encoding, run-length encoding, delta encoding and bit packing are highly effective. A row store interleaves different types and value distributions in each page, which compresses poorly.
 
+### [L1 · compare] OLTP vs OLAP?
+
+OLTP (online transaction processing) runs many short transactions touching a few rows by key — orders, payments, logins — and needs low latency, concurrency control and row-oriented storage. OLAP (online analytical processing) runs fewer, long queries that scan and aggregate millions of rows — reports, dashboards — and favours columnar storage, compression and parallel scans. Most companies run both: an OLTP database as the system of record, with data copied (ETL or CDC) into a warehouse for OLAP.
+
+### [L2 · how] What is vectorized execution and why does it help column stores?
+
+Instead of passing one row at a time through the operator tree, each operator processes a batch of ~1,000 values of one column in a tight loop. That cuts per-row function-call overhead, keeps data in CPU caches, and lets the compiler use SIMD instructions to compare or add many values per instruction — often several times faster than row-at-a-time execution on the same data.
+
+### [L2 · design] When would you not use a column store?
+
+For OLTP-style access: fetching or updating individual rows by key, many concurrent small writes, or queries that need most columns of a few rows. Each single-row insert or update touches every column's storage and compressed blocks, so column stores want batched loads and append-mostly data.
+
+### [L2 · how] What are zone maps (min/max indexes) and why do they work so well when data is sorted?
+
+For each chunk of a column (a row group, micro-partition or part), the engine stores the minimum and maximum value. A filter like `order_date >= '2024-06-01'` skips every chunk whose max is earlier — without reading it. If the table is sorted or clustered by that column, matching values sit in a few contiguous chunks and almost everything else is skipped; if values are scattered randomly, every chunk's range overlaps the filter and nothing is pruned. That's why choosing the sort key (ClickHouse `ORDER BY`, Snowflake clustering) matters as much as indexes do in row stores.
+
 ## Practice
 
 ### [mcq] A query sums one numeric column over 1 billion rows of a 40-column table. Why does a column store read far less data?
@@ -183,6 +199,12 @@ Column pruning plus compression shrink I/O by orders of magnitude.
 
 Hence batched loading and background merges.
 
+### [numeric 20] A table has 40 columns of 8 bytes each. A query reads 2 of them over every row. Ignoring compression, how many times less data does a column store read than a row store?
+
+:::answer
+A row store reads all 40 × 8 = 320 bytes per row; the column store reads 2 × 8 = 16 bytes. 320 / 16 = **20** times less — before compression, which usually widens the gap further.
+:::
+
 ## Quick Revision
 
 - Column store = each column stored separately → read only needed columns.
@@ -190,3 +212,4 @@ Hence batched loading and background merges.
 - Vectorized execution + zone maps/sort-key pruning.
 - Weak at point lookups and single-row writes → batch loads, delta stores, background merges (LSM-like).
 - OLTP row store → CDC → OLAP column store; star schemas denormalize dimensions.
+- OLTP = many small keyed transactions (row store); OLAP = big scans/aggregates (column store, compression, vectorized execution).

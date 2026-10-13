@@ -263,6 +263,29 @@ WHERE rn <= 2;
 Use `LEFT JOIN LATERAL … ON true` to keep customers without orders.
 :::
 
+### [L1 · conceptual] What kinds of subquery are there, and where can each appear?
+
+By result shape: **scalar** (one row, one column — usable anywhere a value is, e.g. `SELECT … , (SELECT max(total) FROM orders)`), **row/list** (one column, many rows — with `IN`, `ANY`, `ALL`, `EXISTS`), and **table** (a derived table in `FROM`). By dependency: **non-correlated** (runs on its own, conceptually once) or **correlated** (references the outer row, conceptually once per outer row). They can appear in SELECT, FROM, WHERE and HAVING.
+
+### [L2 · how] What do `ANY` and `ALL` mean, and what happens with an empty subquery?
+
+`x > ANY (subquery)` is true if x is greater than at least one value (equivalent to `x > min(…)`); `x > ALL (subquery)` is true if x is greater than every value (equivalent to `x > max(…)`). `= ANY` is the same as `IN`; `<> ALL` is the same as `NOT IN` (and shares its NULL trap). With an **empty** subquery, `ANY` is false and `ALL` is **true** — "greater than all of nothing" holds vacuously — which surprises people when a filter like `salary > ALL (salaries in department 99)` returns everyone because department 99 is empty.
+
+### [L2 · sql] Find the Nth highest distinct salary without LIMIT, OFFSET or window functions.
+
+:::answer
+```sql
+-- N = 3
+SELECT DISTINCT e1.salary
+FROM employees e1
+WHERE 2 = (SELECT count(DISTINCT e2.salary)      -- N − 1 distinct salaries are higher
+           FROM employees e2
+           WHERE e2.salary > e1.salary);
+```
+
+A correlated subquery counts how many distinct salaries beat each one; the Nth highest is beaten by exactly N − 1. It's O(n²) without help — an index on salary or the `dense_rank()` version is what you'd ship — but it's the classic answer when window functions are "not allowed".
+:::
+
 ## Practice
 
 ### [mcq] A scalar subquery in a SELECT list returns zero rows for some outer row. What happens?
@@ -289,9 +312,21 @@ SELECT d FROM days;
 The anchor emits the first day; each iteration adds one day until the condition fails and the step returns no rows. (PostgreSQL's `generate_series` is the idiomatic way; the recursive form works in most databases.) A calendar like this is useful for filling gaps: LEFT JOIN daily totals onto it so days without orders show 0.
 :::
 
+### [mcq] Department 99 has no employees. Which rows does `SELECT name FROM employees WHERE salary > ALL (SELECT salary FROM employees WHERE department_id = 99)` return?
+
+- [ ] No rows
+- [x] Every employee, including those with a NULL salary
+- [ ] Only employees in department 99
+- [ ] An error, because the subquery is empty
+
+`x > ALL (empty set)` is defined as TRUE for any x — even NULL — because there is no value it fails to exceed. So the filter keeps every row.
+
 ## Quick Revision
 
 - Subquery kinds: scalar (one value; >1 row = error; 0 rows = NULL), list (IN/EXISTS), table (FROM), correlated (per outer row).
 - CTEs name steps; inlined or materialized depending on database/version.
 - Recursive CTE = anchor UNION ALL recursive step; stops when no new rows; guard against cycles; index the parent column.
 - LATERAL = per-row subquery in FROM (top-k per group).
+- Subquery shapes: scalar · list (`IN/ANY/ALL/EXISTS`) · table (`FROM`); correlated vs non-correlated.
+- `> ANY` ≈ `> min`, `> ALL` ≈ `> max`; over an empty set ANY is false and ALL is true.
+- Nth highest without windows: `N−1 = (SELECT count(DISTINCT s2) … WHERE s2 > s1)`.

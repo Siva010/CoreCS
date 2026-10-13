@@ -113,6 +113,29 @@ CREATE INDEX ON enrollments (course_id);   -- the PK index serves lookups by stu
 
 Employee *manages* Employee → `employees.manager_id REFERENCES employees(id)` (1:N on itself). Friendships (M:N on itself) → `friendships(user_id, friend_id)` with a rule for symmetry (store both directions, or store `user_id < friend_id` with a CHECK).
 
+### Generalization, specialization and aggregation
+
+Three "extended ER" ideas that textbooks and campus interviews ask about by name:
+
+- **Specialization** (top-down): split an entity into subtypes with extra attributes — `Employee` → `Engineer` (skills), `Manager` (budget). **Generalization** (bottom-up) is the same relationship discovered the other way: `Car` and `Truck` share attributes, so factor out `Vehicle`. Subtypes inherit the parent's attributes and key.
+- Two constraints describe the hierarchy: **disjoint vs overlapping** (can an employee be both an engineer and a manager?) and **total vs partial** (must every employee belong to some subtype?). They decide whether a `type` column suffices and whether it may be NULL.
+- **Aggregation** treats a relationship as an entity so that another relationship can point at it: `Employee works-on Project` is aggregated, and `Manager monitors (works-on)` relates to the *assignment*, not to the employee or project alone. In tables, the aggregated relationship becomes an associative table with its own key, and the outer relationship references that key.
+
+### Counting tables: the classic numerical
+
+"What is the minimum number of tables for this ER diagram?" applies the mapping rules with merging allowed:
+
+| Construct | Tables |
+|---|---|
+| Each strong entity | 1 |
+| 1:1 relationship | 0 — put the FK in one side (merge both entities into one table if participation is total on both sides) |
+| 1:N relationship | 0 — the FK goes in the N side's table |
+| M:N relationship | 1 — a junction table |
+| Multivalued attribute | 1 — its own table (owner key + value) |
+| Weak entity | 1 — its key includes the owner's key; the identifying relationship needs no table |
+
+Example: `Customer` 1:N `Order`, `Order` M:N `Product`, `Customer` has a multivalued `phone`. Tables: Customer, Order (with `customer_id`), Product, OrderProduct (junction), CustomerPhone → **5**.
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
@@ -203,6 +226,18 @@ It's a recursive M:N relationship. The PK index answers "whom does X follow?"; t
 
 On the optional side: `passports.user_id NOT NULL UNIQUE REFERENCES users(id)`. UNIQUE makes it 1:1 rather than 1:N; putting it on `passports` avoids a nullable FK on every user. Merging into one table is also valid if the data is small, always read together and has the same access rules.
 
+### [L1 · conceptual] What is a weak entity? Give an example.
+
+An entity that can't be identified by its own attributes alone — its key is a **partial key** combined with the key of an owner entity, through an *identifying relationship*. An order line is identified by (order_id, line_no); a hotel room by (hotel_id, room_number). It always has total participation in the identifying relationship, and deleting the owner normally deletes the weak entities (`ON DELETE CASCADE`).
+
+### [L2 · compare] Generalization vs specialization vs aggregation?
+
+Specialization splits an entity into subtypes with extra attributes (top-down: Employee → Engineer, Manager); generalization factors common attributes of several entities into a parent (bottom-up: Car, Truck → Vehicle). Both form an inheritance hierarchy described by disjoint/overlapping and total/partial constraints. Aggregation is different: it treats a relationship as an entity so another relationship can involve it — "a manager monitors an employee's work on a project" relates to the works-on assignment itself.
+
+### [L2 · how] How do participation (total vs partial) and cardinality show up in the tables?
+
+Cardinality decides **where** the foreign key goes (the N side of 1:N; a junction table for M:N). Participation decides whether it can be **NULL**: total participation of the FK side (every order must have a customer) becomes `NOT NULL`; partial participation leaves it nullable. Total participation on the *parent* side ("every customer must have at least one order") can't be expressed with a plain FK — it needs deferred constraints, triggers or application logic.
+
 ## Practice
 
 ### [mcq] Students and courses have a many-to-many relationship with a grade per enrollment. Where is `grade` stored?
@@ -223,6 +258,12 @@ A relationship attribute belongs to the relationship's table.
 
 1:N → FK on the many side; mandatory participation → NOT NULL.
 
+### [numeric 5] An ER diagram has Customer 1:N Order, Order M:N Product, and Customer has a multivalued attribute `phone`. What is the minimum number of tables?
+
+:::answer
+Three strong entities → 3 tables (Customer, Order, Product). The 1:N relationship needs no table (FK in Order). The M:N relationship needs a junction table (+1). The multivalued attribute needs its own table (+1). Total **5**.
+:::
+
 ## Quick Revision
 
 - Entities (nouns with identity), attributes, relationships (verbs), cardinality (max), participation (min).
@@ -230,3 +271,5 @@ A relationship attribute belongs to the relationship's table.
 - Weak entity → PK includes the owner's key. Multi-valued attribute → its own table.
 - Relationship attributes live on the relationship's table.
 - Ask about cardinalities, optionality and history — that's the design conversation.
+- Specialization (top-down) / generalization (bottom-up) form subtype hierarchies: disjoint vs overlapping, total vs partial. Aggregation = relationship treated as an entity.
+- Minimum tables: 1 per strong/weak entity, +1 per M:N, +1 per multivalued attribute, 0 for 1:1 and 1:N (FK).

@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import type { ComponentType } from "react";
 
 function Loading() {
-  return <div className="h-64 animate-pulse rounded-xl bg-surface-2" aria-label="Loading interactive widget" />;
+  return <div className="h-64 animate-pulse rounded-lg bg-surface-2" aria-label="Loading interactive widget" />;
 }
 
 const lazy = (loader: () => Promise<{ default: ComponentType }>) => dynamic(loader, { ssr: false, loading: Loading });
@@ -57,7 +57,7 @@ export function WidgetById({ id }: { id: string }) {
   const C = WIDGETS[id];
   if (!C) {
     return (
-      <div className="grid h-40 place-items-center rounded-xl border border-dashed border-border text-sm text-subtle">
+      <div className="grid h-40 place-items-center rounded-lg border border-dashed border-border text-sm text-subtle">
         Interactive widget “{id}” is not available yet.
       </div>
     );

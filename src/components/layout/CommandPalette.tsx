@@ -91,7 +91,7 @@ export function CommandPalette() {
   return (
     <div className="fixed inset-0 z-[60] flex items-start justify-center px-4 pt-[10vh]" role="dialog" aria-modal="true" aria-label="Search">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" onClick={() => setSearchOpen(false)} />
-      <div className="relative w-full max-w-2xl overflow-hidden rounded-xl border border-border bg-surface shadow-2xl">
+      <div className="relative w-full max-w-2xl overflow-hidden rounded-lg border border-border bg-surface shadow-2xl">
         <div className="flex items-center gap-3 border-b border-border px-4">
           <Search className="h-4 w-4 text-subtle" />
           <input

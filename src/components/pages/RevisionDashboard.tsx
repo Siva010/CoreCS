@@ -11,7 +11,7 @@ import type { SubjectId } from "@/lib/content/types";
 
 function Card({ title, icon: Icon, children, right }: { title: string; icon: typeof History; children: React.ReactNode; right?: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-border bg-surface p-5">
+    <div className="rounded-lg border border-border bg-surface p-5">
       <div className="mb-3 flex items-center justify-between gap-2">
         <h2 className="flex items-center gap-2 text-sm font-semibold text-fg">
           <Icon className="h-4 w-4 text-accent" /> {title}
@@ -119,7 +119,7 @@ export function RevisionDashboard() {
         )}
       </Card>
 
-      <div className="rounded-2xl border border-border bg-surface p-5 lg:col-span-2">
+      <div className="rounded-lg border border-border bg-surface p-5 lg:col-span-2">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-sm font-semibold text-fg">Time-boxed revision by lesson</h2>
           <div className="flex flex-wrap gap-1.5">

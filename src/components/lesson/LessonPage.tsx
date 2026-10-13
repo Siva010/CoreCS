@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   ArrowRight,
   BookOpen,
+  ChevronRight,
   Brain,
   Clock,
   Cpu,
@@ -29,7 +30,7 @@ import { getWidget } from "@/lib/registry";
 import { Prose, Rendered } from "@/components/content/Rendered";
 import { VizEmbed } from "@/components/content/VizEmbed";
 import { LabCard } from "@/components/content/blocks";
-import { DepthBadge, DifficultyMeter, Pill, RelevanceMeter, SubjectBadge } from "@/components/ui/badges";
+import { DepthBadge, DifficultyMeter, RelevanceMeter, SubjectBadge } from "@/components/ui/badges";
 import { cn, formatMinutes, SUBJECT_STYLE } from "@/lib/utils";
 import { LessonShell } from "./LessonShell";
 import { LessonToc } from "./LessonToc";
@@ -72,14 +73,14 @@ function LessonLinkCard({ id, dir }: { id?: string; dir: "prev" | "next" }) {
   return (
     <Link
       href={l.href}
-      className={cn("group flex flex-col rounded-xl border border-border bg-surface p-4 transition-colors hover:border-accent/50", dir === "next" && "items-end text-right")}
+      className={cn("group flex flex-col rounded-lg border border-border bg-surface p-4 transition-colors hover:border-border-strong", dir === "next" && "items-end text-right")}
     >
-      <span className="flex items-center gap-1 text-[12px] text-subtle">
-        {dir === "prev" && <ArrowLeft className="h-3.5 w-3.5" />}
-        {dir === "prev" ? "Previous" : "Next"} · L{l.level}
-        {dir === "next" && <ArrowRight className="h-3.5 w-3.5" />}
+      <span className="eyebrow flex items-center gap-1">
+        {dir === "prev" && <ArrowLeft className="size-3" />}
+        {dir === "prev" ? "Previous" : "Next"} · Level {l.level}
+        {dir === "next" && <ArrowRight className="size-3" />}
       </span>
-      <span className="mt-1 font-medium text-fg group-hover:text-accent">{l.title}</span>
+      <span className="mt-1.5 text-sm font-medium text-fg">{l.title}</span>
     </Link>
   );
 }
@@ -88,11 +89,11 @@ function ConceptChip({ id, note }: { id: string; note?: string }) {
   const l = getLesson(id);
   if (!l) return null;
   return (
-    <Link href={l.href} className="group flex items-start gap-3 rounded-xl border border-border bg-surface p-3 hover:border-accent/50">
-      <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", SUBJECT_STYLE[l.subject].dot)} />
+    <Link href={l.href} className="group flex items-start gap-3 rounded-lg border border-border bg-surface p-3 transition-colors hover:border-border-strong">
+      <span className={cn("mt-1.5 size-1.5 shrink-0 rounded-full", SUBJECT_STYLE[l.subject].dot)} />
       <span className="min-w-0">
-        <span className="block text-[14px] font-medium text-fg group-hover:text-accent">{l.title}</span>
-        <span className="block text-[12px] text-subtle">
+        <span className="block text-sm font-medium text-fg">{l.title}</span>
+        <span className="block text-xs text-subtle">
           {note ? `${note} · ` : ""}
           {getSubject(l.subject).short} L{l.level}
         </span>
@@ -128,58 +129,73 @@ export async function LessonPage({ subject, slug }: { subject: SubjectId; slug: 
           <article className="min-w-0 max-w-3xl">
             {/* Header */}
             <header className="mb-10">
-              <nav aria-label="Breadcrumb" className="mb-4 flex flex-wrap items-center gap-1.5 text-[13px] text-subtle">
-                <Link href={`/${subj.path}`} className={cn("font-medium hover:underline", SUBJECT_STYLE[subject].text)}>
-                  {subj.title}
-                </Link>
-                <span>/</span>
-                <Link href={`/${subj.path}#level-${meta.level}`} className="hover:text-fg">
-                  Level {meta.level}: {meta.levelTitle}
-                </Link>
-                {levelDef?.track === "sql" && (
-                  <>
-                    <span>/</span>
-                    <Link href="/databases/sql" className="hover:text-fg">SQL track</Link>
-                  </>
-                )}
+              <nav aria-label="Breadcrumb">
+                <ol className="flex flex-wrap items-center gap-1 text-xs text-subtle">
+                  <li>
+                    <Link href={`/${subj.path}`} className="transition-colors hover:text-fg">{subj.title}</Link>
+                  </li>
+                  <li className="flex items-center gap-1">
+                    <ChevronRight className="size-3" />
+                    <Link href={`/${subj.path}#level-${meta.level}`} className="transition-colors hover:text-fg">{meta.levelTitle}</Link>
+                  </li>
+                  {levelDef?.track === "sql" && (
+                    <li className="flex items-center gap-1">
+                      <ChevronRight className="size-3" />
+                      <Link href="/databases/sql" className="transition-colors hover:text-fg">SQL track</Link>
+                    </li>
+                  )}
+                  <li className="flex items-center gap-1">
+                    <ChevronRight className="size-3" />
+                    <span className="text-muted">{meta.title.split(":")[0]}</span>
+                  </li>
+                </ol>
               </nav>
-              <h1 className="text-3xl leading-tight font-semibold tracking-tight text-balance text-fg sm:text-[2.35rem]">{meta.title}</h1>
-              <p className="mt-3 text-[17px] leading-relaxed text-pretty text-muted">{meta.summary}</p>
 
-              <div className="mt-5 flex flex-wrap items-center gap-2">
-                <SubjectBadge subject={subject} />
+              <div className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-2">
                 <DepthBadge depth={meta.depth} />
-                <Pill>Level {meta.level}</Pill>
-                <Pill title="Where this sits in the recommended study path">Stage {meta.stage}</Pill>
+                <span className="text-2xs text-subtle">
+                  Level {meta.level} of {subj.levels.length - 1} · Stage {meta.stage}
+                </span>
               </div>
-              <dl className="mt-4 grid grid-cols-1 gap-x-6 gap-y-2 rounded-xl border border-border bg-surface px-4 py-3 text-[13px] sm:grid-cols-3">
-                <div>
-                  <dt className="text-[11px] font-semibold tracking-wider text-subtle uppercase">Study time</dt>
-                  <dd className="mt-0.5 flex items-center gap-1.5 text-fg">
-                    <Clock className="h-3.5 w-3.5 text-subtle" />
+              <div className="mt-3 flex flex-wrap items-start justify-between gap-4">
+                <h1 className="max-w-2xl text-3xl font-semibold tracking-tight text-balance text-fg">{meta.title}</h1>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <BookmarkButton bkey={`lesson:${meta.id}`} label="" />
+                  <CompleteButton id={meta.id} title={meta.title} href={meta.href} />
+                </div>
+              </div>
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-pretty text-muted">{meta.summary}</p>
+
+              <dl className="mt-5 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border text-xs sm:grid-cols-4">
+                <div className="bg-surface px-3 py-2.5">
+                  <dt className="eyebrow">Subject</dt>
+                  <dd className="mt-1">
+                    <SubjectBadge subject={subject} className="border-0 px-0 py-0 text-xs text-fg" />
+                  </dd>
+                </div>
+                <div className="bg-surface px-3 py-2.5">
+                  <dt className="eyebrow">Study time</dt>
+                  <dd className="mt-1 flex items-center gap-1.5 text-fg">
+                    <Clock className="size-3 text-subtle" />
                     {formatMinutes(meta.minutes)}
                   </dd>
                 </div>
-                <div>
-                  <dt className="text-[11px] font-semibold tracking-wider text-subtle uppercase">Difficulty</dt>
-                  <dd className="mt-0.5 text-fg">
+                <div className="bg-surface px-3 py-2.5">
+                  <dt className="eyebrow">Difficulty</dt>
+                  <dd className="mt-1 text-fg">
                     <DifficultyMeter difficulty={meta.difficulty} />
                   </dd>
                 </div>
-                <div>
-                  <dt className="text-[11px] font-semibold tracking-wider text-subtle uppercase">Interview relevance</dt>
-                  <dd className="mt-0.5 text-fg">
+                <div className="bg-surface px-3 py-2.5">
+                  <dt className="eyebrow">Interview relevance</dt>
+                  <dd className="mt-1 text-fg">
                     <RelevanceMeter relevance={meta.relevance} />
                   </dd>
                 </div>
               </dl>
               <div className="mt-4">
-                <div className="mb-1.5 text-[11px] font-semibold tracking-wider text-subtle uppercase">Prerequisites</div>
+                <p className="eyebrow mb-1.5">Prerequisites</p>
                 <PrereqStatus prerequisites={meta.prerequisites} />
-              </div>
-              <div className="mt-5 flex flex-wrap gap-2">
-                <CompleteButton id={meta.id} title={meta.title} href={meta.href} />
-                <BookmarkButton bkey={`lesson:${meta.id}`} />
               </div>
             </header>
 
@@ -195,11 +211,14 @@ export async function LessonPage({ subject, slug }: { subject: SubjectId; slug: 
               const highlight = s.key === "mental-model" || s.key === "quick-revision";
               return (
                 <section key={s.key} id={s.key} data-min={SECTION_MIN_MODE[s.key]} className="lesson-section scroll-mt-32 border-t border-border pt-8 pb-2 first-of-type:border-0">
-                  <h2 className="mb-4 flex items-center gap-2.5 text-[1.35rem] font-semibold tracking-tight text-fg">
-                    <span className="grid h-7 w-7 place-items-center rounded-lg bg-surface-2 text-accent">
-                      <Icon className="h-4 w-4" />
+                  <h2 className="group/label mb-4 flex items-center gap-2 text-lg font-semibold tracking-tight text-fg">
+                    <span className="grid size-6 place-items-center rounded-md border border-border text-subtle">
+                      <Icon className="size-3.5" />
                     </span>
-                    {s.key === "interview-questions" ? "Interview Questions" : s.title}
+                    <a href={`#${s.key}`} className="no-underline">
+                      {s.key === "interview-questions" ? "Interview Questions" : s.title}
+                      <span aria-hidden className="ml-1.5 text-subtle opacity-0 transition-opacity group-hover/label:opacity-100">#</span>
+                    </a>
                   </h2>
 
                   {s.key === "interview-questions" ? (
@@ -209,7 +228,7 @@ export async function LessonPage({ subject, slug }: { subject: SubjectId; slug: 
                   ) : (
                     <>
                       {s.hast.children.length > 0 && (
-                        <div className={cn(highlight && "rounded-2xl border border-border bg-surface px-5 py-1", s.key === "quick-revision" && "border-accent/30")}>
+                        <div className={cn(highlight && "rounded-lg border border-border bg-bg-subtle px-5 py-1", s.key === "quick-revision" && "border-l-2 border-l-accent")}>
                           <Prose>
                             <Rendered hast={s.hast} />
                           </Prose>
@@ -244,11 +263,11 @@ export async function LessonPage({ subject, slug }: { subject: SubjectId; slug: 
             })}
 
             {/* Footer */}
-            <div className="mt-12 rounded-2xl border border-border bg-surface p-5">
+            <div className="mt-12 rounded-lg border border-border bg-surface p-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <div className="font-medium text-fg">Finished this concept?</div>
-                  <p className="text-[13px] text-muted">Marking it complete updates your curriculum progress; answering the questions updates mastery.</p>
+                  <div className="text-sm font-medium text-fg">Finished this concept?</div>
+                  <p className="text-xs text-muted">Marking it complete updates your curriculum progress; answering the questions updates mastery.</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <RevisedButton id={meta.id} title={meta.title} href={meta.href} />

@@ -23,8 +23,8 @@ export function LessonToc({ sections }: { sections: { key: SectionKey; title: st
   }, [visible.map((s) => s.key).join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <nav aria-label="On this page" className="text-[13px]">
-      <div className="mb-2 text-[11px] font-semibold tracking-wider text-subtle uppercase">On this page</div>
+    <nav aria-label="On this page" className="text-xs">
+      <p className="eyebrow mb-3">On this page</p>
       <ul className="space-y-0.5 border-l border-border">
         {visible.map((s) => (
           <li key={s.key}>
@@ -32,7 +32,7 @@ export function LessonToc({ sections }: { sections: { key: SectionKey; title: st
               href={`#${s.key}`}
               className={cn(
                 "-ml-px block border-l py-1 pl-3 transition-colors",
-                active === s.key ? "border-accent font-medium text-fg" : "border-transparent text-muted hover:border-border-strong hover:text-fg",
+                active === s.key ? "border-current font-medium text-accent" : "border-transparent text-subtle hover:text-muted",
               )}
             >
               {s.title}

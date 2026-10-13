@@ -369,6 +369,64 @@ FROM series ORDER BY month;
 The calendar guarantees `lag` compares adjacent months; `NULLIF` avoids division by zero after a zero-revenue month.
 :::
 
+### [L1 · sql] For each department, list the highest-paid employee(s) — names included, ties kept.
+
+:::answer
+```sql
+SELECT department_id, name, salary
+FROM (SELECT e.*, rank() OVER (PARTITION BY department_id ORDER BY salary DESC) AS r
+      FROM employees e) t
+WHERE r = 1;
+
+-- Without window functions:
+SELECT e.department_id, e.name, e.salary
+FROM employees e
+JOIN (SELECT department_id, max(salary) AS max_sal
+      FROM employees GROUP BY department_id) m
+  ON m.department_id = e.department_id AND e.salary = m.max_sal;
+```
+
+`GROUP BY department_id` with `max(salary)` alone can't return the name — that's the trap the question sets.
+:::
+
+### [L1 · sql] Employees who earn more than their department's average salary.
+
+:::answer
+```sql
+SELECT name, department_id, salary
+FROM (SELECT e.*, avg(salary) OVER (PARTITION BY department_id) AS dept_avg
+      FROM employees e) t
+WHERE salary > dept_avg;
+```
+
+Equivalent forms: a correlated subquery (`salary > (SELECT avg(salary) … WHERE department_id = e.department_id)`) or a join to a per-department aggregate. Employees with no department form their own NULL partition here; a correlated subquery would compare them against nothing (no rows returned for them).
+:::
+
+### [L2 · sql] Swap all 'M' and 'F' values in `users.gender` with a single UPDATE.
+
+:::answer
+```sql
+UPDATE users
+SET gender = CASE gender WHEN 'M' THEN 'F' WHEN 'F' THEN 'M' ELSE gender END
+WHERE gender IN ('M', 'F');
+```
+
+One statement, so every row is evaluated against its original value — two sequential UPDATEs would turn everything into one value.
+:::
+
+### [L2 · sql] List departments with no employees and employees with no department in a single result.
+
+:::answer
+```sql
+SELECT d.name AS department, e.name AS employee
+FROM departments d
+FULL OUTER JOIN employees e ON e.department_id = d.id
+WHERE d.id IS NULL OR e.id IS NULL;
+```
+
+A FULL OUTER JOIN keeps unmatched rows from both sides; the WHERE keeps only those. (MySQL has no FULL JOIN — emulate it with a LEFT JOIN `UNION` a RIGHT JOIN.)
+:::
+
 ## Practice
 
 ### [mcq] Which query returns exactly 3 employees per department even when salaries tie?
@@ -406,3 +464,4 @@ ORDER BY c.id;
 - Never: NOT EXISTS. Every: double NOT EXISTS / count compare.
 - Islands: date − row_number; sessions: lag flag + running sum.
 - Period over period: lag over a complete calendar. Pivot: FILTER/CASE. Median: percentile_cont.
+- Classics to recognise instantly: top earner per department (rank/max-join), above department average (window avg), swap values (one CASE UPDATE), orphans on both sides (FULL JOIN + IS NULL).

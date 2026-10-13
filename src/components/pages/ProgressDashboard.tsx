@@ -16,7 +16,7 @@ export function ProgressDashboard() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
-  if (!hydrated) return <div className="h-96 animate-pulse rounded-2xl bg-surface-2" />;
+  if (!hydrated) return <div className="h-96 animate-pulse rounded-lg bg-surface-2" />;
 
   const subjects = manifest.subjects;
   const totalDone = manifest.lessons.filter((l) => state.lessons[l.id]?.completedAt).length;
@@ -62,7 +62,7 @@ export function ProgressDashboard() {
           ["Due for review", due],
           ["Bookmarks", state.bookmarks.length],
         ].map(([k, v]) => (
-          <div key={k as string} className="rounded-xl border border-border bg-surface p-4">
+          <div key={k as string} className="rounded-lg border border-border bg-surface p-4">
             <div className="text-[12px] text-subtle">{k}</div>
             <div className="font-mono text-2xl font-semibold">{v}</div>
           </div>
@@ -74,7 +74,7 @@ export function ProgressDashboard() {
           const lessons = manifest.lessons.filter((l) => l.subject === s.id);
           const m = groupMastery(lessons, state, now);
           return (
-            <div key={s.id} className="rounded-2xl border border-border bg-surface p-5">
+            <div key={s.id} className="rounded-lg border border-border bg-surface p-5">
               <div className="flex items-baseline justify-between">
                 <Link href={`/${s.path}`} className={cn("font-semibold hover:underline", SUBJECT_STYLE[s.id].text)}>
                   {s.title}
@@ -110,7 +110,7 @@ export function ProgressDashboard() {
       </div>
 
       <div className="grid gap-5 lg:grid-cols-2">
-        <div className="rounded-2xl border border-border bg-surface p-5">
+        <div className="rounded-lg border border-border bg-surface p-5">
           <h2 className="mb-2 text-sm font-semibold text-fg">How mastery is estimated</h2>
           <ul className="list-disc space-y-1 pl-5 text-[13.5px] text-muted">
             <li>
@@ -137,7 +137,7 @@ export function ProgressDashboard() {
               <RoadmapReadiness roadmapId={r.id} compact />
             </div>
           ))}
-          <div className="rounded-2xl border border-border bg-surface p-5">
+          <div className="rounded-lg border border-border bg-surface p-5">
             <h2 className="mb-2 text-sm font-semibold text-fg">Weak topics</h2>
             {weak.length ? (
               <ul className="space-y-1.5">
@@ -157,7 +157,7 @@ export function ProgressDashboard() {
         </div>
       </div>
 
-      <div className="rounded-2xl border border-border bg-surface p-5">
+      <div className="rounded-lg border border-border bg-surface p-5">
         <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-fg">
           <History className="h-4 w-4 text-accent" /> Practice history
         </h2>
@@ -192,7 +192,7 @@ export function ProgressDashboard() {
         )}
       </div>
 
-      <div className="rounded-2xl border border-border bg-surface p-5">
+      <div className="rounded-lg border border-border bg-surface p-5">
         <h2 className="mb-1 text-sm font-semibold text-fg">Your data</h2>
         <p className="mb-3 text-[13px] text-muted">Progress is stored only in this browser (localStorage). Export it to move between devices.</p>
         <div className="flex flex-wrap gap-2">

@@ -18,12 +18,12 @@ export function BookmarkButton({ bkey, label = "Bookmark", className }: { bkey: 
       aria-pressed={on}
       title={on ? "Remove bookmark" : "Bookmark"}
       className={cn(
-        "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[13px] font-medium transition-colors",
-        on ? "border-accent/40 bg-accent/10 text-accent" : "border-border bg-surface text-muted hover:text-fg",
+        "inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-xs font-medium transition-colors",
+        on ? "border-accent/40 bg-accent-soft text-accent" : "border-border text-muted hover:border-border-strong hover:text-fg",
         className,
       )}
     >
-      {on ? <BookmarkCheck className="h-3.5 w-3.5" /> : <Bookmark className="h-3.5 w-3.5" />}
+      {on ? <BookmarkCheck className="size-3.5" /> : <Bookmark className="size-3.5" />}
       {label && <span>{on ? "Bookmarked" : label}</span>}
     </button>
   );
@@ -41,12 +41,12 @@ export function CompleteButton({ id, title, href, size = "md" }: { id: string; t
       onClick={() => (done ? uncomplete(id) : complete(id, title, href))}
       aria-pressed={done}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-lg font-medium transition-colors",
-        size === "lg" ? "h-10 px-4 text-sm" : "h-8 px-3 text-[13px]",
-        done ? "border border-ok/40 bg-ok/10 text-ok" : "bg-accent text-accent-fg hover:opacity-90",
+        "inline-flex items-center gap-1.5 rounded-md border font-medium transition-colors",
+        size === "lg" ? "h-9 px-4 text-sm" : "h-8 px-3 text-xs",
+        done ? "border-ok/40 bg-ok/10 text-ok" : "border-fg bg-fg text-bg hover:opacity-90",
       )}
     >
-      {done ? <CircleCheck className="h-4 w-4" /> : <Check className="h-4 w-4" />}
+      {done ? <CircleCheck className="size-3.5" /> : <Check className="size-3.5" />}
       {done ? "Completed" : "Mark as complete"}
     </button>
   );
@@ -63,9 +63,9 @@ export function RevisedButton({ id, title, href }: { id: string; title: string; 
     <button
       type="button"
       onClick={() => markRevised(id, mode, title, href)}
-      className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-border bg-surface px-4 text-sm font-medium text-fg hover:bg-surface-2"
+      className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border px-4 text-sm font-medium text-fg hover:border-border-strong"
     >
-      <RotateCcw className="h-4 w-4" />
+      <RotateCcw className="size-3.5" />
       {recent ? "Revision logged" : `Log ${mode}-minute revision`}
     </button>
   );
@@ -75,7 +75,7 @@ export function PrereqStatus({ prerequisites }: { prerequisites: string[] }) {
   const manifest = useManifest();
   const hydrated = useHydrated((s) => s.hydrated);
   const lessons = useProgress((s) => s.lessons);
-  if (!prerequisites.length) return <span className="text-[13px] text-subtle">None — start here.</span>;
+  if (!prerequisites.length) return <span className="text-xs text-subtle">None — start here.</span>;
   const items = prerequisites.map((id) => manifest.lessons.find((l) => l.id === id)).filter((l) => !!l);
   const missing = hydrated ? items.filter((l) => !lessons[l!.id]?.completedAt) : [];
   return (
@@ -88,8 +88,8 @@ export function PrereqStatus({ prerequisites }: { prerequisites: string[] }) {
               <Link
                 href={l!.href}
                 className={cn(
-                  "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[12.5px] transition-colors",
-                  done ? "border-ok/40 bg-ok/10 text-fg" : "border-border bg-surface text-muted hover:text-fg",
+                  "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs transition-colors",
+                  done ? "border-ok/40 bg-ok/10 text-fg" : "border-border text-muted hover:border-border-strong hover:text-fg",
                 )}
               >
                 {done && <Check className="h-3 w-3 text-ok" />}
@@ -100,7 +100,7 @@ export function PrereqStatus({ prerequisites }: { prerequisites: string[] }) {
         })}
       </ul>
       {hydrated && missing.length > 0 && (
-        <p className="mt-2 flex items-start gap-1.5 text-[12.5px] text-warn">
+        <p className="mt-2 flex items-start gap-1.5 text-xs text-warn">
           <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           {missing.length === items.length
             ? "You haven't completed the prerequisites yet. This lesson assumes them — skim them first if anything feels unfamiliar."

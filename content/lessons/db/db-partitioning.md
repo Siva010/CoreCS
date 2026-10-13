@@ -172,6 +172,18 @@ Queries usually target recent time windows (pruning to few partitions), the hot 
 
 The query filters by customer_id, not by date, so it can't prune: it probes the customer_id index in every monthly partition (e.g., 60 index lookups instead of one) and merges results. Fixes: add a date bound to the query when possible (e.g., last 12 months), partition by a key aligned with the dominant access pattern, or reconsider whether the table needs partitioning at all.
 
+### [L1 · compare] Horizontal vs vertical partitioning?
+
+Horizontal partitioning (fragmentation) splits **rows**: each partition has all columns for a subset of rows (orders by month). Vertical partitioning splits **columns**: each fragment has some columns for all rows, joined back by the primary key — e.g., moving large, rarely read `bio` and `preferences` columns out of a hot `users` table so scans and caches stay lean. Both are physical-design tools; sharding is horizontal partitioning across servers.
+
+### [L2 · debugging] A query on a partitioned table scans every partition. Why might pruning not happen?
+
+The WHERE clause doesn't constrain the partition key, or constrains it through an expression the planner can't match (`date(created_at) = …` instead of a range on `created_at`); the comparison involves a type mismatch or a non-immutable function; or the value is only known at run time and runtime pruning isn't applicable (check for "Subplans Removed" in EXPLAIN ANALYZE). Fix the predicate to a plain range on the partition key.
+
+### [L2 · design] How would you choose the partition key and interval for an events table holding 2 years of data at 50 million rows per day?
+
+Partition by the time column the queries and retention use (`created_at`), daily or weekly — daily gives ~730 partitions of ~50M rows (manageable, fast drops), monthly would give 1.5-billion-row partitions that are slow to vacuum and index. Create partitions ahead of time automatically, drop or archive whole partitions for retention, and keep a composite index like `(tenant_id, created_at)` per partition for the main access path.
+
 ## Practice
 
 ### [mcq] A table is range-partitioned by created_at (monthly). Which query benefits from pruning?
@@ -199,3 +211,4 @@ Without global indexes, two partitions could each hold the same id.
 - Retention via DETACH/DROP partition: instant, no bloat.
 - Unique keys must include the partition key; indexes are local.
 - Automate partition creation; don't expect write scaling.
+- Horizontal = split rows (time partitions, shards); vertical = split columns (move wide/cold columns out). No pruning without a plain predicate on the partition key.

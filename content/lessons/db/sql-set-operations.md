@@ -155,6 +155,22 @@ SELECT customer_id FROM orders WHERE order_date >= '2024-01-01' AND order_date <
 Alternative with aggregation: `GROUP BY customer_id HAVING count(DISTINCT extract(year FROM order_date)) = 2` over orders filtered to those two years.
 :::
 
+### [L1 · conceptual] What does "union-compatible" mean?
+
+Both queries must return the same number of columns, and corresponding columns must have compatible types (the database may cast, e.g. integer to numeric). Columns are matched by **position**, not name, and the result takes its column names from the first query — so `SELECT id, name … UNION SELECT name, id …` either fails or silently mixes values.
+
+### [L2 · compare] INTERSECT vs INNER JOIN? EXCEPT vs NOT EXISTS?
+
+`INTERSECT` compares **entire rows**, removes duplicates and treats NULLs as equal; an inner join pairs rows on a condition, can multiply rows and never matches NULL to NULL. Likewise `EXCEPT` removes whole rows present in the second set (NULL-equal, deduplicated) while `NOT EXISTS` filters rows of the first table by a correlated condition and keeps duplicates and other columns. Use set operations to compare sets of key values; use joins/EXISTS when you need columns from one side.
+
+### [L2 · debugging] A report query using UNION got slow as the tables grew. What's the likely cause?
+
+UNION must deduplicate the combined result, which means sorting or hashing every row (and spilling to disk when it's large). If the branches can't produce identical rows — different date ranges, or a literal `source` column that differs — switch to `UNION ALL`, which just appends the branches and can stream and run them in parallel.
+
+### [L2 · trace] How do UNION ALL, INTERSECT ALL and EXCEPT ALL treat duplicates?
+
+They work on **multisets**: UNION ALL keeps every row from both inputs; INTERSECT ALL keeps each row min(count in A, count in B) times; EXCEPT ALL keeps each row max(count in A − count in B, 0) times. With A = (1, 1, 2) and B = (1, 3): UNION ALL → 1, 1, 2, 1, 3; INTERSECT ALL → 1; EXCEPT ALL → 1, 2. The non-ALL versions first remove duplicates. (MySQL added INTERSECT and EXCEPT only in 8.0.31.)
+
 ## Practice
 
 ### [numeric 6] A has rows 1, 1, 2 and B has rows 2, 3, 3. How many rows does A UNION ALL B return?
@@ -188,3 +204,5 @@ EXCEPT removes rows present in B (2) and deduplicates what remains. `EXCEPT ALL`
 - INTERSECT = in both; EXCEPT = in A not in B; `ALL` variants keep multiplicities.
 - NULLs are equal for set-operation deduplication (unlike `=`).
 - Use EXISTS/NOT EXISTS when you need to compare on keys and return other columns.
+- Union-compatible = same column count, compatible types, matched by position; names come from the first query.
+- INTERSECT/EXCEPT compare whole rows (NULL-equal, deduped); joins/EXISTS compare by condition and keep columns.

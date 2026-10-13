@@ -133,7 +133,7 @@ export default function DeadlockGraph() {
       </div>
       <p className="text-[12.5px] text-subtle">{note}</p>
       <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
-        <div className="overflow-x-auto rounded-xl border border-border bg-surface p-2 thin-scroll">
+        <div className="overflow-x-auto rounded-lg border border-border bg-surface p-2 thin-scroll">
           <svg viewBox="0 0 500 340" className="w-full min-w-[420px]" role="img" aria-label="Resource allocation graph">
             <defs>
               {["req", "asg", "cyc"].map((id) => (

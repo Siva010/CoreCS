@@ -191,6 +191,18 @@ Use the transactional outbox: in the same local transaction as the business chan
 
 Orchestrated saga: the order service creates a PENDING order and drives steps — reserve inventory (idempotent by order id), charge payment with an idempotency key, then confirm the order. On failure, compensate in reverse (release reservation, refund, cancel order). Each step publishes/consumes events via outboxes; all handlers are idempotent; timeouts move stuck sagas to compensation; the UI shows pending states; reconciliation jobs compare payments, reservations and orders.
 
+### [L2 · compare] Saga orchestration vs choreography?
+
+Orchestration: a central coordinator (a workflow engine or a saga service) tells each service what to do next and runs compensations on failure — easy to see and change the flow, but one more component to run. Choreography: each service listens for events and reacts ("payment succeeded" → inventory reserves) — loosely coupled, but the overall flow is implicit and hard to trace once it spans many services. Orchestration is usually preferred beyond three or four steps.
+
+### [L1 · conceptual] What is an idempotency key and why do payment APIs require one?
+
+A unique client-generated identifier sent with a request. The server stores it (with a unique constraint) together with the result; if the same key arrives again — because the client timed out and retried — the server returns the stored result instead of performing the action twice. Networks force at-least-once delivery; idempotency keys turn that into exactly-once *effects* for operations like charging a card.
+
+### [L2 · conceptual] What does three-phase commit add to 2PC, and why isn't it used much?
+
+3PC inserts a "pre-commit" phase so that, after a coordinator failure, participants can tell whether any of them could already have committed and decide without blocking. But it assumes bounded network delays and no partitions; with real asynchronous networks a partition can still lead participants to different decisions. Practical systems instead make the 2PC coordinator fault-tolerant by replicating its decision with consensus.
+
 ## Practice
 
 ### [mcq] What problem does the transactional outbox solve?
@@ -211,6 +223,12 @@ The event row commits or rolls back with the business change; publishing happens
 
 Unilateral action could contradict the coordinator's decision; that's the blocking problem.
 
+### [numeric 12] In basic two-phase commit with one coordinator and 3 participants, how many messages are exchanged for a successful commit (prepare, vote, commit, acknowledgement)?
+
+:::answer
+Each participant receives PREPARE, sends a vote, receives COMMIT and sends an ACK: 4 messages × 3 participants = **12**.
+:::
+
 ## Quick Revision
 
 - No shared log across databases → atomic commit needs coordination.
@@ -218,3 +236,4 @@ Unilateral action could contradict the coordinator's decision; that's the blocki
 - Sagas: local transactions + compensations; no isolation; explicit states; idempotent steps; irreversible steps last.
 - Dual writes → transactional outbox + CDC/relay; consumers idempotent (inbox/dedupe table).
 - Exactly-once = at-least-once delivery + idempotent effects. Best: design so most transactions are single-shard.
+- Saga orchestration (central coordinator, visible flow) vs choreography (events, implicit flow). Idempotency keys = exactly-once effects over at-least-once delivery. 3PC needs synchrony; real systems replicate the 2PC coordinator. 2PC ≈ 4N messages.

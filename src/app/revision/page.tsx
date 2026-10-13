@@ -19,7 +19,7 @@ export default function RevisionPage() {
       />
       <div className="mb-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {REVISION_MODES.map((m) => (
-          <div key={m.id} className="rounded-xl border border-border bg-surface p-4">
+          <div key={m.id} className="rounded-lg border border-border bg-surface p-4">
             <div className="font-mono text-lg font-semibold text-fg">{m.label}</div>
             <p className="mt-1 text-[13px] text-muted">{m.blurb}</p>
           </div>
@@ -33,7 +33,7 @@ export default function RevisionPage() {
         <p className="mb-4 text-[14px] text-muted">Every lesson&apos;s mental model and revision bullets for a subject, on a single printable page.</p>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {subjects.map((s) => (
-            <Link key={s.id} href={`/revision/${s.path}`} className="group flex items-center gap-3 rounded-xl border border-border bg-surface p-4 hover:border-border-strong">
+            <Link key={s.id} href={`/revision/${s.path}`} className="group flex items-center gap-3 rounded-lg border border-border bg-surface p-4 hover:border-border-strong">
               <FileText className={cn("h-5 w-5", SUBJECT_STYLE[s.id].text)} />
               <span className="font-medium text-fg group-hover:text-accent">{s.title}</span>
             </Link>

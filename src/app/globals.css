@@ -4,10 +4,14 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: var(--font-mono-jb), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
 
   --color-bg: var(--bg);
+  --color-bg-subtle: var(--bg-subtle);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
   --color-fg: var(--fg);
@@ -17,6 +21,7 @@
   --color-border-strong: var(--border-strong);
   --color-accent: var(--accent);
   --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
 
   --color-os: var(--os);
   --color-cn: var(--cn);
@@ -31,63 +36,74 @@
   --color-ok: var(--ok);
   --color-warn: var(--warn);
   --color-bad: var(--bad);
+  --color-info: var(--info);
 }
 
+/* Palette: neutral greys with one indigo accent; the four depth levels use
+   sky / violet / amber / emerald "level" colours. */
 :root {
-  --bg: #fafaf9;
+  --bg: #ffffff;
+  --bg-subtle: #fafafa;
   --surface: #ffffff;
-  --surface-2: #f4f4f3;
-  --fg: #18181b;
-  --muted: #52525b;
-  --subtle: #8a8a93;
-  --border: #e4e4e2;
-  --border-strong: #cfcfcc;
+  --surface-2: #f6f6f7;
+  --fg: #101012;
+  --muted: #62626b;
+  --subtle: #8b8b94;
+  --border: #e6e6e8;
+  --border-strong: #d4d4d8;
   --accent: #4f46e5;
   --accent-fg: #ffffff;
+  --accent-soft: #eef2ff;
 
   --os: #c2410c;
   --cn: #0369a1;
   --db: #047857;
   --x: #7c3aed;
 
-  --d-beginner: #15803d;
-  --d-core: #1d4ed8;
-  --d-advanced: #7e22ce;
-  --d-senior: #b91c1c;
+  --d-beginner: #0284c7;
+  --d-core: #7c3aed;
+  --d-advanced: #b45309;
+  --d-senior: #047857;
 
-  --ok: #15803d;
+  --ok: #047857;
   --warn: #b45309;
-  --bad: #b91c1c;
+  --bad: #be123c;
+  --info: #0369a1;
 
+  --shadow-panel: 0 1px 2px #0000000a, 0 8px 24px -12px #0000001f;
   color-scheme: light;
 }
 
 .dark {
-  --bg: #0c0d10;
-  --surface: #131519;
-  --surface-2: #1a1d22;
-  --fg: #ececef;
-  --muted: #a1a1aa;
-  --subtle: #71717a;
-  --border: #25282e;
-  --border-strong: #353941;
-  --accent: #8b8cf8;
-  --accent-fg: #0c0d10;
+  --bg: #08080a;
+  --bg-subtle: #0c0c0f;
+  --surface: #101014;
+  --surface-2: #17171c;
+  --fg: #ededf0;
+  --muted: #9b9ba6;
+  --subtle: #6d6d78;
+  --border: #232329;
+  --border-strong: #33333c;
+  --accent: #8b8bff;
+  --accent-fg: #0b0b12;
+  --accent-soft: #1a1a2e;
 
   --os: #fb923c;
   --cn: #38bdf8;
   --db: #34d399;
   --x: #a78bfa;
 
-  --d-beginner: #4ade80;
-  --d-core: #60a5fa;
-  --d-advanced: #c084fc;
-  --d-senior: #f87171;
+  --d-beginner: #38bdf8;
+  --d-core: #a78bfa;
+  --d-advanced: #fbbf24;
+  --d-senior: #34d399;
 
-  --ok: #4ade80;
+  --ok: #34d399;
   --warn: #fbbf24;
-  --bad: #f87171;
+  --bad: #fb7185;
+  --info: #38bdf8;
 
+  --shadow-panel: 0 1px 2px #0006, 0 12px 32px -16px #000000b3;
   color-scheme: dark;
 }
 
@@ -99,11 +115,21 @@ html {
 body {
   background: var(--bg);
   color: var(--fg);
-  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 ::selection {
-  background: color-mix(in oklab, var(--accent) 25%, transparent);
+  background: color-mix(in oklab, var(--accent) 28%, transparent);
+}
+
+/* Small uppercase label used above headings and lists. */
+.eyebrow {
+  font-size: var(--text-2xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--subtle);
+  font-weight: 600;
 }
 
 :focus-visible {
@@ -114,7 +140,7 @@ body {
 
 /* ───────── Prose (lesson content) ───────── */
 .prose-academy {
-  --tw-prose-body: var(--fg);
+  --tw-prose-body: var(--muted);
   --tw-prose-headings: var(--fg);
   --tw-prose-lead: var(--muted);
   --tw-prose-links: var(--accent);
@@ -131,20 +157,29 @@ body {
   --tw-prose-th-borders: var(--border-strong);
   --tw-prose-td-borders: var(--border);
   max-width: none;
-  line-height: 1.72;
+  line-height: 1.7;
 }
 
-.prose-academy :where(p, li) {
-  font-size: 1rem;
+/* Diagram labels are excluded: Mermaid sizes its boxes for its own font size. */
+.prose-academy :where(p, li):not(:where(.mermaid-host *)) {
+  font-size: 0.9375rem;
+}
+.mermaid-host :where(p) {
+  line-height: 1.5;
+}
+.prose-academy :where(strong) {
+  color: var(--fg);
+  font-weight: 600;
 }
 
 .prose-academy :where(code):not(:where(pre code)) {
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 0.3rem;
-  padding: 0.08rem 0.32rem;
-  font-size: 0.86em;
-  font-weight: 500;
+  border-radius: 0.25rem;
+  padding: 0.1em 0.3em;
+  font-size: 0.85em;
+  font-weight: 450;
+  color: var(--fg);
 }
 .prose-academy :where(code):not(:where(pre code))::before,
 .prose-academy :where(code):not(:where(pre code))::after {
@@ -152,32 +187,37 @@ body {
 }
 
 .prose-academy :where(pre) {
-  border: 1px solid var(--border);
-  border-radius: 0.6rem;
-  font-size: 0.84rem;
-  line-height: 1.6;
+  border: 0;
+  border-radius: 0;
+  font-size: 0.8125rem;
+  line-height: 1.65;
   margin: 0;
 }
 
 .prose-academy :where(h3) {
-  font-size: 1.15rem;
-  margin-top: 1.8em;
-  margin-bottom: 0.6em;
+  font-size: 1rem;
+  font-weight: 600;
+  margin-top: 1.9em;
+  margin-bottom: 0.55em;
   letter-spacing: -0.01em;
 }
 .prose-academy :where(h4) {
-  font-size: 1rem;
+  font-size: 0.9375rem;
   margin-top: 1.4em;
 }
 
 .prose-academy :where(table) {
-  font-size: 0.9rem;
+  font-size: 0.8125rem;
   margin: 0;
+}
+.prose-academy :where(th) {
+  color: var(--fg);
 }
 .prose-academy :where(thead th) {
   background: var(--surface-2);
-  padding: 0.55rem 0.75rem;
+  padding: 0.5rem 0.75rem;
   font-weight: 600;
+  font-size: 0.75rem;
 }
 .prose-academy :where(tbody td) {
   padding: 0.5rem 0.75rem;
@@ -212,11 +252,11 @@ body {
 .md-compare,
 .md-steps {
   border: 1px solid var(--border);
-  border-left-width: 3px;
+  border-left-width: 2px;
   border-radius: 0.5rem;
-  padding: 0.6rem 0.9rem;
+  padding: 0.75rem 1rem;
   margin: 1rem 0;
-  background: var(--surface-2);
+  background: var(--surface);
 }
 .md-callout-warning { border-left-color: var(--warn); }
 .md-callout-danger { border-left-color: var(--bad); }

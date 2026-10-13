@@ -2,7 +2,7 @@
 title: "Index Design in Practice: From Query Patterns to a Minimal Index Set"
 subject: db
 level: 7
-order: 5
+order: 6
 summary: "A repeatable method for choosing indexes from real workloads, the classic reasons an index is ignored (functions, casts, OR, leading wildcards, low selectivity, stale statistics), foreign-key and pagination indexes, and pruning unused or redundant ones."
 depth: advanced
 difficulty: 3
@@ -171,6 +171,18 @@ Start from the workload: identify the most expensive and latency-critical querie
 
 With OR across different columns, a single index can't satisfy the predicate. The planner can combine both indexes via BitmapOr — if it doesn't (bad estimates, types), it falls back to a sequential scan. Ensure parameter types match the columns, check estimates with EXPLAIN, and if needed rewrite as `SELECT … WHERE email = $1 UNION SELECT … WHERE phone = $2`, which uses each index directly. Also consider whether the API should look up by one identifier at a time.
 
+### [L2 · how] How do you find missing and unused indexes in PostgreSQL?
+
+Missing: start from `pg_stat_statements` sorted by total time, EXPLAIN the top queries and look for sequential scans with large "Rows Removed by Filter", sorts that an index could provide, and nested loops probing unindexed columns; `pg_stat_user_tables.seq_scan` with a high `seq_tup_read` points at tables scanned often. Unused: `pg_stat_user_indexes.idx_scan = 0` over a full business cycle, checked on replicas too, excluding unique/PK indexes that enforce constraints.
+
+### [L2 · design] A new endpoint lists a tenant's orders filtered by status, newest first, with cursor pagination. What index do you add?
+
+`(tenant_id, status, created_at DESC, id DESC)` — equality columns first, then the sort key with a unique tiebreaker so the cursor `WHERE (created_at, id) < ($c, $i)` is an index range scan that stops after the page size. Add `INCLUDE` columns if the list returns only a few fields and you want an index-only scan. Then check whether an existing index with the same prefix can be extended instead of adding another.
+
+### [L3 · scenario] Every index was added "for performance" over five years and the table has 23 of them. Inserts are slow. What's your plan?
+
+Inventory them with sizes and usage (`idx_scan` on primary and replicas over at least a month), and identify duplicates and prefixes of others (`(a)` next to `(a, b)`). Drop clearly unused ones first (keep the DDL; use `DROP INDEX CONCURRENTLY`), then merge overlapping single-column indexes into composites that match the real query shapes. Measure insert latency, WAL volume and buffer-pool hit ratio before and after, and add a review rule that every new index names the query it serves.
+
 ## Practice
 
 ### [mcq] Which index is redundant given the others: (a), (a, b), (b), (a, b, c)?
@@ -198,3 +210,4 @@ Rows examined ≫ rows returned means the index isn't the right shape for the qu
 - Always consider: FK columns, pagination paths, uniqueness, partial indexes for queues.
 - Prune unused/redundant indexes (check replicas and monthly jobs first). Build/drop CONCURRENTLY.
 - Target: rows examined ≈ rows returned.
+- Missing indexes: `pg_stat_statements` + EXPLAIN (seq scans, big "Rows Removed"); unused: `idx_scan = 0` over a cycle, on replicas too. Every index should name the query it serves.

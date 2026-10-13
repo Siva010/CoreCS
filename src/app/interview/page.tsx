@@ -25,7 +25,7 @@ export default function InterviewPage() {
       >
         <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {LEVELS.map(([t, d, ex]) => (
-            <div key={t} className="rounded-xl border border-border bg-surface p-3">
+            <div key={t} className="rounded-lg border border-border bg-surface p-3">
               <div className="text-sm font-semibold text-fg">{t}</div>
               <div className="text-[12.5px] text-muted">{d}</div>
               <div className="mt-1.5 text-[12.5px] text-subtle italic">“{ex}”</div>

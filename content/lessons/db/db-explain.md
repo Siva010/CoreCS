@@ -189,6 +189,18 @@ EXPLAIN shows the chosen plan with the planner's estimated costs and row counts 
 
 The node is cheap per execution (~0.03 ms) but runs 850,000 times inside a nested loop: 850,000 × 0.03 ms ≈ 25 s. The outer side produced far more rows than the planner likely expected. Check the outer node's estimated vs actual rows; better estimates (ANALYZE, extended stats) or a rewrite should lead to a hash join or a smaller outer input.
 
+### [L2 · conceptual] What does `cost=0.43..152.10` mean, and can you compare costs across queries?
+
+Two numbers in the planner's abstract cost units: startup cost (work before the first row) and total cost (to return all rows), including the node's children. The units are relative — calibrated so a sequential page read costs 1 — and are only meaningful for comparing alternative plans of the **same** query on the same configuration. They are not milliseconds; use `EXPLAIN ANALYZE` for real time.
+
+### [L2 · how] What do `Buffers: shared hit=1200 read=45000` tell you?
+
+With `EXPLAIN (ANALYZE, BUFFERS)`, `hit` is pages found in PostgreSQL's buffer pool and `read` is pages requested from outside it (OS page cache or disk). A large `read` means the query touched data that wasn't cached — first run after a restart, a working set bigger than memory, or simply a plan that reads far more pages than it needs. Compare the page counts between plans: fewer pages almost always means faster, independent of cache state.
+
+### [L2 · debugging] Why is it dangerous to run `EXPLAIN ANALYZE` on an UPDATE in production, and what do you do instead?
+
+`EXPLAIN ANALYZE` executes the statement, so the UPDATE really changes rows (and takes locks, fires triggers, writes WAL). Wrap it: `BEGIN; EXPLAIN ANALYZE UPDATE …; ROLLBACK;` — it still takes the locks while it runs, so do it on a replica-restored copy or during low traffic. Plain `EXPLAIN` without ANALYZE is always safe because it only plans.
+
 ## Practice
 
 ### [numeric 12 unit=s] A plan node shows `actual time=0.010..0.024 rows=2 loops=500000`. Approximately how many seconds does it account for in total?
@@ -212,3 +224,4 @@ Reading millions of rows to return a dozen means no index narrowed the search.
 - Read bottom-up; times include children; multiply per-loop numbers by loops.
 - Red flags: estimate ≠ actual, Rows Removed by Filter, big loops, spills (external merge, Batches > 1), heap fetches, large buffer reads.
 - Fix causes: indexes, statistics, rewrites — and verify with before/after plans.
+- `cost=start..total` are relative planner units, not ms — compare only plans of the same query. `BUFFERS`: hit = buffer pool, read = from outside it.

@@ -34,7 +34,7 @@ export default function CaseStudiesPage() {
               <h2 className={cn("mb-3 text-sm font-semibold tracking-wider uppercase", SUBJECT_STYLE[s].text)}>{getSubject(s).title}</h2>
               <div className="grid gap-3 md:grid-cols-2">
                 {items.map((c) => (
-                  <Link key={c.id} href={c.href} className="group rounded-xl border border-border bg-surface p-4 hover:border-border-strong">
+                  <Link key={c.id} href={c.href} className="group rounded-lg border border-border bg-surface p-4 hover:border-border-strong">
                     <div className="font-medium text-fg group-hover:text-accent">{c.title}</div>
                     <p className="mt-1 text-[13.5px] text-muted">{c.summary}</p>
                     <div className="mt-3 flex flex-wrap gap-1.5">

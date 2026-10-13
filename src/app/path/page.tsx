@@ -34,9 +34,9 @@ export default function PathPage() {
         {stages.map((st) => {
           const inStage = lessons.filter((l) => l.stage === st.n);
           return (
-            <div key={st.n} className="rounded-2xl border border-border bg-surface">
+            <div key={st.n} className="rounded-lg border border-border bg-surface">
               <div className="flex flex-wrap items-start gap-4 border-b border-border p-5">
-                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-fg font-mono text-sm font-bold text-bg">{st.n}</div>
+                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-fg font-mono text-sm font-bold text-bg">{st.n}</div>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-baseline gap-3">
                     <h2 className="text-xl font-semibold text-fg">Stage {st.n} — {st.title}</h2>
@@ -96,7 +96,7 @@ export default function PathPage() {
         </p>
         <div className="grid gap-4 md:grid-cols-3">
           {roadmaps.map((r) => (
-            <Link key={r.id} href={`/path/${r.id}`} className="group flex flex-col rounded-2xl border border-border bg-surface p-5 hover:border-border-strong">
+            <Link key={r.id} href={`/path/${r.id}`} className="group flex flex-col rounded-lg border border-border bg-surface p-5 hover:border-border-strong">
               <h3 className="text-lg font-semibold text-fg">{r.title}</h3>
               <p className="mt-1 text-[13px] text-subtle">{r.audience}</p>
               <p className="mt-3 text-[14px] text-muted">{r.summary}</p>

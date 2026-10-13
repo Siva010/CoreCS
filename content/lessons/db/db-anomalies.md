@@ -123,7 +123,7 @@ Other write-skew bugs: double-booking a meeting room (each checks "no overlappin
 :::depth{level=advanced}
 ### Serializability, formally
 
-A schedule (interleaving) is **conflict-serializable** if it can be transformed into a serial schedule by swapping adjacent non-conflicting operations. Two operations conflict if they're from different transactions, touch the same item and at least one is a write (RW, WR, WW). Build a **precedence graph** with an edge T1 → T2 for each conflict where T1's operation comes first: the schedule is conflict-serializable **iff the graph has no cycle**.
+(The full treatment — precedence graphs, view serializability and the recoverability ladder — is in [Schedules & Serializability](lesson:db-schedules-serializability).) A schedule (interleaving) is **conflict-serializable** if it can be transformed into a serial schedule by swapping adjacent non-conflicting operations. Two operations conflict if they're from different transactions, touch the same item and at least one is a write (RW, WR, WW). Build a **precedence graph** with an edge T1 → T2 for each conflict where T1's operation comes first: the schedule is conflict-serializable **iff the graph has no cycle**.
 
 Write skew in graph terms: T1 reads what T2 writes (T1 →rw T2) and T2 reads what T1 writes (T2 →rw T1) — a cycle of two **read-write anti-dependencies**. Serializable Snapshot Isolation detects exactly this "dangerous structure" and aborts one transaction ([Isolation Levels](lesson:db-isolation-levels)).
 
@@ -194,6 +194,18 @@ A lost update: both read the same value, both write value + 1, one increment is 
 
 Two transactions read overlapping data, each makes a decision based on what it read (e.g., "someone else is still on call"), then each writes a different row, together violating an invariant. Snapshot isolation only detects write–write conflicts on the same rows; since the writes are disjoint and each read saw a consistent snapshot, both commit. Prevention: serializable isolation (SSI detects the read-write dependency cycle), locking the rows read with SELECT … FOR UPDATE, materializing the conflict into a single row both must update, or a constraint.
 
+### [L1 · conceptual] What is a lost update? Give an example and two fixes.
+
+Two transactions read the same value, each computes a new value from what it read, and both write — the second write overwrites the first, so one update vanishes. Example: two purchases read `stock = 10` and both write 9. Fixes: make the change atomic in one statement (`SET stock = stock - 1 WHERE stock > 0`), lock the row before reading (`SELECT … FOR UPDATE`), use an optimistic version check, or run at an isolation level that detects it (PostgreSQL Repeatable Read aborts the second writer).
+
+### [L2 · compare] Read skew vs write skew?
+
+Read skew: one transaction reads two related items at different moments and sees a combination that never existed (A after a transfer, B before it) — prevented by reading from one snapshot. Write skew: two transactions read an overlapping set, each checks a constraint, then each writes a **different** item, jointly breaking the constraint (both doctors leave the on-call rota) — snapshots don't prevent it because there's no write–write conflict; it needs Serializable, explicit locks on what was read, or a constraint.
+
+### [L2 · scenario] Two users book the same meeting room for overlapping times, and both bookings succeed. Which anomaly is this and how do you prevent it in PostgreSQL?
+
+Write skew (a phantom-style one): each transaction checked "no overlapping booking exists" and inserted its own row, and neither saw the other's uncommitted insert. Prevent it with an exclusion constraint (`EXCLUDE USING gist (room_id WITH =, tstzrange(start_at, end_at) WITH &&)`), which the database enforces atomically; or run the check-and-insert at Serializable and retry on failure; or lock a parent row (the room) with `SELECT … FOR UPDATE` before checking.
+
 ## Practice
 
 ### [mcq] T1 reads rows WHERE amount > 100 (3 rows). T2 inserts a row with amount 500 and commits. T1 repeats the query and gets 4 rows. Which anomaly?
@@ -221,3 +233,4 @@ Snapshots prevent the others; disjoint writes based on overlapping reads slip th
 - Lost update (read-modify-write race), read skew (inconsistent combination), write skew (disjoint writes from overlapping reads).
 - Snapshot isolation prevents all but write skew (and some phantom-based write skew).
 - Fix locally: atomic updates, FOR UPDATE, constraints — or use Serializable with retries.
+- Lost update = two read-modify-writes, one overwrites the other. Read skew = inconsistent reads across time (snapshots fix). Write skew = disjoint writes breaking a shared invariant (Serializable, locks or constraints fix).

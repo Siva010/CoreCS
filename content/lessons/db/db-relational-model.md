@@ -96,6 +96,39 @@ This is exactly what the planner does ([Query Lifecycle](lesson:db-query-lifecyc
 
 A customer's orders are found by matching values: `orders.customer_id = customers.id`. There is no stored pointer from a customer to its orders. That's what makes relations flexible — you can join on any compatible attributes, including ones nobody planned for.
 
+### Schema vs instance
+
+The **relation schema** is the structure — `Customer(id, name, city)` — and changes rarely. The **relation instance** is the set of tuples present at one moment, and changes with every insert. Constraints are stated on the schema and must hold for **every** legal instance, which is why "the data happens to look unique right now" doesn't make a column a key ([Keys & Constraints](lesson:db-keys-constraints)).
+
+### Division: the "for all" operator
+
+Most questions are "find X that has *some* Y" (a join). Some are "find X related to **every** Y" — students who took all core courses, customers who bought every product in a category. Relational algebra has an operator for it, **division** (÷):
+
+```text
+Enrolled(student, course)            Core(course)
+  Asha  DB                             DB
+  Asha  OS                             OS
+  Ravi  DB
+Enrolled ÷ Core = { Asha }      — the only student paired with every course in Core
+```
+
+Division isn't primitive; it can be written with the basic operators: all students paired with all courses (π_student(Enrolled) × Core), minus the pairs that actually exist, gives the students *missing* something; subtract those from all students. SQL has no `DIVIDE`; it's written with double `NOT EXISTS` or a count comparison ([Semi & Anti Joins](lesson:sql-semi-anti-joins)).
+
+### Codd's rules — the ones worth remembering
+
+In 1985 Codd published 12 rules (plus rule 0) for what makes a DBMS truly relational. No mainstream product satisfies all of them; interviews usually probe the ideas behind a few:
+
+| Rule | Idea |
+|---|---|
+| 1 · Information rule | all data is values in tables — nothing hidden in pointers or file positions |
+| 2 · Guaranteed access | every value is reachable by table name + primary key + column name |
+| 3 · Systematic NULLs | a uniform representation of missing information, distinct from 0 or '' ([NULL Logic](lesson:sql-null-logic)) |
+| 4 · Active online catalog | the schema is itself stored in tables queryable with the same language (`information_schema`, `pg_catalog`) |
+| 5 · Comprehensive sublanguage | one language for definition, manipulation, integrity, authorization and transactions (SQL) |
+| 8–9 · Physical and logical data independence | storage and logical changes don't break applications ([Why Databases](lesson:db-why-databases)) |
+| 10 · Integrity independence | constraints are declared in the catalog, not hard-coded in programs |
+| 12 · Non-subversion | no low-level interface may bypass the integrity rules |
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
@@ -183,6 +216,22 @@ Queries are declarative and compile to relational-algebra expressions whose equi
 
 Relationships are represented by matching values (a foreign key equals a primary key), not stored physical pointers. Any attributes with compatible domains can be joined, even in ways not anticipated at design time, and storage can be reorganized without invalidating links. The cost is that the database must search for matches — hence indexes on join columns.
 
+### [L2 · how] How would you express "students enrolled in every course" in relational algebra and in SQL?
+
+In algebra it's division: `Enrolled(student, course) ÷ π_course(Course)`. Expanded with basic operators: take all students `S = π_student(Enrolled)`; compute the pairs that *should* exist, `S × π_course(Course)`; subtract the pairs that do exist to get missing pairs; project their students and subtract from S. In SQL: "students for whom no course exists that they are not enrolled in" — `SELECT s.id FROM students s WHERE NOT EXISTS (SELECT 1 FROM courses c WHERE NOT EXISTS (SELECT 1 FROM enrolled e WHERE e.student_id = s.id AND e.course_id = c.id))`, or group by student and compare `count(DISTINCT course_id)` with the total number of courses.
+
+### [L2 · conceptual] Name a few of Codd's rules. Does any real database satisfy all of them?
+
+Information rule (everything is a value in a table), guaranteed access (table + key + column reaches any value), systematic treatment of NULL, an online relational catalog, a comprehensive sublanguage, physical and logical data independence, integrity independence, and non-subversion. No mainstream product meets all twelve — SQL tables allow duplicate rows (bags), views aren't always updatable, and logical data independence is partial — but the rules describe what "relational" is meant to buy you.
+
+### [L1 · compare] Schema vs instance? Degree vs cardinality?
+
+The schema is the relation's structure (name, attributes, types, constraints); the instance is the set of rows present at a given time. Degree is the number of attributes (columns); cardinality is the number of tuples (rows). A `Customer(id, name, city)` table with 1,000 rows has degree 3 and cardinality 1,000.
+
+### [L2 · trace] R(A, B) has 4 tuples and S(B, C) has 5 tuples. What are the minimum and maximum sizes of R ⋈ S (natural join on B)?
+
+Minimum 0 — no B value in common. Maximum 20 — every tuple of R matches every tuple of S, which happens when all tuples share a single B value; a natural join can never produce more than |R| × |S| tuples. If B were a key of S, the maximum would drop to 4 (each R tuple matches at most one S tuple).
+
 ## Practice
 
 ### [mcq] Which relational-algebra operator corresponds to SQL's WHERE clause?
@@ -200,9 +249,27 @@ Selection filters rows; projection picks columns — the naming is a classic tra
 The Cartesian product pairs every row of A with every row of B: 3 × 4 = 12.
 :::
 
+### [numeric 20] R(A, B) has 4 tuples and S(B, C) has 5 tuples, and every tuple in both relations has B = 7. How many tuples does R ⋈ S (natural join) produce?
+
+:::answer
+Every R tuple matches every S tuple because they all share B = 7, so the join is the full product: 4 × 5 = **20** tuples.
+:::
+
+### [mcq] Which relational-algebra operation answers "suppliers who supply every part"?
+
+- [ ] Union
+- [ ] Natural join
+- [x] Division
+- [ ] Projection
+
+"For all" questions are division; joins only express "for some".
+
 ## Quick Revision
 
 - Relation = set of tuples with typed attributes; no row order; atomic values. SQL tables are bags.
 - Algebra: σ (WHERE), π (SELECT list), × and ⋈ (joins), ∪ − ∩, γ (GROUP BY).
 - Declarative queries + algebraic equivalences → the optimizer picks the physical plan.
 - Relationships are value matches, not pointers → join columns need indexes.
+- Schema = structure (stable); instance = rows right now. Degree = #columns, cardinality = #rows.
+- Division (÷) answers "related to **every** Y"; SQL writes it as double `NOT EXISTS` or a count comparison.
+- Codd's rules: info rule, guaranteed access, systematic NULLs, catalog in tables, data independence, non-subversion — no product meets all 12.

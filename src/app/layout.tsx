@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
 import "./globals.css";
 import { Providers } from "@/components/providers/Providers";
@@ -8,8 +8,8 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { CommandPalette } from "@/components/layout/CommandPalette";
 import { getManifest } from "@/lib/content/manifest";
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
-const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono-jb", display: "swap" });
+const sans = Geist({ subsets: ["latin"], variable: "--font-geist", display: "swap" });
+const mono = Geist_Mono({ subsets: ["latin"], variable: "--font-geist-mono", display: "swap" });
 
 export const metadata: Metadata = {
   title: {
@@ -22,17 +22,17 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#fafaf9" },
-    { media: "(prefers-color-scheme: dark)", color: "#0c0d10" },
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#08080a" },
   ],
 };
 
 function SiteFooter() {
   return (
     <footer className="border-t border-border">
-      <div className="mx-auto flex max-w-[1600px] flex-col gap-3 px-6 py-8 text-sm text-subtle sm:flex-row sm:items-center sm:justify-between">
+      <div className="mx-auto flex max-w-[1600px] flex-col gap-3 px-6 py-6 text-xs text-subtle sm:flex-row sm:items-center sm:justify-between">
         <p>
-          <span className="font-medium text-muted">Core CS Interview Academy</span> — learn the mechanisms; the answers follow.
+          <span className="font-medium text-muted">Core CS Academy</span> — learn the mechanisms; the answers follow.
         </p>
         <nav className="flex flex-wrap gap-x-5 gap-y-1">
           <Link href="/path" className="hover:text-fg">Learning Path</Link>
@@ -49,8 +49,8 @@ function SiteFooter() {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const manifest = getManifest();
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body className={`${inter.variable} ${mono.variable} min-h-screen font-sans antialiased`}>
+    <html lang="en" suppressHydrationWarning className={`${sans.variable} ${mono.variable}`}>
+      <body className="min-h-screen font-sans antialiased">
         <Providers manifest={manifest}>
           <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[70] focus:rounded focus:bg-surface focus:px-3 focus:py-2">
             Skip to content

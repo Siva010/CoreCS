@@ -184,7 +184,7 @@ export const ROADMAPS: RoadmapDef[] = [
         title: "Data and SQL",
         weeks: "Week 3",
         focus: "Relational thinking and fluent SQL — practiced against a real PostgreSQL in your browser.",
-        lessons: ["db-why-databases", "db-relational-model", "db-keys-constraints", "sql-select-basics", "sql-null-logic", "sql-aggregation", "sql-joins", "sql-semi-anti-joins", "sql-subqueries-ctes", "sql-window-functions", "sql-interview-patterns", "db-normalization"],
+        lessons: ["db-why-databases", "db-relational-model", "db-keys-constraints", "sql-select-basics", "sql-null-logic", "sql-aggregation", "sql-joins", "sql-semi-anti-joins", "sql-subqueries-ctes", "sql-window-functions", "sql-interview-patterns", "db-er-modeling", "db-functional-dependencies", "db-normalization"],
         practice: ["lab:sql-playground", "lab:normalization"],
       },
       {
@@ -198,7 +198,7 @@ export const ROADMAPS: RoadmapDef[] = [
         title: "Interview core: the web and transactions",
         weeks: "Week 5",
         focus: "HTTP, TLS, indexes and isolation — the backend fundamentals.",
-        lessons: ["cn-http-connections", "cn-http-caching", "cn-tls-handshake", "cn-cookies-sessions", "cn-proxies-load-balancers", "db-index-fundamentals", "db-composite-covering-indexes", "db-transactions-acid", "db-anomalies", "db-isolation-levels"],
+        lessons: ["cn-http-connections", "cn-http-caching", "cn-tls-handshake", "cn-cookies-sessions", "cn-proxies-load-balancers", "db-index-fundamentals", "db-index-types-hashing", "db-composite-covering-indexes", "db-transactions-acid", "db-anomalies", "db-schedules-serializability", "db-isolation-levels", "db-concurrency-protocols"],
         practice: ["lab:isolation", "lab:btree", "lab:query-plan"],
       },
       {

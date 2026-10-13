@@ -180,6 +180,18 @@ It checks the memtable, then SSTables from newest to oldest. Each SSTable has a 
 
 Consumed jobs are deleted, producing tombstones. Reading the queue scans a partition full of tombstones that aren't purged until compaction and `gc_grace_seconds` allow it, so each read wades through ever more deleted entries (and may hit tombstone warning/failure thresholds). Fixes: don't model queues as delete-heavy partitions (use a real queue), use time-bucketed partitions dropped wholesale, or adjust compaction (time-window) and TTLs.
 
+### [L1 · conceptual] What is write amplification, and why do LSM trees have it?
+
+The ratio of bytes physically written to storage to bytes the application wrote. An LSM tree writes each record to the WAL, then to an L0 SSTable, then rewrites it during each compaction as it moves down levels — with leveled compaction and a 10× size ratio, often 10–30×. B+ trees have it too (an 8 KB page rewritten for a 100-byte change, plus WAL). It matters because it consumes disk bandwidth and SSD endurance.
+
+### [L2 · how] How do tombstones work, and why can delete-heavy workloads get slow?
+
+A delete writes a tombstone — a marker that shadows older values in lower levels — instead of removing data. Reads and range scans must still step over tombstones until compaction drops them, which happens only once the tombstone has reached the level holding the oldest version (and, in Cassandra, after `gc_grace_seconds`). Queue-like workloads that delete and scan the same partition wade through ever more tombstones.
+
+### [L3 · incident] An LSM-backed service reports write stalls during peak ingest. What's happening?
+
+Compaction can't keep up: L0 accumulates files (or pending compaction bytes exceed a limit), reads slow because more files overlap, and the engine deliberately slows or stops writes to let compaction catch up. Fixes: more compaction threads and I/O budget, larger memtables or L0 thresholds (fewer, bigger flushes), a compaction strategy suited to the workload (size-tiered/time-window for ingest-heavy, append-only data), faster disks, or spreading load across more nodes.
+
 ## Practice
 
 ### [mcq] What converts an LSM tree's random application writes into sequential disk writes?
@@ -200,6 +212,12 @@ The memtable absorbs writes in memory; flushes and compactions write large seque
 
 Leveled keeps each level non-overlapping (few files to check, little obsolete data) but rewrites data repeatedly as it moves down levels.
 
+### [numeric 0.1 ±0.001] A point lookup for an absent key checks 10 SSTables, each with a Bloom filter whose false-positive rate is 1%. How many unnecessary data-block reads does it make on average?
+
+:::answer
+Each filter wrongly says "maybe" with probability 0.01; across 10 independent files the expected number of false positives is 10 × 0.01 = **0.1** reads per lookup.
+:::
+
 ## Quick Revision
 
 - Write: WAL append + memtable insert; flush memtable → immutable SSTable; compaction merges files.
@@ -207,3 +225,4 @@ Leveled keeps each level non-overlapping (few files to check, little obsolete da
 - Deletes are tombstones; space returns at compaction.
 - Leveled (low read/space amp, high write amp) vs size-tiered (low write amp, higher read/space amp) vs time-window.
 - B+ tree = read-optimized, in place; LSM = write-optimized, append + merge. Watch compaction debt and write stalls.
+- Write amplification = storage bytes written ÷ app bytes written (LSM: 10–30× with leveled compaction). Tombstones linger until compaction; compaction lag → write stalls.

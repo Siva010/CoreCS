@@ -195,6 +195,18 @@ COUNT(*) counts rows. COUNT(column) counts rows where the column is non-NULL. CO
 
 SUM = 300, AVG = 150 (300 / 2 non-NULL values), COUNT(*) = 3, COUNT(salary) = 2.
 
+### [L1 · compare] COALESCE vs NULLIF vs IFNULL / ISNULL / NVL?
+
+`COALESCE(a, b, c)` returns the first non-NULL argument and is standard SQL. `NULLIF(a, b)` does the reverse: it returns NULL when a = b, otherwise a — handy for `total / NULLIF(count, 0)` to avoid division by zero. `IFNULL` (MySQL), `ISNULL` (SQL Server) and `NVL` (Oracle) are vendor two-argument versions of COALESCE; prefer COALESCE for portability.
+
+### [L2 · debugging] `WHERE discount <> 10` doesn't return rows where discount is NULL, though "no discount" is clearly not 10. Why, and how do you fix it?
+
+`NULL <> 10` is UNKNOWN, and WHERE keeps only TRUE. Either make the intent explicit — `WHERE discount <> 10 OR discount IS NULL` — or use the null-safe comparison `WHERE discount IS DISTINCT FROM 10`, which treats NULL as a comparable value (TRUE here). If NULL really means 0, `COALESCE(discount, 0) <> 10` says so, at the cost of sargability.
+
+### [L1 · how] Where do NULLs appear when you sort, and how do you control it?
+
+PostgreSQL and Oracle treat NULL as larger than every value: last in ascending order, first in descending. MySQL and SQL Server treat it as smaller: first in ascending order. Make it explicit with `ORDER BY col NULLS LAST` (PostgreSQL, Oracle) or, portably, `ORDER BY col IS NULL, col` / `ORDER BY CASE WHEN col IS NULL THEN 1 ELSE 0 END, col`.
+
 ## Practice
 
 ### [numeric 150] Salaries are 100, 200 and NULL. What does AVG(salary) return?
@@ -221,6 +233,21 @@ TRUE OR anything is TRUE, whatever the unknown value is.
 
 Only the null-safe comparison treats two NULLs as equal; the others evaluate to UNKNOWN.
 
+### [numeric 1] Column `x` holds the values 5, NULL, 7, NULL. How many rows does `SELECT * FROM t WHERE x <> 5` return?
+
+:::answer
+Only 7 satisfies `x <> 5`; the two NULL rows evaluate to UNKNOWN and are dropped, and 5 is FALSE. So **1** row.
+:::
+
+### [mcq] What does `SELECT 10 + NULL, 'a' || NULL, NULL = NULL` return in PostgreSQL?
+
+- [ ] 10, 'a', true
+- [ ] 10, 'a', NULL
+- [x] NULL, NULL, NULL
+- [ ] An error
+
+Arithmetic and `||` concatenation propagate NULL, and comparing with NULL is UNKNOWN (shown as NULL). Use `concat()` to skip NULLs when concatenating.
+
 ## Quick Revision
 
 - NULL = unknown → comparisons give UNKNOWN; WHERE/ON/HAVING keep only TRUE.
@@ -228,3 +255,5 @@ Only the null-safe comparison treats two NULLs as equal; the others evaluate to 
 - `NOT IN` + a NULL in the list → no rows. Prefer `NOT EXISTS`.
 - Aggregates skip NULLs; `COUNT(*)` counts rows; `SUM` of nothing is NULL.
 - GROUP BY/DISTINCT group NULLs together; joins and UNIQUE don't equate them. CHECK passes on NULL.
+- `COALESCE` = first non-NULL; `NULLIF(a, b)` = NULL when equal (avoid ÷0). `IS DISTINCT FROM` = null-safe `<>`.
+- NULLs sort last ascending in PostgreSQL/Oracle, first in MySQL/SQL Server — say `NULLS LAST` explicitly.

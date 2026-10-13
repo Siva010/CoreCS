@@ -28,9 +28,9 @@ export function RoadmapReadiness({ roadmapId, compact }: { roadmapId: string; co
   }
 
   return (
-    <div className="rounded-2xl border border-border bg-surface p-5">
+    <div className="rounded-lg border border-border bg-surface p-5">
       <div className="flex items-baseline justify-between">
-        <div className="text-[12px] font-semibold tracking-wider text-subtle uppercase">Interview readiness for this roadmap</div>
+        <div className="eyebrow">Interview readiness for this roadmap</div>
         <div className="font-mono text-xl font-semibold">{score}%</div>
       </div>
       <MeterBar value={score} className="mt-2" />
@@ -44,7 +44,7 @@ export function RoadmapReadiness({ roadmapId, compact }: { roadmapId: string; co
       </p>
       {hydrated && r.gaps.length > 0 && (
         <div className="mt-4">
-          <div className="mb-2 text-[12px] font-semibold tracking-wider text-subtle uppercase">Biggest gaps ({r.gaps.length})</div>
+          <div className="mb-2 eyebrow">Biggest gaps ({r.gaps.length})</div>
           <ul className="max-h-72 space-y-1 overflow-y-auto pr-1 text-[13.5px] thin-scroll">
             {r.gaps.slice(0, 25).map((g) => (
               <li key={g.lesson.id} className="flex justify-between gap-3">

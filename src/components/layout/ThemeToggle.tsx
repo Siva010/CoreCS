@@ -1,41 +1,23 @@
 "use client";
-import { Monitor, Moon, Sun } from "lucide-react";
+import { Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
-import { cn } from "@/lib/utils";
 
-const OPTIONS = [
-  { id: "light", icon: Sun, label: "Light" },
-  { id: "dark", icon: Moon, label: "Dark" },
-  { id: "system", icon: Monitor, label: "System" },
-] as const;
-
+/** One square button that flips between light and dark (starting from whatever the system chose). */
 export function ThemeToggle() {
-  const { theme, setTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+  const dark = mounted && resolvedTheme === "dark";
   return (
-    <div role="radiogroup" aria-label="Color theme" className="flex items-center rounded-lg border border-border bg-surface p-0.5">
-      {OPTIONS.map(({ id, icon: Icon, label }) => {
-        const active = mounted && theme === id;
-        return (
-          <button
-            key={id}
-            type="button"
-            role="radio"
-            aria-checked={active}
-            aria-label={label}
-            title={label}
-            onClick={() => setTheme(id)}
-            className={cn(
-              "grid h-7 w-7 place-items-center rounded-md transition-colors",
-              active ? "bg-surface-2 text-fg" : "text-subtle hover:text-fg",
-            )}
-          >
-            <Icon className="h-3.5 w-3.5" />
-          </button>
-        );
-      })}
-    </div>
+    <button
+      type="button"
+      aria-label="Toggle colour theme"
+      title={dark ? "Switch to light theme" : "Switch to dark theme"}
+      onClick={() => setTheme(dark ? "light" : "dark")}
+      className="grid size-8 place-items-center rounded-md border border-border text-muted transition-colors hover:border-border-strong hover:text-fg"
+    >
+      {mounted ? dark ? <Sun className="size-4" /> : <Moon className="size-4" /> : <span className="size-4" />}
+    </button>
   );
 }

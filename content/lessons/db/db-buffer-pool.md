@@ -165,6 +165,18 @@ PostgreSQL uses small ring buffers for large sequential scans, VACUUM and bulk w
 
 The new primary's buffer pool was cold (it served few reads as a replica), so most page accesses were misses going to storage until the working set was re-read. Mitigate by sending read traffic to replicas so they stay warm, prewarming (`pg_prewarm`, InnoDB buffer-pool dump/load), gradual traffic ramp-up, and having enough headroom in storage IOPS.
 
+### [L1 · conceptual] What is a dirty page, and when is it written to disk?
+
+A page modified in memory but not yet written back. It's written later — by the background writer, by a checkpoint, or by a backend that needs to reuse its frame — and never before the WAL records describing its changes are durable (the WAL rule). Commit doesn't write it (no-force); that's why commits are fast and why crash recovery must redo changes from the log.
+
+### [L2 · compare] Which replacement policies do databases use, and why not plain LRU?
+
+Plain LRU is ruined by large scans that touch each page once and evict the hot working set. PostgreSQL uses clock-sweep with usage counts plus small ring buffers for big scans and VACUUM; InnoDB uses an LRU split into young and old sublists with midpoint insertion, so a page must be touched again after a delay to become "young". Both approximate LRU while resisting scans; LRU-K and 2Q are the textbook variants of the same idea.
+
+### [L2 · design] How would you size the buffer pool?
+
+Start from the working set: the pages hot queries touch (index upper levels, recent rows), which should fit with headroom. Then leave memory for everything else: per-connection and per-operation memory (`work_mem` × concurrent sorts/hashes), the OS, and — for PostgreSQL — the OS page cache acting as a second tier (hence ~25% of RAM for `shared_buffers`; InnoDB with O_DIRECT typically 50–75%). Validate with the buffer hit ratio and, more importantly, with read I/O and latency under real load.
+
 ## Practice
 
 ### [mcq] What does the "steal" policy allow?
@@ -182,6 +194,12 @@ Steal requires undo information at recovery; no-force (not flushing pages at com
 1% of 1,000 pages = 10 misses; 10 × 100 µs = **1,000 µs**. The 990 hits cost only 990 µs in total, so the 1% of misses account for about half the page-access time — which is why "99% hit ratio" alone says little.
 :::
 
+### [numeric 99] A workload touches 10,000 pages; 9,900 are found in the buffer pool. What is the hit ratio in percent?
+
+:::answer
+Hit ratio = hits / accesses = 9,900 / 10,000 = 0.99 = **99**%. Note what the 1% costs: 100 misses at ~100 µs is 10 ms, about the same as all 9,900 hits at ~1 µs (9.9 ms) — half the time spent on 1% of the accesses.
+:::
+
 ## Quick Revision
 
 - Buffer pool = fixed frames + page table (page id → frame); pin counts; dirty flags.
@@ -189,3 +207,4 @@ Steal requires undo information at recovery; no-force (not flushing pages at com
 - Scan resistance: PostgreSQL clock-sweep + ring buffers; InnoDB midpoint-insertion LRU.
 - No-force (pages written later by background writer/checkpoints) + steal → recovery needs redo and undo.
 - Latches (µs, pages) ≠ locks (transactions, rows). Size the pool to the hot working set; watch cold starts after failover.
+- Dirty page = changed in memory, written later (bgwriter/checkpoint/eviction), never before its WAL. Replacement = scan-resistant LRU approximations (clock-sweep, midpoint LRU, ring buffers).

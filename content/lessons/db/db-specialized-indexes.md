@@ -2,7 +2,7 @@
 title: "Beyond B-Trees: Hash, Partial, Expression, GIN, GiST, BRIN and Bitmap Indexes"
 subject: db
 level: 7
-order: 4
+order: 5
 summary: "The index types for questions a sorted B+ tree can't answer well: equality-only hash indexes, partial and expression indexes, inverted indexes for full text and JSON, spatial and range indexes, block-range indexes for huge append-only tables, and bitmap indexes in warehouses."
 depth: advanced
 difficulty: 3
@@ -188,6 +188,18 @@ GIN: inverted index for "contains element" queries — full text, jsonb containm
 
 A B-tree can't help a leading wildcard. Options: a pg_trgm GIN index on `name` (supports ILIKE '%x%' via trigram matching; fast for terms of 3+ characters), full-text search with a tsvector GIN index if word-based matching is acceptable (with ranking), or an external search engine if relevance, typo tolerance and facets are needed. Also limit results and require a minimum query length.
 
+### [L1 · conceptual] What is a partial index, and when is it the right tool?
+
+An index built only over rows satisfying a predicate: `CREATE INDEX … ON orders (created_at) WHERE status = 'pending'`. It's right when queries target a small, well-defined subset (pending jobs, active subscriptions, unprocessed events): the index stays tiny and cached, and writes to rows outside the predicate don't touch it. The query's WHERE must imply the index predicate for the planner to use it. A partial UNIQUE index expresses conditional uniqueness.
+
+### [L2 · how] How does a GIN index answer `attrs @> '{"color": "red"}'` or a full-text query?
+
+GIN is an inverted index: for every element — a JSON key/value pair, an array element, a word lexeme, a trigram — it stores the list of rows containing it (a posting list). A containment or full-text query looks up each element of the search term and intersects the posting lists, then rechecks the candidate rows. Reads are fast; writes are costlier because one row touches many posting lists (PostgreSQL buffers them in a pending list).
+
+### [L2 · compare] BRIN vs B+ tree on a 2 TB append-only events table queried by time?
+
+BRIN stores min/max per block range — a few megabytes for terabytes — and lets a time-range query skip every range outside the window, which works because rows arrive in time order. A B+ tree on the same column would be tens or hundreds of gigabytes and costlier to maintain, though it gives exact row pointers for very selective lookups. If rows aren't physically ordered by the column, BRIN prunes nothing.
+
 ## Practice
 
 ### [mcq] Which index is ideal for an append-only 2 TB events table queried by time ranges?
@@ -216,3 +228,4 @@ The query's condition must imply the index predicate `status = 'pending'`.
 - GiST = overlap/containment/kNN: geometry, ranges, exclusion constraints.
 - BRIN = min/max per block range: tiny, great for physically ordered append-only data.
 - Hash = equality only; bitmap indexes = warehouses; bitmap scans = PostgreSQL's runtime combination of indexes.
+- Partial index = index a subset (query must imply its predicate). GIN = inverted posting lists (fast reads, costly writes). BRIN = block-range min/max, needs physical order.

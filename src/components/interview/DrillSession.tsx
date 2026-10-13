@@ -60,7 +60,7 @@ export function DrillSession({
 
   if (!questions.length) {
     return (
-      <div className="rounded-2xl border border-border bg-surface p-8 text-center">
+      <div className="rounded-lg border border-border bg-surface p-8 text-center">
         <p className="text-muted">No questions match this selection.</p>
         <button type="button" onClick={onExit} className="mt-4 text-sm font-medium text-accent hover:underline">
           Back
@@ -74,11 +74,11 @@ export function DrillSession({
     const weak = questions.filter((q) => (grades[q.id] ?? 0) <= 1);
     const weakLessons = [...new Set(weak.map((q) => q.lessonId))].map((id) => lessonsById.get(id)).filter(Boolean);
     return (
-      <div className="rounded-2xl border border-border bg-surface p-6">
+      <div className="rounded-lg border border-border bg-surface p-6">
         <h2 className="text-xl font-semibold text-fg">Session complete — {title}</h2>
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
           {[0, 1, 2, 3].map((g) => (
-            <div key={g} className="rounded-xl border border-border bg-surface-2 p-3">
+            <div key={g} className="rounded-lg border border-border bg-surface-2 p-3">
               <div className="text-[12px] text-subtle">{GRADE_LABELS[g as Grade]}</div>
               <div className="font-mono text-2xl font-semibold">{counts[g]}</div>
             </div>

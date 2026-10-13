@@ -6,7 +6,7 @@ import { Eye } from "lucide-react";
 export function AnswerReveal({ title, children }: { title?: string; children?: ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="my-5 rounded-xl border border-dashed border-border-strong bg-surface px-4 py-3">
+    <div className="my-5 rounded-lg border border-dashed border-border-strong bg-surface px-4 py-3">
       {open ? (
         <div className="[&>*:first-child]:mt-0 [&>*:last-child]:mb-0">{children}</div>
       ) : (

@@ -195,6 +195,18 @@ The system depended on the cache for capacity: with a cold cache every request b
 
 Use cache-aside with delete-on-write after the database commit, always with a TTL as a bound on staleness. For stronger guarantees, drive invalidation from the database's change stream (CDC) so every writer's changes invalidate caches, and guard against the read/write race with versioned values or a delayed second delete. Decide per data type how much staleness is acceptable (price at checkout: read from DB; product description: minutes are fine).
 
+### [L2 · compare] RDB snapshots vs AOF persistence in Redis?
+
+RDB writes a point-in-time snapshot (via fork and copy-on-write) every so often — compact and fast to restart from, but you lose everything since the last snapshot. AOF logs every write; with `appendfsync everysec` you lose at most about a second, at the cost of a larger file and periodic rewrites. Many deployments use both (AOF for durability, RDB for backups); a pure cache may use neither.
+
+### [L2 · compare] Which Redis eviction policy would you choose for a cache, and why not `noeviction`?
+
+For a general cache, `allkeys-lru` or `allkeys-lfu`: evict the least recently (or least frequently) used key when memory is full. `volatile-*` policies only evict keys with a TTL — useful when Redis also holds data that must never be evicted. `noeviction` makes writes fail once memory is full, which is right for a primary data store and wrong for a cache.
+
+### [L3 · design] Is a Redis `SET key value NX PX 30000` lock safe for protecting a payment?
+
+Not by itself. The lock can expire while its holder is paused (GC, slow network), so two clients can believe they hold it; with replication, a failover can lose the lock key entirely. For correctness-critical work, the protected resource must check a fencing token (a monotonically increasing number issued with the lock) or the operation must be idempotent and guarded by a database constraint. Redis locks are fine for efficiency ("avoid doing the work twice"), not as the only safety mechanism.
+
 ## Practice
 
 ### [numeric 400] A service receives 20,000 reads/s with a 98% cache hit ratio. How many reads per second reach the database?
@@ -219,3 +231,4 @@ Delete-on-write plus TTL narrows the stale-data window.
 - Cache-aside (read miss → DB → set with TTL; write → DB → delete) is the default; write-through/write-behind trade freshness/latency/loss.
 - Always TTL (+ jitter). Stampedes: single-flight, stale-while-revalidate, early refresh. Hot keys: local caches, key replication.
 - Persistence: RDB (fork snapshots), AOF (log). Async replication can lose writes. Plan for the cache being empty or down.
+- Persistence: RDB (snapshots, lose since last) vs AOF (log, ~1 s loss with everysec). Cache eviction: allkeys-lru/lfu. Redis locks need fencing tokens for correctness.

@@ -192,6 +192,18 @@ Foreign keys that reference `customers`: for each referencing table, the databas
 
 A partial unique index: `CREATE UNIQUE INDEX ON addresses(user_id) WHERE is_default;`. It only indexes default rows, so a second default for the same user violates uniqueness. To switch defaults atomically, update the old default to false and the new one to true in one transaction (in that order, or make the constraint deferrable if implemented as a constraint).
 
+### [L1 · conceptual] Can a primary key contain NULL? Can a foreign key?
+
+A primary key can't: it must identify every row, and NULL means "unknown", so the PK is implicitly NOT NULL. A foreign key column **can** be NULL unless declared NOT NULL — a NULL FK means "no related row" (an order not yet assigned to a courier), and the reference check is skipped for it. For composite foreign keys the default `MATCH SIMPLE` skips the check if *any* column is NULL, which can let half-filled keys through; `MATCH FULL` requires all-or-none.
+
+### [L1 · compare] Surrogate key vs natural key — which would you use?
+
+A natural key has business meaning (email, PAN, ISBN); a surrogate key is generated and meaningless (identity integer, UUID). Natural keys change (people change emails), can be long, and spread into every foreign key; surrogates are short, stable and private. The usual answer: a surrogate primary key **plus** a UNIQUE constraint on the natural key, so you keep stable references *and* business uniqueness.
+
+### [L2 · how] How many tables can a foreign key reference, and how many foreign keys can a table have? What is a self-referencing foreign key?
+
+Each foreign key references exactly one parent table's candidate key (primary key or UNIQUE columns). A table can have many foreign keys, including several to the same parent (`flights.origin_airport` and `flights.dest_airport`). A self-referencing FK points to the same table — `employees.manager_id REFERENCES employees(id)` — and models hierarchies; it must be nullable (or deferrable) so the root row can exist.
+
 ## Practice
 
 ### [mcq] Table R(A, B, C) where {A} and {B, C} are both unique and minimal. Which statement is true?
@@ -238,6 +250,12 @@ ALTER TABLE bookings ADD CONSTRAINT no_overlap
 The exclusion constraint's index also serves lookups by `room_id`.
 :::
 
+### [numeric 8] R(A, B, C, D) has exactly one candidate key, {A}. How many super keys does R have?
+
+:::answer
+A super key is any attribute set containing a key. Every super key here must contain A, and may include any subset of the other three attributes: 2³ = **8** super keys ({A}, {A,B}, {A,C}, {A,D}, {A,B,C}, {A,B,D}, {A,C,D}, {A,B,C,D}).
+:::
+
 ## Quick Revision
 
 - Super key ⊇ candidate key (minimal) → one chosen as primary; others are alternate keys (UNIQUE).
@@ -245,3 +263,5 @@ The exclusion constraint's index also serves lookups by `room_id`.
 - UNIQUE/PK are enforced by unique indexes, atomically — code-only checks race.
 - UNIQUE usually allows multiple NULLs. Partial unique indexes enforce rules on subsets.
 - Surrogate keys don't replace business uniqueness — keep the UNIQUE constraint.
+- PK is never NULL; an FK may be NULL ("no related row") unless declared NOT NULL. Self-referencing FKs model hierarchies.
+- Super keys with a single-attribute key A over n attributes: 2^(n−1).

@@ -127,7 +127,7 @@ function Exercise({ p }: { p: PracticeData }) {
         </button>
       ) : (
         <div className="rounded-lg border border-border bg-surface-2/50 px-3 py-2">
-          <div className="mb-1 text-[11px] font-semibold tracking-wider text-subtle uppercase">Solution</div>
+          <div className="mb-1 eyebrow">Solution</div>
           <Html html={p.explanationHtml} />
           <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-2 text-[13px]">
             <span className="text-muted">Did you get it?</span>
@@ -159,8 +159,8 @@ export function PracticeList({ items }: { items: PracticeData[] }) {
   return (
     <div className="space-y-4">
       {items.map((p, i) => (
-        <article key={p.id} id={p.id} className="rounded-xl border border-border bg-surface px-4 py-3">
-          <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold tracking-wider text-subtle uppercase">
+        <article key={p.id} id={p.id} className="rounded-lg border border-border bg-surface px-4 py-3">
+          <div className="mb-1 flex items-center gap-2 eyebrow">
             <span>Practice {i + 1}</span>
             <span>·</span>
             <span>{p.kind === "mcq" ? "Multiple choice" : p.kind === "numeric" ? "Numerical" : "Exercise"}</span>

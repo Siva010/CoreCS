@@ -168,6 +168,18 @@ jsonb suits systems that are mostly relational but need flexible attributes: you
 
 The unbounded array makes documents huge: every small update rewrites and replicates a large document, and indexes on array elements grow with it (multikey entries). Move activity to its own collection (one document per event, or bucketed per user per day), keep only a small bounded summary (e.g., last 10 events) on the user document, and backfill with a migration.
 
+### [L2 · design] How would you model blog posts with comments in MongoDB?
+
+Embed what's read with the post and bounded: title, body, author snapshot, tags, maybe the latest 3 comments for the preview. Store comments in their own collection referencing `post_id` (with an index on `(post_id, created_at)`), because comments are unbounded and updated independently. Keep a `comment_count` on the post, updated with `$inc` when a comment is added.
+
+### [L2 · compare] MongoDB aggregation pipeline vs SQL?
+
+The pipeline is a sequence of stages — `$match` (WHERE), `$group` (GROUP BY), `$sort`, `$project` (SELECT list), `$lookup` (a left outer join), `$unwind` (flatten arrays) — applied in order. It covers most analytical queries over documents; joins via `$lookup` exist but are less optimized than relational joins, so a design that needs many of them is a sign the data is relational. Put `$match` first so indexes are used and fewer documents flow through.
+
+### [L2 · how] How does MongoDB scale writes, and what's the main design decision?
+
+Sharding: collections are split into chunks by a shard key, and chunks are distributed and balanced across shards. The shard key is the critical decision — it should have high cardinality, spread writes (a monotonically increasing key like a timestamp sends all inserts to one shard unless hashed), and appear in most queries so they target one shard instead of scatter-gathering.
+
 ## Practice
 
 ### [mcq] Which is an anti-pattern in document modeling?
@@ -195,3 +207,4 @@ Multi-document atomicity requires transactions.
 - Index nested fields (multikey for arrays); aggregation pipeline for analytics; $lookup sparingly.
 - Transactions exist but signal relational needs if used everywhere. Avoid unbounded arrays; validate schemas.
 - PostgreSQL jsonb covers many hybrid needs.
+- Embed bounded, read-together data; reference unbounded or shared data. Pipeline: $match → $group → $sort → $project ($lookup = left join). Shard key: high cardinality, spread writes, present in queries.

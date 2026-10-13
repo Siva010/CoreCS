@@ -147,7 +147,7 @@ export function InterviewHub({ index }: { index: QIndexItem[] }) {
             type="button"
             onClick={() => setMode(id)}
             className={cn(
-              "rounded-xl border p-3 text-left transition-colors",
+              "rounded-lg border p-3 text-left transition-colors",
               mode === id ? "border-accent bg-accent/5" : "border-border bg-surface hover:border-border-strong",
             )}
           >
@@ -160,7 +160,7 @@ export function InterviewHub({ index }: { index: QIndexItem[] }) {
       </div>
 
       {mode === "due" ? (
-        <div className="rounded-2xl border border-border bg-surface p-6">
+        <div className="rounded-lg border border-border bg-surface p-6">
           <h2 className="text-lg font-semibold">Spaced-repetition review</h2>
           <p className="mt-1 text-[14px] text-muted">
             Every question you grade is scheduled: <em>Again</em> returns in 10 minutes, <em>Good</em> in 1 → 3 → ~8 days and growing. Reviewing just before you would
@@ -180,9 +180,9 @@ export function InterviewHub({ index }: { index: QIndexItem[] }) {
         </div>
       ) : (
         <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
-          <div className="space-y-5 rounded-2xl border border-border bg-surface p-4 lg:sticky lg:top-20 lg:self-start">
+          <div className="space-y-5 rounded-lg border border-border bg-surface p-4 lg:sticky lg:top-20 lg:self-start">
             <div>
-              <div className="mb-2 text-[11px] font-semibold tracking-wider text-subtle uppercase">Subject</div>
+              <div className="mb-2 eyebrow">Subject</div>
               <div className="flex flex-wrap gap-1.5">
                 <Chip on={subject === "all"} onClick={() => { setSubject("all"); setLevels([]); setLessonId(""); }}>All</Chip>
                 {manifest.subjects.map((s) => (
@@ -195,7 +195,7 @@ export function InterviewHub({ index }: { index: QIndexItem[] }) {
             </div>
             {subj && (
               <div>
-                <div className="mb-2 text-[11px] font-semibold tracking-wider text-subtle uppercase">Topics (levels)</div>
+                <div className="mb-2 eyebrow">Topics (levels)</div>
                 <div className="flex max-h-44 flex-wrap gap-1.5 overflow-y-auto thin-scroll">
                   {subj.levels
                     .filter((lv) => manifest.lessons.some((l) => l.subject === subj.id && l.level === lv.n))
@@ -217,7 +217,7 @@ export function InterviewHub({ index }: { index: QIndexItem[] }) {
             )}
             {subj && (
               <div>
-                <div className="mb-2 text-[11px] font-semibold tracking-wider text-subtle uppercase">Single concept</div>
+                <div className="mb-2 eyebrow">Single concept</div>
                 <select
                   value={lessonId}
                   onChange={(e) => setLessonId(e.target.value)}
@@ -233,7 +233,7 @@ export function InterviewHub({ index }: { index: QIndexItem[] }) {
               </div>
             )}
             <div>
-              <div className="mb-2 text-[11px] font-semibold tracking-wider text-subtle uppercase">Question level</div>
+              <div className="mb-2 eyebrow">Question level</div>
               <div className="flex flex-wrap gap-1.5">
                 {([1, 2, 3, 4] as QuestionLevel[]).map((l) => (
                   <Chip key={l} on={qLevels.includes(l)} onClick={() => setQLevels((xs) => (xs.includes(l) ? xs.filter((x) => x !== l) : [...xs, l].sort()))}>
@@ -244,7 +244,7 @@ export function InterviewHub({ index }: { index: QIndexItem[] }) {
             </div>
             {mode !== "mock" && (
               <div>
-                <div className="mb-2 text-[11px] font-semibold tracking-wider text-subtle uppercase">Question type</div>
+                <div className="mb-2 eyebrow">Question type</div>
                 <div className="flex flex-wrap gap-1.5">
                   {presentTypes.map((t) => (
                     <Chip key={t} on={types.includes(t)} onClick={() => setTypes((xs) => (xs.includes(t) ? xs.filter((x) => x !== t) : [...xs, t]))} className="text-[11.5px]">
@@ -268,7 +268,7 @@ export function InterviewHub({ index }: { index: QIndexItem[] }) {
                   <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Filter question text…" className="h-10 flex-1 bg-transparent text-sm outline-none" />
                   <span className="font-mono text-[12px] text-subtle">{filtered.length}</span>
                 </div>
-                <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface">
+                <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
                   {filtered.slice(0, 400).map((q) => {
                     const l = lessonTitle(q.lessonId);
                     const p = hydrated ? qProgress[q.id] : undefined;
@@ -291,7 +291,7 @@ export function InterviewHub({ index }: { index: QIndexItem[] }) {
                 {filtered.length > 400 && <p className="mt-2 text-[12px] text-subtle">Showing first 400 — narrow the filters.</p>}
               </div>
             ) : (
-              <div className="rounded-2xl border border-border bg-surface p-6">
+              <div className="rounded-lg border border-border bg-surface p-6">
                 <div className="flex items-center gap-2">
                   <Layers3 className="h-5 w-5 text-accent" />
                   <h2 className="text-lg font-semibold">{mode === "mock" ? "Mock interview" : "Topic drill"}</h2>

@@ -71,6 +71,38 @@ flowchart TD
 4. Changes are recorded in the **write-ahead log** first; on `COMMIT` the log is forced to disk, which is what makes the change durable ([WAL](lesson:db-wal-durability)).
 5. The **transaction manager** isolates concurrent transactions so each sees a consistent view ([Isolation Levels](lesson:db-isolation-levels)).
 
+### The three-schema architecture (ANSI/SPARC)
+
+The textbook way to describe *data independence* — the property that lets storage change without breaking applications — is to split the database into three levels, each with its own schema:
+
+| Level | Schema | Who sees it | Example |
+|---|---|---|---|
+| **External (view)** | many external schemas | individual users and applications | a `customer_summary` view showing name and city only |
+| **Conceptual (logical)** | one logical schema | DBAs, designers | tables, columns, types, keys, constraints |
+| **Internal (physical)** | one physical schema | the storage engine | heap files, B+ tree indexes, page layout, compression |
+
+Between the levels sit **mappings**. Change one level and only the mapping to its neighbour must change:
+
+- **Physical data independence**: change the internal schema (add an index, move a table to faster disks, switch to a column store) without changing the conceptual schema or any query. Almost every DBMS achieves this.
+- **Logical data independence**: change the conceptual schema (split a table, add a column) without changing external schemas or applications — usually by redefining a view to present the old shape. Harder, and only partly achieved in practice.
+
+### DBMS languages
+
+| Group | Purpose | Statements |
+|---|---|---|
+| **DDL** (data definition) | define and change structure | `CREATE`, `ALTER`, `DROP`, `TRUNCATE`, `RENAME`, `COMMENT` |
+| **DML** (data manipulation) | read and change data | `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE` |
+| **DCL** (data control) | permissions | `GRANT`, `REVOKE` |
+| **TCL** (transaction control) | transaction boundaries | `BEGIN`/`START TRANSACTION`, `COMMIT`, `ROLLBACK`, `SAVEPOINT` |
+
+(Some books file `SELECT` separately as DQL.) The categories matter in practice: in MySQL and Oracle most DDL **commits implicitly**, so a `ROLLBACK` after an `ALTER TABLE` does nothing; in PostgreSQL DDL is transactional.
+
+### Where the DBMS sits: tiers
+
+- **1-tier**: application and database in one process or machine (SQLite inside a mobile app).
+- **2-tier (client–server)**: clients connect straight to the database server (a desktop app talking to PostgreSQL). Simple, but every client needs credentials and a connection.
+- **3-tier**: browser → application server → database. The application tier holds business logic, pools connections and is the only thing allowed to reach the database — the default for web systems ([Connection Management](lesson:x-connection-management)).
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
@@ -159,6 +191,22 @@ SQLite is an embedded library: zero administration, one file, excellent read per
 
 They need control the OS can't provide: choosing eviction with knowledge of access patterns (index roots vs one-off scans), ordering writes so log records reach disk before the data pages they describe (the WAL rule), and avoiding double caching. Some engines bypass the OS cache entirely with O_DIRECT; PostgreSQL uses a buffer pool plus the OS cache.
 
+### [L1 · conceptual] Explain the three-schema architecture. What are physical and logical data independence?
+
+Three levels: external (user views), conceptual (the logical schema: tables, keys, constraints) and internal (physical storage: files, indexes, page layout), connected by mappings. Physical data independence means changing the internal level — adding an index, re-partitioning, changing storage — doesn't change the logical schema or queries; nearly every DBMS provides it. Logical data independence means changing the logical schema — splitting a table, adding columns — doesn't break external views or applications, typically by redefining views to keep the old shape; it's harder and only partly achievable.
+
+### [L1 · compare] What are DDL, DML, DCL and TCL? Give two statements of each.
+
+DDL defines structure (`CREATE TABLE`, `ALTER TABLE`, `DROP`, `TRUNCATE`). DML reads and changes rows (`SELECT`, `INSERT`, `UPDATE`, `DELETE`). DCL manages permissions (`GRANT`, `REVOKE`). TCL controls transactions (`COMMIT`, `ROLLBACK`, `SAVEPOINT`). A practical follow-up: DDL commits implicitly in MySQL and Oracle but is transactional in PostgreSQL, and `TRUNCATE` is DDL even though it removes data.
+
+### [L1 · compare] DBMS vs RDBMS?
+
+A DBMS is any system that manages stored data (hierarchical, network, document, key-value…). An RDBMS is a DBMS based on the relational model: data in tables (relations), relationships expressed by matching key values, integrity enforced through keys and constraints, and a declarative query language (SQL). Interviewers usually want the consequences: an RDBMS gives normalized storage, joins on any column, constraints, and ACID transactions as standard; many non-relational systems trade some of those for scale or flexibility ([NoSQL Landscape](lesson:db-nosql-landscape)).
+
+### [L2 · design] Why do web applications use a 3-tier architecture instead of letting browsers talk to the database?
+
+Security (database credentials and the database port are never exposed; the app tier enforces authorization per request), connection management (thousands of browsers would need thousands of database connections; the app tier pools a few), and logic placement (validation, business rules and caching live in one place that can be scaled horizontally). The database stays a private, protected resource behind the application.
+
 ## Practice
 
 ### [mcq] A web app stores orders in a JSON file. Two requests append orders at the same moment and one order disappears. Which DBMS capability addresses this?
@@ -179,9 +227,30 @@ Concurrent read-modify-write of the same file lost one update — the classic ra
 
 Data pages may be written much later; durability comes from the log being flushed before COMMIT returns.
 
+### [mcq] A team adds an index and moves a table to SSD storage; no query or view changes. Which property made that possible?
+
+- [x] Physical data independence
+- [ ] Logical data independence
+- [ ] Referential integrity
+- [ ] Atomicity
+
+Changes to the internal (physical) schema are absorbed by the internal–conceptual mapping.
+
+### [mcq] Which statement is DCL?
+
+- [ ] `TRUNCATE TABLE logs`
+- [ ] `SAVEPOINT before_items`
+- [x] `REVOKE INSERT ON orders FROM analyst`
+- [ ] `MERGE INTO stock …`
+
+`GRANT`/`REVOKE` control permissions. `TRUNCATE` is DDL, `SAVEPOINT` is TCL, `MERGE` is DML.
+
 ## Quick Revision
 
 - A DBMS solves once what every application would otherwise solve badly: fast access, concurrency, atomicity, durability, integrity, security, evolution.
 - Pipeline: SQL → parser → planner → executor → access methods → buffer pool → disk; changes go to the WAL first, flushed on COMMIT.
 - Filesystem journaling ≠ transactions; `write()` ≠ durable.
 - OLTP (many small transactions) vs OLAP (large scans/aggregates); embedded (SQLite) vs client-server (PostgreSQL).
+- Three-schema architecture: external (views) → conceptual (logical) → internal (physical). Physical independence is easy; logical independence is partial (views help).
+- DDL (`CREATE/ALTER/DROP/TRUNCATE`) · DML (`SELECT/INSERT/UPDATE/DELETE`) · DCL (`GRANT/REVOKE`) · TCL (`COMMIT/ROLLBACK/SAVEPOINT`). DDL auto-commits in MySQL/Oracle.
+- Web systems are 3-tier: the app server owns credentials, pooling and business rules.

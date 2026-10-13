@@ -136,7 +136,7 @@ export default function ProcessLifecycle() {
 
   return (
     <div className="space-y-4">
-      <div className="overflow-x-auto rounded-xl border border-border bg-surface p-2 thin-scroll">
+      <div className="overflow-x-auto rounded-lg border border-border bg-surface p-2 thin-scroll">
         <svg viewBox="0 0 700 270" className="w-full min-w-[560px]" role="img" aria-label="Process state diagram">
           <defs>
             <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">

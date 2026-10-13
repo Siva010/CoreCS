@@ -91,6 +91,19 @@ After each checkpoint, the first change to a page logs a **full image** of the p
 
 `write()` only copies data into the OS page cache ([Page Cache](lesson:os-page-cache)). Durability requires `fsync()`/`fdatasync()` (or `O_DSYNC` writes), which must travel through the filesystem, the block layer and the device — whose volatile write cache must honor flush commands (or be battery/capacitor-backed). A device that lies about flushes silently breaks durability.
 
+### Deferred vs immediate modification (textbook log-based recovery)
+
+Textbooks describe two classic policies, which map onto today's engines:
+
+| | Deferred modification | Immediate modification |
+|---|---|---|
+| When data pages change | only after the transaction commits (changes are buffered until then) | any time, even before commit |
+| Log contents needed | new values (**redo** only) | old and new values (**undo** and **redo**) |
+| Recovery | redo committed transactions; uncommitted ones never touched the data | redo committed transactions, undo uncommitted ones |
+| Modern equivalent | "no-steal" buffer management | "steal" — what every major engine does |
+
+Real databases use immediate modification with steal/no-force because buffering every uncommitted change until commit would exhaust memory for large transactions ([Crash Recovery](lesson:db-crash-recovery)).
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
@@ -180,6 +193,18 @@ It flushes all pages dirtied before a certain log position and records that posi
 
 WAL isn't being recycled because something still needs it: an inactive or lagging replication slot (a replica or CDC consumer down), a failing `archive_command`, or `wal_keep_size`/max_wal_size settings. Check `pg_replication_slots` (restart_lsn far behind) and `pg_stat_archiver` failures. Fix the consumer or drop the abandoned slot (accepting that consumer must resync), and alert on slot lag and archive failures.
 
+### [L2 · compare] Deferred vs immediate database modification?
+
+Deferred modification writes changes to the database only after commit, so the log needs only new values and recovery only redoes committed transactions. Immediate modification lets changes reach the database before commit, so the log needs old values too, and recovery must redo committed work and undo uncommitted work. Modern engines use immediate modification (the steal policy) because large transactions can't keep all their changes in memory until commit.
+
+### [L2 · why] Why must the log record reach disk before the data page it describes?
+
+If a data page with an uncommitted change reached disk first and the system crashed, the log wouldn't contain the old value needed to undo it, and the database would be left with a change from a transaction that never committed. Writing the log record first guarantees that whatever is on disk can always be redone or undone from the log. The page LSN lets the buffer manager enforce this: flush the WAL up to the page's LSN before writing the page.
+
+### [L2 · how] How does group commit increase throughput without weakening durability?
+
+Instead of one log flush per commit, the database waits briefly while several transactions' commit records accumulate in the WAL buffer, then makes them all durable with one `fsync`. Each transaction still waits for its own commit record to be on disk before COMMIT returns, so durability is unchanged — but one ~1 ms flush now covers dozens of commits, so throughput scales with concurrency.
+
 ## Practice
 
 ### [mcq] Which must be durable before a transaction's COMMIT returns (with default durability settings)?
@@ -200,6 +225,15 @@ Data and index pages are written later; the log alone guarantees redo.
 
 Otherwise a crash could leave a page change on disk with no log record to undo or explain it.
 
+### [mcq] Under deferred modification, what does recovery do with a transaction that has no commit record in the log?
+
+- [ ] Undoes its changes using old values from the log
+- [x] Nothing — its changes never reached the database
+- [ ] Redoes its changes
+- [ ] Marks the database as corrupt
+
+Deferred modification writes to the database only after commit, so uncommitted transactions left no trace to undo.
+
 ## Quick Revision
 
 - Log first, apply lazily: COMMIT = commit record durable (fsync); pages written later.
@@ -207,3 +241,4 @@ Otherwise a crash could leave a page change on disk with no log record to undo o
 - Group commit amortizes flushes; checkpoints bound recovery and recycle WAL; full-page writes defeat torn pages.
 - Durability depends on the whole storage stack honoring flushes.
 - One log → crash recovery, physical replication, PITR, CDC. Watch WAL retention (slots, archiving).
+- Deferred modification → redo-only log (no-steal); immediate modification → undo + redo (steal) — what real engines use.

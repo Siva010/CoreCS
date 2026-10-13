@@ -2,7 +2,7 @@
 title: "Composite and Covering Indexes: Column Order Is Everything"
 subject: db
 level: 7
-order: 2
+order: 3
 summary: "Multi-column indexes as phone books sorted by (last name, first name): the leftmost-prefix rule, equality-before-range ordering, using an index to avoid sorts, and covering / index-only scans that never touch the table."
 depth: core
 difficulty: 3
@@ -191,6 +191,18 @@ An index containing every column a query reads (in the key or as INCLUDE columns
 
 The index is `(order_date, status)`: the range on the leading column means every entry from the last 7 days is scanned and status is only a filter. Reorder to `(status, order_date)` so the seek goes straight to pending orders in the date range — or, if 'pending' is a small subset, a partial index `ON orders (order_date) WHERE status = 'pending'`.
 
+### [L2 · compare] One composite index on (a, b) or two single-column indexes on a and b?
+
+For `WHERE a = ? AND b = ?` the composite index seeks straight to the matching entries, can return them in b order and can cover the query. Two separate indexes force the planner to pick one and filter, or to combine both with a BitmapAnd — reading two index ranges and intersecting row locations, with no ordering. Keep separate indexes only when queries genuinely filter on a or b alone, and remember `(a, b)` already serves queries on `a` alone.
+
+### [L2 · how] What does `INCLUDE` add over putting the column in the key?
+
+`CREATE INDEX … (customer_id, created_at) INCLUDE (total)` stores `total` only in leaf entries: the index can answer queries needing `total` without visiting the table (index-only scan), but `total` isn't part of the sort order, doesn't widen internal pages, and isn't counted for uniqueness — so a `UNIQUE (email) INCLUDE (name)` index enforces uniqueness on email alone. Use it for payload columns you return but never filter or sort by.
+
+### [L2 · design] For `WHERE status = ? AND created_at >= ? ORDER BY created_at` would you index (status, created_at) or (created_at, status)?
+
+`(status, created_at)`: the equality column first narrows the index to one contiguous block for that status, already sorted by `created_at`, so the range and the ORDER BY are both served and the scan can stop at the LIMIT. `(created_at, status)` must scan every status within the date range and check `status` on each entry — reading far more entries.
+
 ## Practice
 
 ### [mcq] Index on (country, city, zip). Which query can seek on all indexed columns it filters?
@@ -218,3 +230,4 @@ Equality columns first, then the sort column: the scan reads exactly the first 1
 - Matching ORDER BY (and direction) avoids sorts; LIMIT stops early.
 - Covering → index-only scan (PostgreSQL checks the visibility map; heap fetches when not all-visible).
 - (a) is redundant next to (a, b) in most cases; a range on a leading column turns later columns into filters.
+- One composite (a, b) beats two single-column indexes for `a = ? AND b = ?`; `INCLUDE` adds payload for index-only scans without changing order or uniqueness.

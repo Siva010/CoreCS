@@ -170,7 +170,7 @@ export default function SqlPlayground() {
             </button>
             {grouped.map(([level, items]) => (
               <div key={level}>
-                <div className="mb-1 px-2 text-[11px] font-semibold tracking-wider text-subtle uppercase">
+                <div className="mb-1 px-2 eyebrow">
                   L{level} · {LEVEL_LABEL[level]}
                 </div>
                 <ul className="space-y-0.5">
@@ -194,7 +194,7 @@ export default function SqlPlayground() {
 
         <div className="min-w-0 space-y-3">
           {exercise ? (
-            <div className="rounded-xl border border-border bg-surface p-4">
+            <div className="rounded-lg border border-border bg-surface p-4">
               <div className="mb-1 flex flex-wrap items-center gap-2 text-[11.5px] font-semibold tracking-wide text-subtle uppercase">
                 <span>L{exercise.level}</span>
                 <span>·</span>

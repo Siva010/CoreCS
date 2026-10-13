@@ -99,6 +99,38 @@ advance two cursors; emit pairs when keys match; handle runs of duplicates
 - **Sort**: in-memory quicksort if the data fits in `work_mem`; otherwise **external merge sort** (sorted runs written to temp files, then merged). `ORDER BY … LIMIT k` uses a **top-N heapsort**, keeping only k rows.
 - **Aggregation**: HashAggregate (hash table of groups) or GroupAggregate over sorted input ([Aggregation](lesson:sql-aggregation)).
 
+### Join cost formulas (the textbook numericals)
+
+Exams and some interviews count **block transfers**. Notation: relation R has n_R records in b_R blocks, S has n_S records in b_S blocks; M buffer pages are available; R is the outer input.
+
+| Algorithm | Block transfers (worst case) | Notes |
+|---|---|---|
+| Simple nested loop | n_R × b_S + b_R | rescans S once per **record** of R — put the smaller relation outside |
+| Block nested loop | b_R × b_S + b_R | rescans S once per **block** of R |
+| Block nested loop, M buffers | ⌈b_R / (M − 2)⌉ × b_S + b_R | M − 2 pages hold a chunk of R; one for S, one for output |
+| Index nested loop | b_R + n_R × c | c = cost of one index lookup on S (height + data block) |
+| Sort-merge (inputs already sorted) | b_R + b_S | add the sort cost otherwise |
+| Hash join (grace, partitions fit in memory) | 3 × (b_R + b_S) | partition both (read + write), then read partitions to join |
+
+Worked example (the classic one): **student** has 5,000 records in 100 blocks, **takes** has 10,000 records in 400 blocks.
+
+- Simple nested loop, student outer: 5,000 × 400 + 100 = **2,000,100** transfers; with takes outer: 10,000 × 100 + 400 = 1,000,400.
+- Block nested loop, student outer: 100 × 400 + 100 = **40,100**.
+- Hash join: 3 × (100 + 400) = **1,500**.
+- Merge join on already sorted inputs: 100 + 400 = **500**.
+
+Same answer, four orders of magnitude apart — which is the whole case for a cost-based optimizer.
+
+### External merge sort
+
+Sorting a relation bigger than memory (b blocks, M buffer pages):
+
+1. **Run generation**: read M pages at a time, sort in memory, write a sorted run → ⌈b / M⌉ runs.
+2. **Merge passes**: merge up to M − 1 runs at a time (one buffer per input run, one for output) until one run remains → ⌈log_{M−1}(⌈b / M⌉)⌉ passes.
+3. Every pass reads and writes all b blocks: total ≈ 2b × (1 + number of merge passes) transfers (subtract b if the final output isn't written back).
+
+Example: b = 10,000 blocks, M = 101 → 100 runs → one 100-way merge pass → 2 × 10,000 × 2 = 40,000 transfers. Doubling memory rarely saves a pass; that's why databases spill sorts and hash tables to disk gracefully rather than failing.
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
@@ -197,6 +229,18 @@ The database first collects matching row locations from one or more indexes into
 
 The planner estimated one row from the outer side (so a nested loop looked cheap) but got 380,000, executing the inner lookup 380,000 times. Causes: stale statistics after a data change, correlated predicates the planner assumes independent, or a skewed parameter value with a generic plan. Fix the estimate: ANALYZE the tables, add extended statistics for correlated columns, raise the statistics target, or rewrite/split the query; as a stopgap, force a different plan for that query.
 
+### [L2 · numerical] R has 100 blocks (5,000 records), S has 400 blocks (10,000 records). Compare nested loop, block nested loop and hash join costs with R as the outer input.
+
+Simple nested loop rescans S for every R record: 5,000 × 400 + 100 = 2,000,100 block transfers. Block nested loop rescans S once per R block: 100 × 400 + 100 = 40,100. Grace hash join partitions and rejoins: 3 × (100 + 400) = 1,500. With more memory, block nested loop improves to ⌈100 / (M − 2)⌉ × 400 + 100 — with M = 102, R fits entirely and the cost drops to 500.
+
+### [L2 · how] How does a database sort a table larger than memory?
+
+External merge sort: read memory-sized chunks, sort each in memory and write it out as a sorted run; then merge M − 1 runs at a time, repeatedly, until one sorted run remains. Each pass reads and writes the whole table, so the cost is about 2b × (number of passes). With realistic memory, almost every sort finishes in one or two merge passes. In PostgreSQL this shows as `Sort Method: external merge  Disk: …`.
+
+### [L2 · why] Why is the order of inputs in a nested loop join so important?
+
+The outer input is read once; the inner is read (or probed) once per outer row or block. Putting the smaller relation — or the one with fewer qualifying rows after filters — on the outside minimizes the number of inner passes, and an index on the inner join key turns each pass into a lookup. The optimizer chooses the order from estimated row counts, which is why misestimates produce nested loops with millions of inner iterations.
+
 ## Practice
 
 ### [mcq] Which join algorithm can evaluate `ON a.ts BETWEEN b.start AND b.end`?
@@ -214,9 +258,23 @@ Hash joins need equality; nested loops handle arbitrary conditions (ideally with
 Each input is read once: 500 (build) + 10,000 (probe) = **10,500** rows — linear, versus 5,000,000 comparisons for a nested loop without an index.
 :::
 
+### [numeric 40100] Block nested loop join: outer R has 100 blocks, inner S has 400 blocks, only one buffer block per relation. How many block transfers?
+
+:::answer
+For each of R's 100 blocks, read all 400 blocks of S: 100 × 400 = 40,000, plus reading R once: 100. Total **40,100** transfers.
+:::
+
+### [numeric 2] External sort of 10,000 blocks with 101 buffer pages. How many passes over the data, counting run generation?
+
+:::answer
+Run generation creates ⌈10,000 / 101⌉ = 100 runs (pass 1). With 100 input buffers, all 100 runs merge in a single pass (pass 2). Total **2** passes.
+:::
+
 ## Quick Revision
 
 - Scans: seq (much of the table), index (few rows/ordered), index-only (covering + all-visible), bitmap (medium selectivity, AND/OR).
 - Joins: nested loop (small outer + indexed inner, any condition), hash (large, equality, memory), merge (sorted inputs).
 - Sorts/hashes spill to disk beyond work_mem; work_mem is per operator.
 - Misestimated nested loops are the #1 plan disaster.
+- Costs (block transfers): nested loop n_R·b_S + b_R · block NL b_R·b_S + b_R · index NL b_R + n_R·c · merge (sorted) b_R + b_S · grace hash 3(b_R + b_S).
+- External sort: ⌈b/M⌉ runs, (M−1)-way merges, ≈ 2b per pass.

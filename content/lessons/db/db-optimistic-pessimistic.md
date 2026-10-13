@@ -2,7 +2,7 @@
 title: "Optimistic vs Pessimistic Concurrency Control"
 subject: db
 level: 10
-order: 5
+order: 7
 summary: "Lock first or check at the end? SELECT … FOR UPDATE versus version columns and compare-and-set updates, ETags and If-Match in APIs, retries and idempotency keys, and how to choose based on contention and the cost of wasted work."
 depth: core
 difficulty: 3
@@ -180,6 +180,18 @@ If the affected-row count is 1, success. If 0, someone else updated it: reload a
 
 Nearly every attempt conflicts on the same row, so most transactions fail and retry, multiplying load (retry storms) while few succeed. Better: an atomic conditional decrement (`UPDATE … SET stock = stock - 1 WHERE id = ? AND stock > 0`), which serializes on the row lock without wasted work; or pre-split inventory into many rows (per-unit or bucketed) claimed with `FOR UPDATE SKIP LOCKED`; or queue purchase requests and process them sequentially; plus rate limiting at the edge.
 
+### [L2 · how] How does an ETag/If-Match flow implement optimistic concurrency in a REST API?
+
+`GET /docs/42` returns the representation with `ETag: "7"` (its version). The client edits and sends `PUT /docs/42` with `If-Match: "7"`. The server performs a conditional update (`… WHERE id = 42 AND version = 7`); if it updates a row, it returns 200 with `ETag: "8"`; if another client saved first, nothing matches and it returns **412 Precondition Failed**, so the client can reload and merge instead of silently overwriting.
+
+### [L2 · compare] When does optimistic concurrency perform worse than pessimistic locking?
+
+Under high contention on the same rows: every conflict discards a whole transaction's work, retries collide again, and throughput collapses into retry storms while users see errors. Pessimistic locking queues the same requests and processes them one by one, wasting nothing. Optimistic wins when conflicts are rare or "think time" is long (user edits); pessimistic wins for hot rows updated in short transactions.
+
+### [L1 · compare] What is the difference between `SELECT … FOR UPDATE` and `FOR SHARE`, and what do `NOWAIT` and `SKIP LOCKED` change?
+
+`FOR UPDATE` locks the selected rows exclusively against other writers and other `FOR UPDATE`/`FOR SHARE` lockers (plain MVCC reads still proceed); `FOR SHARE` lets several transactions hold the lock together but blocks updates and deletes. By default a conflicting request waits; `NOWAIT` fails immediately instead, and `SKIP LOCKED` returns only rows nobody else has locked — the standard way to let many workers pull from a job queue without blocking each other.
+
 ## Practice
 
 ### [mcq] An optimistic update `UPDATE t SET v = $1, version = version + 1 WHERE id = 5 AND version = 3` reports 0 rows updated. What does it mean?
@@ -207,3 +219,4 @@ Locks and transactions can't be held across user think time.
 - HTTP analogue: ETag + If-Match → 412.
 - Atomic single statements avoid both. Pair retries with idempotency keys.
 - Optimistic degrades into retry storms on hotspots.
+- HTTP optimistic concurrency: ETag + If-Match → 412 on conflict. Optimistic loses under high contention (retry storms); pessimistic loses when think time is long.

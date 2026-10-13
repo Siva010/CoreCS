@@ -211,6 +211,22 @@ The purchase likely reads stock, checks it in code, then writes. Make the check 
 
 ALTER TABLE needs an ACCESS EXCLUSIVE lock. A long-running query (e.g., an analytics report) held a lock on `orders`, so the ALTER waited — and every subsequent query on `orders` queued behind the waiting ALTER's pending exclusive lock. The table was effectively locked until the report finished. Fix: set `lock_timeout` for migrations and retry, cancel long queries before migrating, and monitor lock waits.
 
+### [L1 · how] How do GRANT and REVOKE work? How would you give an analytics team read-only access?
+
+Privileges (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `REFERENCES`, `USAGE`, `EXECUTE`…) are granted on objects to roles; users are roles that can log in. Best practice is to grant to a group role and add people to it:
+
+`CREATE ROLE analytics_ro NOLOGIN; GRANT USAGE ON SCHEMA public TO analytics_ro; GRANT SELECT ON ALL TABLES IN SCHEMA public TO analytics_ro; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO analytics_ro; GRANT analytics_ro TO priya;`
+
+`REVOKE` removes privileges; `WITH GRANT OPTION` lets the grantee pass a privilege on (revoking it can cascade). Point analysts at a read replica too, so their queries can't load the primary.
+
+### [L1 · compare] CHAR vs VARCHAR vs TEXT?
+
+`CHAR(n)` is fixed length and pads with spaces (comparisons and lengths then behave surprisingly); `VARCHAR(n)` is variable length with a maximum; `TEXT` is variable length without a declared limit. In PostgreSQL all three use the same storage and `TEXT`/`VARCHAR` perform identically — use `TEXT` with a CHECK constraint when you need a limit. In MySQL, `VARCHAR` length affects index-key limits and in-memory temporary tables, so sizes matter more.
+
+### [L2 · compare] Can TRUNCATE be rolled back?
+
+In PostgreSQL, yes — TRUNCATE is transactional: inside `BEGIN … ROLLBACK` the data comes back. In MySQL and Oracle it's DDL with an **implicit commit**, so it can't be undone (and in MySQL it also resets AUTO_INCREMENT). In SQL Server it can be rolled back inside an explicit transaction. Either way TRUNCATE doesn't fire row-level DELETE triggers, and in PostgreSQL it fails if other tables reference this one by foreign key unless you `TRUNCATE … CASCADE`.
+
 ## Practice
 
 ### [mcq] Which statement correctly and atomically prevents stock from going negative when two requests race?
@@ -235,6 +251,29 @@ DO UPDATE SET order_count = customer_stats.order_count + 1;
 The primary key is the conflict target. The increment reads the current stored value inside the database, so concurrent upserts for the same customer serialize on the row instead of losing counts.
 :::
 
+### [mcq] In MySQL (InnoDB, autocommit off), which statement's effect can still be undone with ROLLBACK?
+
+- [x] `DELETE FROM logs WHERE created_at < '2024-01-01'`
+- [ ] `TRUNCATE TABLE logs`
+- [ ] `DROP TABLE logs`
+- [ ] `ALTER TABLE logs ADD COLUMN source text`
+
+DML is transactional. TRUNCATE, DROP and ALTER are DDL and commit implicitly in MySQL.
+
+### [exercise] Create a role that can read and insert into `orders` but never update or delete, and give it to user `svc_ingest`.
+
+:::solution
+```sql
+CREATE ROLE orders_writer NOLOGIN;
+GRANT USAGE ON SCHEMA public TO orders_writer;
+GRANT SELECT, INSERT ON orders TO orders_writer;
+GRANT USAGE ON SEQUENCE orders_id_seq TO orders_writer;   -- if the id comes from a sequence
+GRANT orders_writer TO svc_ingest;
+```
+
+No `UPDATE`/`DELETE` is granted, so those statements fail with "permission denied". Granting to a role (not directly to the user) keeps permissions manageable when people and services change.
+:::
+
 ## Quick Revision
 
 - DML finds rows like SELECT, then writes: indexes matter for writes too.
@@ -242,3 +281,5 @@ The primary key is the conflict target. The increment reads the current stored v
 - DELETE (rows, logged) vs TRUNCATE (storage swap) vs DROP (table gone).
 - Types: numeric for money, timestamptz, bigint ids, text.
 - DDL takes strong locks: lock_timeout, CONCURRENTLY, expand–contract migrations, batch big changes.
+- DCL: `GRANT`/`REVOKE` privileges to roles; grant to group roles, set default privileges, least privilege.
+- `CHAR(n)` pads; `VARCHAR(n)`/`TEXT` don't (same storage in PostgreSQL). TRUNCATE rolls back in PostgreSQL, not in MySQL/Oracle.

@@ -150,6 +150,18 @@ It points out that even without partitions there's a trade-off: to keep replicas
 
 Profiles: prioritize availability and latency — replicate asynchronously to all regions, serve reads locally, accept writes in the home region (or multi-region with last-write-wins/merge), tolerate brief staleness. Balances: prioritize consistency — a single home region/leader per account (or a consensus-replicated database), synchronous/majority writes, and refuse or redirect writes when the owning quorum isn't reachable. Different data, different choices, stated explicitly.
 
+### [L2 · conceptual] Is MongoDB (or PostgreSQL with replicas) "CP" or "AP"?
+
+Neither label fits a whole system; it depends on configuration and on the operation. A MongoDB replica set with majority write concern and majority/linearizable reads behaves CP — the minority side of a partition can't accept writes. With `w: 1` writes and reads from secondaries it behaves more AP: available, possibly stale, and acknowledged writes can be rolled back after failover. PostgreSQL with synchronous replication and consensus-based failover is CP; reads from asynchronous replicas are AP-style. Answer with the specific configuration.
+
+### [L1 · why] Why is "pick two of C, A and P" misleading?
+
+Partition tolerance isn't optional: networks do partition (and pauses look like partitions), so every distributed system must handle P. The real statement is conditional — *during a partition* a system chooses between answering (A) and staying linearizable (C). When there's no partition it can have both, and the everyday trade-off is latency vs consistency, which is what PACELC adds.
+
+### [L2 · scenario] A shopping cart and a payment ledger live in the same globally distributed system. How would you configure each?
+
+The cart favours availability and low latency (PA/EL): accept writes in every region, merge concurrent changes (union of items, a CRDT), tolerate brief staleness. The ledger favours consistency (PC/EC): writes go through a majority quorum or a single leader with synchronous replication, reads that decide money use the leader or linearizable reads, and the minority side of a partition refuses writes rather than risk double spending.
+
 ## Practice
 
 ### [mcq] In CAP, what does "C" mean?
@@ -177,3 +189,4 @@ Only a majority can form quorums, so consistency is preserved at the cost of the
 - PACELC: else, latency vs consistency — the everyday trade-off.
 - CAP's C = linearizability ≠ ACID's C.
 - Choose per data/operation by the cost of errors vs the cost of stale/conflicting data.
+- CP/AP depends on configuration and operation — say which. P is mandatory; the real choice during a partition is C vs A, and PACELC's L vs C applies every day.

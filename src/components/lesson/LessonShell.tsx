@@ -70,9 +70,9 @@ export function LessonShell({ lessonId, depthBlocks = {}, children }: { lessonId
         <div className="no-print sticky top-14 z-30 -mx-4 mb-8 border-b border-border bg-bg/90 px-4 py-2 backdrop-blur sm:-mx-6 sm:px-6 lg:-mx-10 lg:px-10">
           <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
             <div className="flex items-center gap-2">
-              <Clock className="h-3.5 w-3.5 text-subtle" />
-              <span className="hidden text-[12px] font-medium text-subtle sm:inline">Revision mode</span>
-              <div role="radiogroup" aria-label="Revision mode" className="inline-flex rounded-lg border border-border bg-surface-2 p-0.5">
+              <Clock className="size-3.5 text-subtle" />
+              <span className="eyebrow hidden sm:inline">Revision</span>
+              <div role="radiogroup" aria-label="Revision mode" className="inline-flex gap-0.5 rounded-lg border border-border bg-surface p-1">
                 {REVISION_MODES.map((m) => (
                   <button
                     key={m.id}
@@ -82,8 +82,8 @@ export function LessonShell({ lessonId, depthBlocks = {}, children }: { lessonId
                     title={m.blurb}
                     onClick={() => chooseMode(m.id)}
                     className={cn(
-                      "rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors",
-                      mode === m.id ? "bg-surface text-fg shadow-sm" : "text-muted hover:text-fg",
+                      "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                      mode === m.id ? "bg-surface-2 text-fg" : "text-muted hover:bg-surface-2 hover:text-fg",
                     )}
                   >
                     {m.label}
@@ -93,9 +93,9 @@ export function LessonShell({ lessonId, depthBlocks = {}, children }: { lessonId
             </div>
             {options.length > 1 && (
               <div className="flex items-center gap-2">
-                <Layers className="h-3.5 w-3.5 text-subtle" />
-                <span className="hidden text-[12px] font-medium text-subtle sm:inline">Depth</span>
-                <div role="radiogroup" aria-label="Maximum depth" className="inline-flex rounded-lg border border-border bg-surface-2 p-0.5">
+                <Layers className="size-3.5 text-subtle" />
+                <span className="eyebrow hidden sm:inline">Depth</span>
+                <div role="radiogroup" aria-label="Maximum depth" className="inline-flex gap-0.5 rounded-lg border border-border bg-surface p-1">
                   {options.map((d, i) => {
                     const count = depthBlocks[d] ?? 0;
                     return (
@@ -107,13 +107,13 @@ export function LessonShell({ lessonId, depthBlocks = {}, children }: { lessonId
                         title={i === 0 ? "Just the core lesson — hide the deep-dive sections" : `Reveals ${count} deep-dive section${count === 1 ? "" : "s"}. ${DEPTH_META[d].blurb}`}
                         onClick={() => chooseDepth(d)}
                         className={cn(
-                          "flex items-center gap-1 rounded-md px-2 py-1 text-[12.5px] font-medium transition-colors",
-                          effective === d ? "bg-surface text-fg shadow-sm" : "text-muted hover:text-fg",
+                          "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                          effective === d ? "bg-surface-2 text-fg" : "text-muted hover:bg-surface-2 hover:text-fg",
                         )}
                       >
-                        {i > 0 && <span aria-hidden className="text-[8px]">{DEPTH_META[d].emoji}</span>}
+                        {i > 0 && <span aria-hidden className={cn("size-1.5 rounded-full bg-current", DEPTH_META[d].text)} />}
                         {i === 0 ? "Lesson" : DEPTH_META[d].short}
-                        {i > 0 && <span className="text-[11px] text-subtle">+{count}</span>}
+                        {i > 0 && <span className="text-2xs text-subtle tabular-nums">+{count}</span>}
                       </button>
                     );
                   })}
@@ -122,10 +122,10 @@ export function LessonShell({ lessonId, depthBlocks = {}, children }: { lessonId
             )}
           </div>
           {mode !== "deep" && (
-            <p className="mt-1.5 text-[12px] text-subtle">{REVISION_MODES.find((m) => m.id === mode)?.blurb} Switch to Deep Dive for the full lesson.</p>
+            <p className="mt-1.5 text-xs text-subtle">{REVISION_MODES.find((m) => m.id === mode)?.blurb} Switch to Deep Dive for the full lesson.</p>
           )}
           {hidden > 0 && (
-            <p className="mt-1.5 text-[12px] text-subtle">
+            <p className="mt-1.5 text-xs text-subtle">
               {hidden} deep-dive section{hidden === 1 ? "" : "s"} hidden — the mechanism detail interviewers probe in follow-ups. Raise the depth to read {hidden === 1 ? "it" : "them"}.
             </p>
           )}

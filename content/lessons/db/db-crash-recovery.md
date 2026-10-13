@@ -75,6 +75,16 @@ Recovery from a log needs the data files to still exist. Crash recovery handles 
 - **PITR**: restore the base backup, replay archived WAL up to a target time/LSN/transaction — e.g., one second before the bad DELETE.
 - **Logical backups** (`pg_dump`): portable SQL/data snapshots; slower to restore for big databases, no PITR.
 
+### Shadow paging: recovery without a log
+
+An older alternative: keep two page tables. The **current** page table points to pages the transaction modifies, which are written to **new** locations (copy-on-write); the **shadow** page table still points to the old versions. Commit = atomically switch a single pointer from the shadow table to the current one. Crash before the switch → the shadow table is still the truth; nothing to undo or redo.
+
+Why it isn't used for general-purpose databases: data scatters across the disk (no clustering), every commit must write all modified pages plus the page table, garbage collection of old pages is needed, and concurrent transactions are hard to support. The idea survives where those costs fit — LMDB's copy-on-write B+ tree and copy-on-write filesystems such as ZFS and Btrfs ([Journaling](lesson:os-journaling)).
+
+### Checkpoints in textbook recovery
+
+With a simple log, a checkpoint record `<checkpoint L>` (L = transactions active at that moment) is written after flushing all modified buffers. On recovery, scan back to the last checkpoint: transactions that committed before it need nothing; transactions that committed after it are **redone**; transactions still active (in L or started later) with no commit record are **undone**. ARIES refines this with fuzzy checkpoints and LSNs so the system doesn't stop to flush.
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
@@ -160,6 +170,18 @@ Steal lets dirty pages with uncommitted changes reach disk, so after a crash tho
 
 Replication propagated the delete, so recover from backups: restore the latest base backup to a new instance and replay archived WAL up to just before the DELETE (recovery_target_time 14:31:59 or the xid/LSN before it). Then either promote that instance or copy the missing orders back into production, reconciling with orders created after 14:32. Afterwards: restrict direct production write access, require transactions and row-count checks for manual changes, and consider delayed replicas as an extra safety net.
 
+### [L2 · compare] Log-based recovery vs shadow paging?
+
+Log-based recovery writes changes in place (or lazily) and records them in a sequential log; recovery redoes and undoes from the log. Shadow paging writes modified pages to new locations and commits by atomically switching a page-table pointer; recovery is trivial (the old table is still valid). Shadow paging fragments data, makes every commit write all changed pages and the page table, needs garbage collection, and handles concurrency poorly — so general-purpose databases use logging, while copy-on-write designs (LMDB, ZFS, Btrfs) use the shadow idea.
+
+### [L2 · trace] The log holds: T1 start, T1 write, T1 commit, checkpoint, T2 start, T2 write, T3 start, T3 write, T2 commit — then a crash. What does recovery do with T1, T2 and T3?
+
+T1 committed before the checkpoint, so its changes were flushed: nothing to do. T2 committed after the checkpoint: **redo** its changes. T3 has no commit record: **undo** its changes (or, in PostgreSQL, simply treat its versions as invisible). Redo before undo, so the database first returns to its exact pre-crash state.
+
+### [L2 · why] Why do checkpoints exist?
+
+Without them, recovery would replay the log from the very beginning, and the log could never be truncated. A checkpoint guarantees that changes before a certain point are on disk, so recovery starts from there and older log segments can be recycled (unless replicas or archiving still need them). The trade-off is I/O: frequent checkpoints shorten recovery but write more pages (and, in PostgreSQL, more full-page images).
+
 ## Practice
 
 ### [mcq] During redo, a log record has LSN 500 and the page on disk has pageLSN 520. What happens?
@@ -180,6 +202,15 @@ pageLSN ≥ record LSN means the page already contains this change; redo is idem
 
 MVCC visibility makes rollback a status flag rather than a data change.
 
+### [mcq] Which statement about shadow paging is true?
+
+- [ ] It needs an undo pass after a crash
+- [x] Commit is a single atomic switch of a page-table pointer
+- [ ] It keeps data clustered on disk
+- [ ] Every major relational database uses it today
+
+The old (shadow) page table stays valid until the switch, so a crash before commit leaves the database unchanged.
+
 ## Quick Revision
 
 - Crash leaves files with missing committed changes (no-force) and present uncommitted ones (steal).
@@ -187,3 +218,5 @@ MVCC visibility makes rollback a status flag rather than a data change.
 - PostgreSQL: redo-only; uncommitted versions invisible. InnoDB: redo then background undo.
 - Checkpoints bound recovery time. Backups + WAL archive = PITR for disk loss and human error.
 - Replication is not a backup. Test restores.
+- Shadow paging: copy-on-write pages + atomic page-table switch; no log, but fragmentation and costly commits (lives on in LMDB, ZFS).
+- After a crash: committed-before-checkpoint → nothing; committed-after → redo; no commit record → undo.

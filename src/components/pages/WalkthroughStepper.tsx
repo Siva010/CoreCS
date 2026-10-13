@@ -71,7 +71,7 @@ export function WalkthroughStepper({ steps }: { steps: { layer: string; title: s
       </div>
 
       {/* Layer timeline: one lane per layer, one column per step */}
-      <div className="mb-5 overflow-x-auto rounded-xl border border-border bg-surface p-3 thin-scroll">
+      <div className="mb-5 overflow-x-auto rounded-lg border border-border bg-surface p-3 thin-scroll">
         <div className="grid gap-y-1" style={{ gridTemplateColumns: `140px repeat(${steps.length}, minmax(22px, 1fr))` }}>
           {lanes.map((lane) => {
             const m = layerMeta(lane);
@@ -113,7 +113,7 @@ export function WalkthroughStepper({ steps }: { steps: { layer: string; title: s
           {steps.map((s, k) => {
             const m = layerMeta(s.layer);
             return (
-              <li key={k} className="rounded-2xl border border-border bg-surface p-5">
+              <li key={k} className="rounded-lg border border-border bg-surface p-5">
                 <StepHeader n={k + 1} title={s.title} layer={m} />
                 <div className="mt-3">{s.content}</div>
               </li>
@@ -121,7 +121,7 @@ export function WalkthroughStepper({ steps }: { steps: { layer: string; title: s
           })}
         </ol>
       ) : (
-        <div className="rounded-2xl border border-border bg-surface p-5">
+        <div className="rounded-lg border border-border bg-surface p-5">
           <StepHeader n={i + 1} title={steps[i].title} layer={layerMeta(steps[i].layer)} total={steps.length} />
           <div className="mt-3 min-h-40">{steps[i].content}</div>
           <div className="mt-5 flex items-center justify-between border-t border-border pt-4">

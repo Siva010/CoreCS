@@ -2,7 +2,7 @@
 
 **Understand the machine. Master the interview.**
 
-A mechanism-first curriculum covering Operating Systems, Computer Networks and Databases (with SQL), built as a Next.js site: 150 concept lessons, 700+ interview questions, 300+ practice
+A mechanism-first curriculum covering Operating Systems, Computer Networks and Databases (with SQL), built as a Next.js site: 153 concept lessons, 900+ interview questions, 380 practice
 items, 40 browser labs and visualizations (including a real PostgreSQL compiled to WebAssembly), 18 incident case studies, 16 "under the hood" walkthroughs and a page of interview traps.
 
 The goal isn't to list answers to memorize. It's to teach enough of the underlying systems that the answers become consequences of understanding.
@@ -48,7 +48,7 @@ Other scripts:
 - **Progress**: a Zustand store persisted to `localStorage` (`src/lib/progress/`), with SM-2 style spaced repetition, mastery estimation and a revision queue. Nothing leaves the browser.
 - **Search**: a static `/search-index.json` consumed by MiniSearch in the ⌘K palette.
 
-See [CONTENT_GUIDE.md](CONTENT_GUIDE.md) for how to write or extend lessons, questions, case studies and walkthroughs.
+See [CONTENT_GUIDE.md](CONTENT_GUIDE.md) for how to write or extend lessons, questions, case studies and walkthroughs, and [DBMS_REVIEW.md](DBMS_REVIEW.md) for an assessment of the database track.
 
 ## Deployment
 
@@ -72,7 +72,7 @@ content-hashed `_next/static` files, and an explicit JSON content type for the e
 |---|---|---|
 | Operating Systems | 45 | 12 (mental model → processes → concurrency → scheduling → sync → deadlocks → memory → virtual memory → storage/IO → kernel boundary → performance → isolation) |
 | Computer Networks | 42 | 12 (how data travels → models → Ethernet → IP → TCP → UDP → DNS → HTTP → TLS → web infrastructure → performance → advanced) |
-| Databases & SQL | 55 | 16 (why databases → relational model → SQL → joins → advanced SQL → modeling → storage → indexing → execution → transactions → concurrency → recovery → replication → sharding → NoSQL → distributed) |
+| Databases & SQL | 58 | 16 (why databases → relational model → SQL → joins → advanced SQL → modeling → storage → indexing → execution → transactions → concurrency → recovery → replication → sharding → NoSQL → distributed) |
 | Cross-domain connections | 8 | 2 (end-to-end journeys, unifying patterns) |
 
 Every lesson declares its prerequisites, so the curriculum is a dependency graph rather than a list; the validator rejects cycles, unknown references and stage inversions.

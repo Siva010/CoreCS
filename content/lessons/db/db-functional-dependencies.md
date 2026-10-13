@@ -99,6 +99,14 @@ Minimal cover: **{ A → B, B → C }**.
 
 ::lab{id=normalization}
 
+### Equivalence of two FD sets
+
+Two sets F and G are **equivalent** if each implies the other: every FD in G can be derived from F, and vice versa. Test it with closures — for each X → Y in G, compute X⁺ under F and check Y ⊆ X⁺; then swap roles. Example: F = { A → B, B → C } and G = { A → B, B → C, A → C } are equivalent (A → C follows from F by transitivity); G = { A → C, B → C } is not, because A⁺ under it is {A, C}, which lacks B.
+
+### Counting super keys
+
+Every superset of a candidate key is a super key. With n attributes and a single-attribute candidate key, there are 2^(n−1) super keys. With two keys K1 and K2, use inclusion–exclusion: |supersets of K1| + |supersets of K2| − |supersets of K1 ∪ K2|. For R(A, B, C, D) with keys {A} and {B}: 8 + 8 − 4 = 12.
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
@@ -182,6 +190,18 @@ X⁺ is the set of attributes functionally determined by X under the FDs, comput
 
 A partial dependency is a non-prime attribute depending on a proper subset of a candidate key (violates 2NF). A transitive dependency is a non-prime attribute depending on another non-key attribute set, which in turn depends on the key: key → X → Y (violates 3NF).
 
+### [L1 · conceptual] State Armstrong's axioms. Why do they matter?
+
+Reflexivity (if Y ⊆ X then X → Y), augmentation (if X → Y then XZ → YZ) and transitivity (if X → Y and Y → Z then X → Z). They are **sound** (they never derive an FD that doesn't hold) and **complete** (every implied FD can be derived), so attribute closure — which applies them mechanically — is a correct way to test keys and implications. Union, decomposition and pseudo-transitivity follow from the three.
+
+### [L2 · how] How do you check whether two sets of functional dependencies are equivalent?
+
+Show that each set covers the other. For every FD X → Y in G, compute X⁺ using F and check that Y ⊆ X⁺; then do the same for every FD of F using G. If both directions hold, the sets are equivalent — they allow exactly the same relation instances. Minimal covers are a way to find a small equivalent set.
+
+### [L2 · numerical] R(A, B, C, D, E) with F = { A → BC, CD → E, B → D, E → A }. Find the candidate keys.
+
+Single attributes: A⁺ = {A, B, C, D, E} → A is a key. E⁺ = {E, A, …} = all → E is a key. CD⁺ = {C, D, E, A, B} → CD is a key. BC⁺ = {B, C, D, E, A} → BC is a key. B⁺ = {B, D}, C⁺ = {C}, D⁺ = {D} are not. Candidate keys: **A, E, CD, BC** (all minimal). Every attribute is prime here.
+
 ## Practice
 
 ### [mcq] R(A, B, C, D, E), F = { A → B, B → C, CD → E }. What is {A}⁺?
@@ -202,6 +222,12 @@ A → B, then B → C; CD → E needs D, which A doesn't determine.
 
 A⁺ = {A, B, C}; {A, B} is a super key but not minimal.
 
+### [numeric 12] R(A, B, C, D) has exactly two candidate keys, {A} and {B}. How many super keys does it have?
+
+:::answer
+Supersets of {A}: 2³ = 8. Supersets of {B}: 8. Supersets of both {A, B}: 2² = 4, counted twice. Total 8 + 8 − 4 = **12**.
+:::
+
 ## Quick Revision
 
 - X → Y: equal X ⇒ equal Y. A business rule, not a data pattern.
@@ -210,3 +236,5 @@ A⁺ = {A, B, C}; {A, B} is a super key but not minimal.
 - Keys: attributes on no RHS are in every key; RHS-only attributes are in none; grow from the must-have set.
 - Minimal cover: split RHS, drop extraneous LHS attributes, drop redundant FDs.
 - Lossless binary split iff the shared attributes are a key of one side.
+- Armstrong's axioms (reflexivity, augmentation, transitivity) are sound and complete; closure applies them mechanically.
+- F ≡ G iff each covers the other (check every FD's closure both ways). Super keys: inclusion–exclusion over candidate keys.

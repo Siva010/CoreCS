@@ -268,7 +268,7 @@ export default function TcpHandshake() {
       )}
 
       <div className="grid gap-4 lg:grid-cols-[1fr_300px]">
-        <div className="overflow-x-auto rounded-xl border border-border bg-surface p-2 thin-scroll">
+        <div className="overflow-x-auto rounded-lg border border-border bg-surface p-2 thin-scroll">
           <svg viewBox={`0 0 560 ${H}`} className="w-full min-w-[460px]" role="img" aria-label="TCP segment sequence diagram">
             <defs>
               <marker id="tcpa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">

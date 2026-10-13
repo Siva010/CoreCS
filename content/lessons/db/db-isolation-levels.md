@@ -2,7 +2,7 @@
 title: "Isolation Levels: What Each One Really Guarantees"
 subject: db
 level: 10
-order: 2
+order: 3
 summary: "Read Uncommitted, Read Committed, Repeatable Read, Snapshot and Serializable — the standard's table, what PostgreSQL and MySQL actually implement, how each level is enforced, and how to choose one (and handle the retries)."
 depth: core
 difficulty: 3
@@ -184,6 +184,18 @@ Either Read Committed with explicit row locks — `SELECT … FOR UPDATE` on bot
 
 SSI lets transactions read from snapshots without blocking, tracks read/write dependencies, and aborts a transaction when a dangerous structure (a potential dependency cycle) appears — optimistic, no read locks, some false-positive aborts. Strict 2PL makes reads take shared locks and writes exclusive locks held to commit, so conflicts cause waiting (and deadlocks) instead of aborts; readers and writers block each other.
 
+### [L2 · compare] How does MySQL's REPEATABLE READ differ from PostgreSQL's?
+
+PostgreSQL Repeatable Read is snapshot isolation: every statement reads the transaction's snapshot, and updating a row changed by a concurrent committed transaction raises a serialization error (no lost updates). MySQL InnoDB's REPEATABLE READ uses the snapshot only for plain SELECTs; UPDATE, DELETE and locking reads act on the **latest** committed data with next-key locks. So a read-then-write in application code can silently overwrite a concurrent change (a lost update) unless the read was `SELECT … FOR UPDATE`.
+
+### [L2 · design] Which isolation level would you use for (a) a dashboard, (b) a seat-booking flow, (c) a monthly financial report?
+
+(a) Read Committed — each query sees committed data; slight inconsistency between widgets is acceptable. (b) Read Committed with targeted locking or a unique/exclusion constraint on the seat — or Serializable with a retry loop if the invariant spans rows. (c) Repeatable Read (or `SERIALIZABLE READ ONLY DEFERRABLE` in PostgreSQL) so every query in the report sees the same snapshot, ideally on a replica.
+
+### [L1 · conceptual] What does SQLSTATE 40001 mean, and what should the application do?
+
+`serialization_failure`: the database aborted the transaction to preserve the requested isolation (a concurrent update at Repeatable Read, or a dangerous dependency pattern at Serializable). The transaction did nothing durable; the application should retry the **whole** transaction from the beginning, with backoff and a retry limit, keeping external side effects outside the retried block. Deadlocks (40P01) are handled the same way.
+
 ## Practice
 
 ### [mcq] Which is PostgreSQL's default isolation level?
@@ -211,3 +223,4 @@ Read Committed re-evaluates the updated row's latest version, so in-database ari
 - MySQL: RR default — snapshot for plain reads, next-key locks for locking reads/writes; lost updates possible without FOR UPDATE.
 - Strong levels → serialization failures/deadlocks → retry the whole transaction.
 - Prefer atomic statements, row locks and constraints for specific invariants.
+- MySQL REPEATABLE READ: snapshot for plain SELECTs, latest data + next-key locks for writes (lost updates possible without FOR UPDATE). 40001/40P01 → retry the whole transaction.

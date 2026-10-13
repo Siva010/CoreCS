@@ -255,6 +255,28 @@ A self join with two aliases; the inner join excludes employees without a manage
 
 Joining several one-to-many tables multiplies rows: each order appears once per (item × shipment) combination, so its total is summed repeatedly. Aggregate at the correct grain — compute revenue from `orders` alone (or from items as quantity × unit_price), aggregate each child table separately in subqueries/CTEs, then join the aggregates. Verify by comparing `count(*)` against `count(DISTINCT o.id)`.
 
+### [L1 · compare] Equi-join, non-equi join, natural join, cross join, self join — what's each?
+
+An **equi-join** matches on equality (`o.customer_id = c.id`); a **non-equi join** uses another comparison (`s.amount BETWEEN b.min_amt AND b.max_amt` to find a tax band). A **natural join** is an equi-join on all same-named columns, output once — fragile, because adding a same-named column silently changes it. A **cross join** is the Cartesian product (every pair). A **self join** joins a table to itself with two aliases (employees to their managers). Inner/outer is a separate axis: any of these conditions can be used in an INNER or OUTER join.
+
+### [L2 · compare] Join or subquery — which is faster?
+
+Neither by definition. Modern optimizers transform `IN`/`EXISTS` subqueries into semi joins and many scalar subqueries into joins, so equivalent formulations often get the same plan. Differences appear when they're **not** equivalent (a join multiplies rows; `EXISTS` doesn't) or when the optimizer can't decorrelate (a correlated subquery re-run per outer row shows up as a SubPlan in EXPLAIN). Write the form that states the question, then check the plan.
+
+### [L2 · sql] List pairs of employees who work in the same department, each pair once.
+
+:::answer
+```sql
+SELECT a.name AS employee_1, b.name AS employee_2, a.department_id
+FROM employees a
+JOIN employees b
+  ON b.department_id = a.department_id
+ AND a.id < b.id;          -- not a.id <> b.id, which lists every pair twice
+```
+
+`a.id < b.id` removes self-pairs and keeps only one ordering of each pair.
+:::
+
 ## Practice
 
 ### [numeric 6] customers has 3 rows; orders has 5 rows: customer 1 has 3 orders, customer 2 has 2, customer 3 has none. How many rows does customers LEFT JOIN orders return?
@@ -272,6 +294,12 @@ The 5 orders each pair with their customer (3 + 2 = 5 rows), and customer 3 appe
 
 Conditions on the optional side of a LEFT JOIN go in ON; in WHERE they discard the NULL-padded customers.
 
+### [numeric 5] A has keys 1, 2, 3 and B has keys 2, 3, 4, 4 (one row per listed key). How many rows does A FULL OUTER JOIN B ON A.key = B.key return?
+
+:::answer
+Matched pairs: key 2 (1 row) and key 3 (1 row) = 2. Unmatched from A: key 1 = 1 row. Unmatched from B: the two rows with key 4 = 2 rows. Total 2 + 1 + 2 = **5**.
+:::
+
 ## Quick Revision
 
 - Join = pair rows where ON is true; outer joins add unmatched rows padded with NULL.
@@ -279,3 +307,5 @@ Conditions on the optional side of a LEFT JOIN go in ON; in WHERE they discard t
 - LEFT JOIN: right-table conditions in ON, left-table conditions in WHERE.
 - Self join for hierarchies/comparisons within a table. Avoid NATURAL JOIN.
 - Physical algorithms: nested loop (+index), hash, merge. Index FK join columns.
+- Equi (=) vs non-equi (BETWEEN, <) joins; natural join = all same-named columns (avoid); cross = all pairs; self join = two aliases.
+- Self-join pairs: use `a.id < b.id` to drop self-pairs and duplicates.

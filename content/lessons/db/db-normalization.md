@@ -104,6 +104,14 @@ Splitting must not invent data when you join back. `R(A, B, C)` split into `R1(A
 
 `EmployeeSkillsLanguages(emp, skill, language)` where skills and languages are independent lists: storing them in one table forces every skill × language combination (3 skills × 2 languages = 6 rows), and adding a language means adding 3 rows. Split into `EmployeeSkills(emp, skill)` and `EmployeeLanguages(emp, language)`. The underlying rule is a **multi-valued dependency** emp ↠ skill.
 
+### 5NF in one sentence
+
+A table is in **5NF** (project-join normal form) when it can't be split into three or more smaller tables that join back losslessly, unless that split follows from the keys. It catches cyclic rules like "if a supplier supplies a part, and the supplier works with a project, and the project uses the part, then the supplier supplies that part to that project" — rare in practice, but the definition is a standard interview checkbox.
+
+### Denormalization: breaking the rules on purpose
+
+Normal forms minimise redundancy; sometimes a read path needs redundancy. Common, deliberate denormalizations: storing `order_items.unit_price` (a historical snapshot, not a copy of the current price), a cached `comment_count` on posts, materialized views or summary tables for dashboards, and duplicating a customer name into a search index. Each one needs an answer to "who keeps the copy correct?" — a transaction, a trigger, or an asynchronous job with tolerated lag.
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
@@ -189,6 +197,18 @@ Single-attribute key → no partial dependencies → 2NF holds. C → D is a tra
 
 It's a deliberate denormalization: listing pages would otherwise count comments per post on every read. Store it if read volume justifies it, and keep it consistent — increment in the same transaction as the comment insert (or via trigger), or recompute asynchronously if slight staleness is acceptable. Beware hot-row contention on viral posts: batch increments or use sharded counters. Periodically reconcile against the true count.
 
+### [L2 · conceptual] What are 4NF and 5NF, in plain words?
+
+4NF removes redundancy caused by **multi-valued dependencies**: two independent lists about the same key (an employee's skills and their languages) stored in one table force every combination; split them into two tables. 5NF removes redundancy that only appears when a table could be decomposed into three or more projections that join back losslessly (cyclic "supplier–part–project" rules). Most real schemas that are in BCNF are already in 4NF and 5NF; interviewers mainly want to hear that 4NF is about independent multi-valued facts.
+
+### [L2 · conceptual] Is a BCNF decomposition always dependency-preserving? Is 3NF?
+
+BCNF decomposition is always lossless but **not always** dependency-preserving — the Teaching(student, subject, teacher) example loses (student, subject) → teacher. 3NF synthesis is always both lossless **and** dependency-preserving. That's why 3NF is the practical target when a dependency must stay enforceable with a key, and BCNF when removing all redundancy matters more.
+
+### [L2 · design] When would you denormalize on purpose?
+
+When a hot read path pays repeatedly for joins or aggregates that change rarely: counters (`comment_count`), historical snapshots that *must not* follow later changes (price at purchase), reporting tables, or read models for search. Denormalize after measuring, and decide who maintains the copy — the same transaction, a trigger, or an asynchronous job — and how stale it may be.
+
 ## Practice
 
 ### [mcq] `EmployeeProject(emp_id, project_id, emp_name, hours)` with key (emp_id, project_id) and emp_id → emp_name. Which normal form is violated first?
@@ -224,6 +244,15 @@ InvoiceLines(invoice_no → Invoices, product_code → Products, qty, unit_price
 `unit_price` stays on InvoiceLines: it's the price charged on that invoice (a historical fact), not the product's current price.
 :::
 
+### [mcq] R(A, B, C) with FDs AB → C and C → B. Candidate keys are AB and AC. Which is the highest normal form R satisfies?
+
+- [ ] 2NF
+- [x] 3NF
+- [ ] BCNF
+- [ ] 4NF
+
+In C → B, C is not a super key, so BCNF fails. But B is prime (part of key AB), so the 3NF condition "LHS is a super key **or** RHS is prime" holds. No partial dependency of a non-prime attribute exists (there are none), so 2NF holds too.
+
 ## Quick Revision
 
 - Anomalies: update, insert, delete — all from storing a fact more than once.
@@ -231,3 +260,5 @@ InvoiceLines(invoice_no → Invoices, product_code → Products, qty, unit_price
 - 3NF synthesis: lossless + dependency-preserving. BCNF: lossless, may lose dependencies.
 - Lossless split: shared attributes are a key of one side.
 - Denormalize deliberately, with a sync mechanism; historical snapshots aren't redundancy.
+- 4NF: no independent multi-valued facts in one table. 5NF: no lossless 3-way-plus decomposition beyond keys.
+- BCNF = lossless, maybe not dependency-preserving; 3NF synthesis = both. Denormalize deliberately, with an owner for the copy.

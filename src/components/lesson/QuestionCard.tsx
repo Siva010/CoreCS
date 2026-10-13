@@ -27,7 +27,7 @@ const GRADE_STYLE: Record<Grade, string> = {
   0: "hover:border-bad/50 hover:bg-bad/10 data-[on=true]:border-bad/60 data-[on=true]:bg-bad/15",
   1: "hover:border-warn/50 hover:bg-warn/10 data-[on=true]:border-warn/60 data-[on=true]:bg-warn/15",
   2: "hover:border-ok/50 hover:bg-ok/10 data-[on=true]:border-ok/60 data-[on=true]:bg-ok/15",
-  3: "hover:border-accent/50 hover:bg-accent/10 data-[on=true]:border-accent/60 data-[on=true]:bg-accent/15",
+  3: "hover:border-border-strong hover:bg-accent/10 data-[on=true]:border-accent/60 data-[on=true]:bg-accent/15",
 };
 
 export function GradeButtons({ onGrade, selected }: { onGrade: (g: Grade) => void; selected?: Grade }) {
@@ -85,7 +85,7 @@ export function QuestionCard({
   const last = hydrated ? progress?.attempts[progress.attempts.length - 1] : undefined;
 
   return (
-    <article id={q.id} className={cn("scroll-mt-32 rounded-xl border bg-surface transition-shadow", highlight ? "border-accent shadow-[0_0_0_3px] shadow-accent/20" : "border-border")}>
+    <article id={q.id} className={cn("scroll-mt-32 rounded-lg border bg-surface transition-shadow", highlight ? "border-accent shadow-[0_0_0_3px] shadow-accent/20" : "border-border")}>
       <div className="flex flex-wrap items-center gap-2 px-4 pt-3">
         <LevelTag level={q.level} />
         <span className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted">{QUESTION_TYPE_LABELS[q.type]}</span>
@@ -115,7 +115,7 @@ export function QuestionCard({
         ) : (
           <div>
             <div className="mb-2 flex items-center justify-between">
-              <span className="text-[11px] font-semibold tracking-wider text-subtle uppercase">Model answer</span>
+              <span className="eyebrow">Model answer</span>
               <button type="button" onClick={() => setOpen(false)} className="flex items-center gap-1 text-[12px] text-subtle hover:text-fg">
                 <EyeOff className="h-3.5 w-3.5" /> Hide
               </button>

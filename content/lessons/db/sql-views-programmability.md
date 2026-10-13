@@ -93,6 +93,22 @@ FOR EACH ROW EXECUTE FUNCTION log_status_change();
 
 The audit insert happens **in the same transaction** as the update: if the update rolls back, so does the audit row. That atomicity is the main argument for triggers.
 
+### Stored procedures, functions and cursors
+
+- A **function** returns a value (or a set of rows) and can be used inside a query: `SELECT order_total(id) FROM orders`. It runs inside the caller's transaction.
+- A **procedure** is invoked with `CALL`, can't be used inside an expression, and — in PostgreSQL 11+ — can `COMMIT` partway, which suits long batch jobs.
+- A **cursor** walks a query result one row (or batch) at a time, like an iterator:
+
+```sql
+BEGIN;
+DECLARE big CURSOR FOR SELECT id, payload FROM events ORDER BY id;
+FETCH 1000 FROM big;     -- process, then fetch the next 1000 …
+CLOSE big;
+COMMIT;
+```
+
+Cursors let a client stream a huge result without loading it all into memory (drivers use them for "server-side cursors"). Inside procedures, though, looping over a cursor to update rows one at a time is usually the slow way: a single set-based `UPDATE … FROM …` lets the planner do the work in one pass. Reach for row-by-row processing only when each row needs logic SQL can't express.
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
@@ -169,6 +185,22 @@ For invariants that must be atomic with every write regardless of the client: au
 
 A view can expose only certain columns and rows of a table; granting SELECT on the view but not the base table limits what a role can read (use `security_barrier` views in PostgreSQL to stop leaks via user-defined functions in WHERE clauses). Row-level security generalizes this with per-row policies on the table itself.
 
+### [L1 · compare] Stored procedure vs function?
+
+A function returns a value or a table and can appear inside SQL expressions; it runs within the calling statement's transaction and (in most databases) shouldn't perform transaction control. A procedure is called on its own (`CALL p()`), may return nothing or output parameters, and in PostgreSQL 11+ and SQL Server can commit or roll back inside its body. Rule of thumb: computations you want to use in queries → function; multi-step operations and batch jobs → procedure.
+
+### [L2 · conceptual] What is a cursor, and why are set-based operations usually preferred?
+
+A cursor is a handle to a query's result that you fetch from incrementally — useful for streaming a large result to a client or processing rows that need procedural logic. Processing a million rows through a cursor means a million separate statement executions; one set-based statement lets the optimizer choose a join and do the work in one pass, often orders of magnitude faster. Use cursors for streaming and genuinely row-specific logic, not as a substitute for `UPDATE … FROM`.
+
+### [L2 · compare] BEFORE vs AFTER triggers, row vs statement triggers, INSTEAD OF triggers?
+
+BEFORE row triggers run before the row is written and can modify or reject it (normalize an email, set `updated_at`). AFTER triggers run once the change is done and suit side effects such as audit rows. Row-level triggers fire per affected row; statement-level triggers fire once per statement (with transition tables you can still see all changed rows). INSTEAD OF triggers on views replace the write with your own logic, making complex views writable.
+
+### [L2 · conceptual] When is a view updatable?
+
+In PostgreSQL (and similarly elsewhere), a view is automatically updatable if it selects from exactly one table or updatable view and has no `GROUP BY`, `HAVING`, `DISTINCT`, aggregates, window functions, set operations or `LIMIT` at the top level — so each view row maps to exactly one base row. Otherwise, use an INSTEAD OF trigger or rules. Add `WITH CHECK OPTION` so writes through the view can't create rows the view itself can't see.
+
 ## Practice
 
 ### [mcq] You query a plain view 1,000 times. How many times is its underlying query executed?
@@ -189,6 +221,15 @@ A view is a stored definition, not stored data.
 
 The unique index lets PostgreSQL diff the old and new results row by row while readers continue.
 
+### [mcq] Which view can accept `UPDATE … SET name = 'x'` without any trigger in PostgreSQL?
+
+- [x] `CREATE VIEW v AS SELECT id, name, city FROM customers WHERE city = 'Pune'`
+- [ ] `CREATE VIEW v AS SELECT city, count(*) AS n FROM customers GROUP BY city`
+- [ ] `CREATE VIEW v AS SELECT DISTINCT name FROM customers`
+- [ ] `CREATE VIEW v AS SELECT name FROM customers UNION SELECT name FROM suppliers`
+
+Only the first maps each view row to exactly one base-table row.
+
 ## Quick Revision
 
 - View = named query, expanded at plan time; no storage, no speedup; updatable when simple.
@@ -196,3 +237,5 @@ The unique index lets PostgreSQL diff the old and new results row by row while r
 - Functions (in expressions) vs procedures (CALL, can commit); volatility labels matter.
 - Triggers run inside the writing transaction: atomic audit/derivation, but hidden per-row cost and cascades.
 - Keep integrity close to the data; keep complex business workflows in the application.
+- Function: returns a value/table, usable in queries. Procedure: `CALL`ed, can commit (PostgreSQL 11+). Cursor: fetch a result incrementally — stream with it, don't loop-update with it.
+- Triggers: BEFORE (modify/reject the row) · AFTER (side effects) · row vs statement · INSTEAD OF (writable views). Updatable view = one base row per view row.

@@ -39,7 +39,7 @@ export default async function CheatSheet({ params }: { params: Promise<{ subject
             </h2>
             <div className="space-y-4">
               {items.map(({ l, sections }) => (
-                <article key={l.id} className="break-inside-avoid rounded-2xl border border-border bg-surface p-5">
+                <article key={l.id} className="break-inside-avoid rounded-lg border border-border bg-surface p-5">
                   <h3 className="mb-2 text-lg font-semibold">
                     <Link href={l.href} className="text-fg hover:text-accent">
                       {l.title}

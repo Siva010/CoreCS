@@ -27,7 +27,7 @@ export default async function WalkthroughPage({ params }: { params: Promise<{ sl
   const next = all[idx + 1];
   return (
     <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-10">
-      <div className="mb-3 text-[12px] font-semibold tracking-wider text-subtle uppercase">
+      <div className="mb-3 eyebrow">
         <Link href="/under-the-hood" className="hover:text-fg">Under the Hood</Link>
       </div>
       <h1 className="text-3xl font-semibold tracking-tight text-balance text-fg sm:text-4xl">{w.meta.title}</h1>
@@ -62,7 +62,7 @@ export default async function WalkthroughPage({ params }: { params: Promise<{ sl
             {w.meta.related.map((id) => {
               const l = getLesson(id);
               return l ? (
-                <Link key={id} href={l.href} className="rounded-xl border border-border bg-surface p-3 text-[14px] text-fg hover:border-accent/40 hover:text-accent">
+                <Link key={id} href={l.href} className="rounded-lg border border-border bg-surface p-3 text-[14px] text-fg hover:border-border-strong hover:text-accent">
                   {l.title}
                 </Link>
               ) : null;
@@ -71,7 +71,7 @@ export default async function WalkthroughPage({ params }: { params: Promise<{ sl
         </div>
       )}
       {next && (
-        <Link href={next.href} className="mt-10 flex items-center justify-between rounded-xl border border-border bg-surface p-4 hover:border-accent/40">
+        <Link href={next.href} className="mt-10 flex items-center justify-between rounded-lg border border-border bg-surface p-4 hover:border-border-strong">
           <span>
             <span className="block text-[12px] text-subtle">Next walkthrough</span>
             <span className="font-medium text-fg">{next.title}</span>

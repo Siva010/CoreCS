@@ -147,6 +147,18 @@ Without joins and with efficient access only by key/partition, each important qu
 
 The domain is relational (accounts, journal entries, invoices), needs multi-entity transactions, constraints and flexible reporting — strengths of a relational database. Scale needs can be met by PostgreSQL with good indexing, replicas, partitioning, and later sharding/distributed SQL. Use document features (jsonb) for flexible attributes; reserve a document store for aggregates that are genuinely self-contained.
 
+### [L1 · compare] ACID vs BASE?
+
+ACID (atomic, consistent, isolated, durable) describes transactional guarantees of relational databases. BASE — basically available, soft state, eventually consistent — describes the opposite end chosen by many early NoSQL systems: stay available during failures, let replicas disagree temporarily, and converge later. Today it's a spectrum rather than two camps: many NoSQL stores offer transactions and strong reads, and relational databases offer asynchronous replicas with eventual consistency.
+
+### [L1 · compare] Vertical vs horizontal scaling?
+
+Vertical scaling (scale up) means a bigger machine — more CPU, RAM, faster disks; simple and keeps all relational features, but has a ceiling and a single point of failure. Horizontal scaling (scale out) means more machines sharing data and load — no hard ceiling and better fault tolerance, but cross-node joins, transactions and consistency get harder. Relational databases traditionally scale up (plus read replicas); many NoSQL systems were designed to scale out from the start.
+
+### [L2 · compare] Schema-on-write vs schema-on-read?
+
+Schema-on-write (relational tables) validates structure and constraints when data is written, so every reader can trust its shape. Schema-on-read (documents, data lakes) stores what it's given and leaves interpretation to readers, which makes changes easy but pushes validation, defaults and old-version handling into every consumer. Optional validators (JSON Schema in MongoDB, CHECK constraints on jsonb) bring back part of the write-side safety.
+
 ## Practice
 
 ### [mcq] Which store best fits "show a user's feed of friends-of-friends who like the same bands", queried interactively with variable depth?
@@ -167,6 +179,15 @@ Multi-hop traversals over relationships are what graph stores optimize.
 
 Write-heavy, append-only, partition-local range reads with expiry.
 
+### [mcq] What does BASE stand for?
+
+- [ ] Batch, Atomic, Serializable, Eventual
+- [x] Basically Available, Soft state, Eventually consistent
+- [ ] Balanced, Available, Sharded, Elastic
+- [ ] Basic Atomicity, Strong Eventual consistency
+
+BASE describes systems that prefer availability and converge to consistency over time.
+
 ## Quick Revision
 
 - NoSQL = models that make specific access patterns cheap at scale: KV, document, wide-column, graph, time-series, search.
@@ -174,3 +195,4 @@ Write-heavy, append-only, partition-local range reads with expiry.
 - Consistency ranges from eventual to strong; transactions vary in scope.
 - Default: relational system of record + specialized derived stores (Redis, search, warehouse) via CDC.
 - Choose by access pattern, consistency and operational cost — not hype.
+- ACID vs BASE (basically available, soft state, eventual consistency) — a spectrum today. Scale up = bigger box; scale out = more boxes (harder joins/transactions).

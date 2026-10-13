@@ -184,6 +184,18 @@ Compare estimated vs actual rows in EXPLAIN ANALYZE: most likely the statistics 
 
 It multiplies the individual selectivities (from MCV lists/histograms) assuming the predicates are independent. Because city determines state, the true selectivity equals the selectivity of city alone; multiplying by P(state) underestimates by the inverse of that probability (e.g., 1/0.03 ≈ 33×). Extended statistics with functional dependencies or multi-column MCVs correct it.
 
+### [L2 · how] A query is slow. Walk through how you'd optimize it.
+
+Measure first: get the real query with its parameters and run `EXPLAIN (ANALYZE, BUFFERS)`. Find the node where time or page reads concentrate and compare estimated vs actual rows. Then fix the cause: a missing or mismatched index (add or reorder columns), a non-sargable predicate (rewrite), a misestimate (ANALYZE, extended statistics), too much work requested (select fewer columns, keyset pagination, aggregate earlier), or a design issue (N+1 from the application). Verify with the same EXPLAIN and with latency in production, not just one run.
+
+### [L2 · why] Why is `SELECT *` a performance problem, not just a style issue?
+
+It transfers columns you don't use — including large TOASTed text/jsonb values that must be fetched and decompressed — across the network and into application memory. It prevents index-only scans, because the index can't contain every column. And it couples code to the table shape, so adding a wide column silently slows every query that selects `*`.
+
+### [L2 · optimization] `WHERE email = $1 OR phone = $2` is slow. How do you rewrite it?
+
+With separate indexes on email and phone, PostgreSQL can use a BitmapOr — but many engines (and many plans) fall back to a scan for OR across columns. Rewrite as two index-friendly queries: `SELECT … WHERE email = $1 UNION SELECT … WHERE phone = $2` (UNION removes a row matching both; for speed use UNION ALL and add `AND email IS DISTINCT FROM $1` to the second branch — a plain `email <> $1` would drop rows whose email is NULL). Each branch is a simple index lookup.
+
 ## Practice
 
 ### [numeric 199] An endpoint runs one query to list 200 orders, then one query per order to fetch its customer. After switching to a single batched customer query, how many fewer queries does each request make?
@@ -201,6 +213,20 @@ Before: 1 + 200 = 201 queries. After: 1 list query + 1 batched query = 2. Differ
 
 Extended statistics teach the planner that one column (largely) determines the other.
 
+### [exercise] Rewrite `SELECT * FROM orders WHERE extract(year FROM created_at) = 2024 AND lower(status) = 'paid'` so a B+ tree index on `(status, created_at)` can be used, assuming status is stored in lower case.
+
+:::solution
+```sql
+SELECT id, customer_id, total, created_at
+FROM orders
+WHERE status = 'paid'
+  AND created_at >= '2024-01-01'
+  AND created_at <  '2025-01-01';
+```
+
+Remove the functions from the indexed columns (store status normalized, or index `lower(status)` if it can't be), express the year as a half-open timestamp range, and select only the columns needed. The index now seeks to `status = 'paid'` and scans the date range.
+:::
+
 ## Quick Revision
 
 - Slow = too much work: wrong estimates → wrong algorithm, or a query shape that forces extra work.
@@ -208,3 +234,4 @@ Extended statistics teach the planner that one column (largely) determines the o
 - Fixes for estimates: ANALYZE, extended statistics, higher per-column targets, expression indexes, custom plans for skewed params.
 - Rewrites: sargable predicates, no N+1, keyset pagination, no SELECT *, UNION ALL for cross-column OR, aggregate before join, batch writes, EXISTS.
 - Hints are a last resort; measure → capture plan → diagnose → fix → verify.
+- Optimization loop: EXPLAIN (ANALYZE, BUFFERS) → hot node + estimate error → fix index/predicate/statistics/work requested → re-measure. Avoid `SELECT *`; split cross-column OR into UNION branches.

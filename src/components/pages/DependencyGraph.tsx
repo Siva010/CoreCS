@@ -64,7 +64,7 @@ export function DependencyGraph({ graphs }: { graphs: { id: string; label: strin
         ))}
         <span className="ml-auto text-[12px] text-subtle">Hover a concept to trace what it needs (above) and what it unlocks (below). Click to open.</span>
       </div>
-      <div className="overflow-x-auto rounded-2xl border border-border bg-surface thin-scroll">
+      <div className="overflow-x-auto rounded-lg border border-border bg-surface thin-scroll">
         <svg width={width} height={height} role="img" aria-label={`${g.label} prerequisite graph`} className="block">
           {edges.map((e, i) => {
             const a = byId.get(e.from);

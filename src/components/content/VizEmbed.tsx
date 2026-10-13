@@ -10,7 +10,7 @@ export function VizEmbed({ id, title }: { id: string; title?: string }) {
   if (!w) return <p className="text-sm text-bad">Unknown visualization: {id}</p>;
   const href = w.kinds.includes("lab") ? `/labs/${id}` : `/visualizations/${id}`;
   return (
-    <figure className="not-prose my-8 overflow-hidden rounded-2xl border border-border bg-bg">
+    <figure className="not-prose my-8 overflow-hidden rounded-lg border border-border bg-bg">
       <figcaption className="flex items-center gap-3 border-b border-border bg-surface px-4 py-2.5">
         <Activity className="h-4 w-4 shrink-0 text-accent" />
         <div className="min-w-0 flex-1">

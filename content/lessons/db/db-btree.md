@@ -97,6 +97,17 @@ With fanout f and n keys, height ≈ ⌈log_f(n)⌉ levels (plus the leaves' own
 
 Internal levels are small: with fanout 500 and 1 billion keys, everything above the leaves is about 4,000 pages (~32 MB with 8 KB pages) — the hottest pages in the buffer pool — so most lookups cost **one leaf read** from storage.
 
+### Textbook order numericals
+
+Exam-style questions give a block size B, key size V, child-pointer size P and record-pointer size Pr, and ask for the **order** — the maximum number of children (internal) or keys (leaf) per node.
+
+- Internal node of order p holds p child pointers and p − 1 keys: p·P + (p − 1)·V ≤ B.
+- Leaf node holds p_leaf (key, record pointer) pairs plus one next-leaf pointer: p_leaf·(V + Pr) + P ≤ B.
+
+Example (B = 512 bytes, V = 9, P = 6, Pr = 7): internal 6p + 9(p − 1) ≤ 512 → 15p ≤ 521 → **p = 34**; leaf 16·p_leaf + 6 ≤ 512 → **p_leaf = 31**.
+
+Occupancy rules for a B+ tree of order p: every non-root internal node has between ⌈p/2⌉ and p children; the root has at least 2 children (unless it's a leaf); leaves hold between ⌈p_leaf/2⌉ and p_leaf keys. With nodes ~69% full on average (typical for random inserts), a 3-level tree of order 34 holds roughly 23 × 23 × 21 ≈ 11,000 keys — real pages are 8–16 KB, which is why real trees hold billions in 3–4 levels.
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
@@ -190,6 +201,18 @@ The leaf splits: half of its entries move to a new page, the new page is linked 
 Leaves: 10⁹ / 500 = 2,000,000 pages. Next level: 4,000 pages. Next: 8 pages. Root: 1. So **4 levels** (root, two internal levels, leaves). With the three upper levels cached (~4,009 pages ≈ 32 MB), a lookup needs **one** leaf page read — plus the table page(s) for the row if the index isn't covering.
 :::
 
+### [L2 · numerical] Block size 512 bytes, key 9 bytes, block pointer 6 bytes, record pointer 7 bytes. What are the orders of the internal and leaf nodes of a B+ tree?
+
+Internal node of order p: p pointers + (p − 1) keys ≤ 512 → 6p + 9(p − 1) ≤ 512 → 15p ≤ 521 → p = 34. Leaf: p_leaf (key + record pointer) pairs + one sibling pointer ≤ 512 → 16·p_leaf + 6 ≤ 512 → p_leaf = 31.
+
+### [L2 · conceptual] What are the minimum and maximum numbers of keys in a non-root internal node of a B+ tree of order p?
+
+It has between ⌈p/2⌉ and p children, so between ⌈p/2⌉ − 1 and p − 1 keys. The root is exempt: it may have as few as 2 children (1 key). The half-full minimum is what guarantees the height stays O(log n) — a tree can't degenerate into long thin branches.
+
+### [L2 · why] Why do B+ tree range scans not need to go back up the tree?
+
+Leaves are linked left to right in key order. After one descent to the first qualifying key, the scan follows next-leaf pointers until a key exceeds the range — cost = height + number of leaves in the range. A classic B-tree (data in internal nodes, no leaf chain) needs an in-order traversal that revisits internal nodes.
+
 ## Practice
 
 ### [numeric 3] How many levels does a B+ tree need for 1,000,000 keys if every node holds up to 200 entries (root included)?
@@ -207,6 +230,12 @@ Leaves: 10⁹ / 500 = 2,000,000 pages. Next level: 4,000 pages. Next: 8 pages. R
 
 Leaf splits add a separator to the parent; only a root split adds a level.
 
+### [numeric 34] Block size 512 bytes, key 9 bytes, child pointer 6 bytes. What is the order p (maximum children) of an internal B+ tree node?
+
+:::answer
+p·6 + (p − 1)·9 ≤ 512 → 15p − 9 ≤ 512 → 15p ≤ 521 → p ≤ 34.7, so **34**.
+:::
+
 ## Quick Revision
 
 - Wide, shallow, sorted: fanout in the hundreds → 3–4 levels for billions of keys; upper levels cached.
@@ -214,3 +243,4 @@ Leaf splits add a separator to the parent; only a root split adds a level.
 - Insert → split on overflow, separator to parent; root split = height + 1. Delete → borrow/merge (often lazy).
 - Sequential keys: right-edge appends, full pages. Random keys: splits everywhere, ~70% fill.
 - Write amplification: whole-page writes per change, per index. Concurrency: latch crabbing, B-link right-links.
+- Order numericals: internal p·P + (p−1)·V ≤ B; leaf p_leaf·(V + Pr) + P ≤ B. Non-root internal nodes: ⌈p/2⌉ … p children.

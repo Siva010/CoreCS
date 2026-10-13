@@ -26,29 +26,30 @@ export function Mermaid({ chart }: { chart: string }) {
           startOnLoad: false,
           securityLevel: "strict",
           theme: "base",
-          fontFamily: "var(--font-inter), ui-sans-serif, system-ui",
+          // Mermaid measures label widths with this font, so it must be a real family name, not a CSS variable.
+          fontFamily: `${cssVar("--font-geist") || "Geist"}, ui-sans-serif, system-ui`,
           themeVariables: {
             darkMode: dark,
             background: cssVar("--surface"),
-            primaryColor: dark ? "#1f2330" : "#eef0ff",
-            primaryBorderColor: cssVar("--accent"),
+            primaryColor: cssVar("--surface-2"),
+            primaryBorderColor: cssVar("--border-strong"),
             primaryTextColor: cssVar("--fg"),
-            secondaryColor: dark ? "#1b2a26" : "#ecfdf5",
-            tertiaryColor: dark ? "#2a2218" : "#fff7ed",
+            secondaryColor: cssVar("--accent-soft"),
+            tertiaryColor: cssVar("--bg-subtle"),
             lineColor: cssVar("--muted"),
             textColor: cssVar("--fg"),
-            noteBkgColor: dark ? "#2a2718" : "#fffbeb",
+            noteBkgColor: cssVar("--surface-2"),
             noteTextColor: cssVar("--fg"),
             noteBorderColor: cssVar("--warn"),
-            actorBkg: dark ? "#1f2330" : "#eef0ff",
-            actorBorder: cssVar("--accent"),
+            actorBkg: cssVar("--surface-2"),
+            actorBorder: cssVar("--border-strong"),
             actorTextColor: cssVar("--fg"),
             signalColor: cssVar("--fg"),
             signalTextColor: cssVar("--fg"),
             labelBoxBkgColor: cssVar("--surface-2"),
             labelTextColor: cssVar("--fg"),
             edgeLabelBackground: cssVar("--surface"),
-            fontSize: "14px",
+            fontSize: "13px",
           },
         });
         const { svg } = await mermaid.render(id + (dark ? "d" : "l"), chart);
@@ -67,7 +68,7 @@ export function Mermaid({ chart }: { chart: string }) {
   }, [chart, resolvedTheme, id]);
 
   return (
-    <figure className="not-prose my-6 overflow-x-auto rounded-xl border border-border bg-surface p-4 thin-scroll">
+    <figure className="not-prose my-6 overflow-x-auto rounded-lg border border-border bg-surface p-4 thin-scroll">
       {error ? (
         <div>
           <p className="text-sm text-bad">Diagram failed to render.</p>

@@ -192,6 +192,18 @@ Writes go to the primary but subsequent reads are served by an asynchronously re
 
 Create the new-version cluster with the schema, set up a publication on the old primary and a subscription on the new cluster to copy existing data and then stream ongoing changes. Once caught up, verify data, stop writes briefly (or cut over via the connection pooler), wait for final changes to apply, sync sequences, repoint the application, and keep the old cluster as a fallback (optionally with reverse replication). DDL must be frozen or applied on both sides during the process.
 
+### [L2 · compare] Statement-based vs row-based replication?
+
+Statement-based replication ships the SQL statements and re-executes them on replicas — compact, but nondeterministic statements (`NOW()`, `RAND()`, `UPDATE … LIMIT` without ORDER BY, triggers with side effects) can produce different data. Row-based replication ships the before/after images of each changed row — deterministic and safe, but larger for bulk updates. MySQL defaults to row-based (mixed mode switches per statement); PostgreSQL physical replication ships WAL, and logical replication ships row changes.
+
+### [L2 · how] What causes replication lag, and how do you monitor it?
+
+Causes: write bursts larger than the replica can replay (replay is often single-threaded per database or per table), long-running queries on the replica conflicting with replay, a slower or overloaded replica, network limits, and large transactions that can't be applied until they finish. Monitor bytes and time behind: in PostgreSQL `pg_stat_replication` (`sent_lsn`, `replay_lsn`, `replay_lag`) on the primary and `now() - pg_last_xact_replay_timestamp()` on the replica; in MySQL `Seconds_Behind_Source` plus GTID positions. Alert on time lag, not just bytes.
+
+### [L2 · design] How do you route reads between the primary and replicas safely?
+
+Send writes and reads that must see recent writes (the user's own data right after an update, anything that feeds a write decision) to the primary; send everything else — listings, search, reports — to replicas. Implement read-your-writes by pinning a session to the primary for a few seconds after it writes, or by recording the write's LSN and reading only from a replica that has replayed past it. Remove lagging replicas from the read pool automatically.
+
 ## Practice
 
 ### [mcq] With asynchronous replication, what can be lost when the primary crashes and a replica is promoted?
@@ -209,6 +221,15 @@ Async acknowledges before shipping, so the tail of the log may exist only on the
 30 MB / 10 MB/s = 3 s = **3000 ms**. With new writes arriving at 8 MB/s, the net catch-up rate would be only 2 MB/s → 15 s.
 :::
 
+### [mcq] Which statement is unsafe under statement-based replication?
+
+- [ ] `INSERT INTO t (id, v) VALUES (1, 'a')`
+- [x] `UPDATE t SET claimed_by = 7 WHERE claimed_by IS NULL LIMIT 1`
+- [ ] `DELETE FROM t WHERE id = 1`
+- [ ] `UPDATE t SET v = 'b' WHERE id = 1`
+
+Without an ORDER BY, which row `LIMIT 1` picks can differ between the source and the replica, so their data diverges. Row-based replication ships the actual changed row.
+
 ## Quick Revision
 
 - Leader streams its log; followers replay it (continuous recovery).
@@ -216,3 +237,4 @@ Async acknowledges before shipping, so the tail of the log may exist only on the
 - Lag anomalies: read-your-writes, monotonic reads, consistent prefix → route reads deliberately.
 - Physical (whole cluster, identical) vs logical (row changes, flexible, CDC, upgrades).
 - Replicas scale reads, not writes; replicas are not backups; watch slots and lag.
+- Statement-based (compact, nondeterminism risk) vs row-based (deterministic, bigger). Lag: replay bottlenecks, replica queries, big transactions — monitor time behind, not just bytes.

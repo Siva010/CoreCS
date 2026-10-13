@@ -186,6 +186,18 @@ Followers expect periodic heartbeats; on a randomized timeout a follower increme
 
 Progress requires a majority. 3 nodes need 2 (tolerate 1 failure); 4 need 3 (still tolerate only 1); 5 need 3 (tolerate 2); 6 need 4 (tolerate 2). Even sizes add cost and latency without extra fault tolerance, and they're more exposed to split votes and to partitions that leave no majority.
 
+### [L2 · compare] Paxos vs Raft?
+
+Both solve the same problem with the same fault tolerance (a majority of 2f + 1 nodes) and similar message costs. Classic Paxos decides one value per instance and leaves log management, leader election and membership changes to Multi-Paxos variants that are notoriously hard to implement correctly. Raft was designed for understandability: a strong leader, explicit terms, a single replicated log with clear rules for election, log matching and membership changes — which is why etcd, Consul, CockroachDB and TiKV use it. Spanner and Chubby use Paxos variants.
+
+### [L2 · how] What happens in Raft when two candidates split the vote?
+
+Neither gets a majority in that term, so no leader is elected. Each candidate's election timeout — randomized, e.g. 150–300 ms — expires at a different moment; the first to time out starts a new term, votes for itself and requests votes, and usually wins before the other wakes up. Randomized timeouts make repeated split votes unlikely.
+
+### [L2 · why] Why can't a Raft leader simply serve reads from its local state?
+
+It might have been deposed without knowing — a partition may have let the majority elect a new leader that has already committed newer writes. To serve linearizable reads, the leader must confirm it's still the leader (a round of heartbeats to a majority, the ReadIndex approach) or rely on a time-based lease that assumes bounded clock drift. Otherwise reads are only "serializable" in etcd's terms: possibly stale.
+
 ## Practice
 
 ### [numeric 2] How many node failures can a 5-node Raft cluster tolerate while still committing writes?
@@ -203,6 +215,12 @@ A majority of 5 is 3, so up to **2** nodes can fail.
 
 W + R > N → R > 2 → R = 3.
 
+### [numeric 3] How many node failures can a 7-node Raft cluster tolerate while still committing writes?
+
+:::answer
+A commit needs a majority: ⌊7 / 2⌋ + 1 = 4 nodes. So up to 7 − 4 = **3** nodes can fail.
+:::
+
 ## Quick Revision
 
 - Quorums: W + R > N ⇒ overlap; not linearizable under partial failures, LWW, sloppy quorums.
@@ -210,3 +228,4 @@ W + R > N → R > 2 → R = 3.
 - Consensus = agree on a log; majorities intersect ⇒ safety; tolerate f failures with 2f + 1 nodes.
 - Raft: terms, randomized elections, up-to-date voting rule, AppendEntries, commit at majority.
 - FLP: safety always, liveness with timeouts. Use odd cluster sizes; consensus per shard to scale.
+- Paxos vs Raft: same guarantees; Raft = strong leader, terms, one log, built for clarity. Split votes resolve via randomized timeouts. Linearizable reads need ReadIndex or a lease.

@@ -199,6 +199,22 @@ An index scan walks the index and fetches each matching row immediately — best
 
 Each insert modifies 13 structures, multiplying WAL volume, random page writes and buffer-pool pressure. Audit index usage (idx_scan statistics on primary and replicas), drop unused and redundant ones (e.g., an index on (a) when (a, b) exists), merge single-column indexes into composites that serve the actual queries, consider partial indexes, and move analytical query needs to a replica or warehouse with its own indexes. Measure WAL generation and replica lag before and after.
 
+### [L1 · why] Why do databases use B+ trees for indexes rather than hash tables or binary search trees?
+
+A binary search tree has two children per node, so a billion keys need ~30 levels — 30 random page reads. A B+ tree puts hundreds of keys in each page-sized node, so the same data needs 3–4 levels, and the top levels stay cached. A hash table gives fast equality lookups but no order, so it can't serve ranges, `ORDER BY`, prefix searches or `MIN/MAX`. B+ trees serve all of those and stay balanced on their own ([B+ Trees](lesson:db-btree)).
+
+### [L2 · design] Should you index a low-cardinality column like `is_active` or `gender`?
+
+Usually not on its own: a predicate matching 50% or 95% of rows is cheaper with a sequential scan, so the index is never used and just slows writes. Exceptions: when you query the **rare** value (index only it, with a partial index `WHERE status = 'failed'`), or when the column leads or completes a composite index that serves a real query (`(tenant_id, is_active, created_at)`).
+
+### [L2 · how] How many indexes can a table have, and how many will a query use?
+
+Technically many — dozens or hundreds — but each one adds write cost and memory. A single table scan usually uses **one** index; the planner can combine several with bitmap AND/OR (BitmapAnd/BitmapOr) for predicates on different columns, which is still slower than one composite index matching the query. Different tables in a join each use their own access path.
+
+### [L2 · trace] An index on `(created_at)` exists. Which of these can use it: `ORDER BY created_at DESC LIMIT 10`, `WHERE created_at::date = '2024-05-01'`, `WHERE created_at > now() - interval '1 hour'`, `SELECT max(created_at)`?
+
+The ORDER BY … LIMIT (walk the index backwards, stop after 10), the range predicate, and `max()` (read one end of the index) can all use it. The cast `created_at::date = …` wraps the column in an expression, so the plain index can't be used — rewrite it as a half-open timestamp range or create an expression index.
+
 ## Practice
 
 ### [mcq] Which predicate can use a B+ tree index on `email`?
@@ -219,6 +235,15 @@ A fixed prefix maps to a range in sorted order (given a compatible collation or 
 
 Fetching 30 million rows via random lookups costs far more than reading the table sequentially.
 
+### [mcq] How many B+ tree levels does a lookup traverse for 1 billion keys if each node holds 500 entries?
+
+- [ ] 30
+- [ ] 10
+- [x] 4
+- [ ] 1
+
+500³ = 125 million < 1 billion ≤ 500⁴, so 4 levels — and the upper levels are almost always cached.
+
 ## Quick Revision
 
 - Index = sorted copy of key columns + pointers to rows (B+ tree).
@@ -226,3 +251,5 @@ Fetching 30 million rows via random lookups costs far more than reading the tabl
 - Index scan = tree walk + random table fetches → loses to seq scan beyond a few % of rows; bitmap scan in between.
 - Every index slows every write and uses memory. Build with CONCURRENTLY on live tables.
 - Find missing (slow logs) and unused (idx_scan = 0) indexes.
+- B+ tree, not hash/BST: hundreds of keys per page → 3–4 levels, and ordered (ranges, ORDER BY, MIN/MAX).
+- Low-cardinality columns: index the rare value (partial index) or use them inside a composite — not alone.

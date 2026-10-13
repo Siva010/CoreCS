@@ -93,6 +93,25 @@ The **free space map** answers "which page has at least N bytes free?" without s
 
 `ALTER TABLE t SET (fillfactor = 80)` leaves 20% of each page free on insert. Later updates can place the new row version **on the same page**, which in PostgreSQL enables HOT updates (no new index entries) — valuable for update-heavy tables ([DML](lesson:sql-dml-ddl)).
 
+### File organization: how pages hold a table
+
+The textbook names for "in what order are a table's records placed in its pages?":
+
+| Organization | Records placed | Insert | Equality search | Range search |
+|---|---|---|---|---|
+| **Heap (unordered)** | wherever there is space | cheap (append / free-space map) | scan ~half the file on average | full scan |
+| **Sequential (sorted)** | in key order | expensive (shift or overflow pages) | binary search: ~log₂(b) block reads | binary search, then read consecutive blocks |
+| **Hashed** | page chosen by hash(key) | cheap | ~1 block read | useless (order destroyed) |
+| **Clustered / index-organized** | in a B+ tree by key | log-time | log-time | log-time + consecutive leaves |
+
+Real systems: PostgreSQL tables are heaps with separate indexes; InnoDB tables are index-organized by primary key ([Clustered Indexes](lesson:db-clustered-indexes)); hashing appears as hash indexes and partitions ([Index Types & Hashing](lesson:db-index-types-hashing)).
+
+### Records, blocking factor and spanning
+
+- **Fixed-length records** (all fields fixed size) let the k-th record be found by arithmetic; **variable-length records** (text, NULLs, JSON) need offsets inside the record and a slot directory per page.
+- **Blocking factor** = records per block = ⌊block size ÷ record size⌋ for **unspanned** records (a record never crosses a block boundary; the leftover bytes are wasted). **Spanned** records may continue in the next block — no waste, but some reads touch two blocks. Databases use unspanned layout plus out-of-line storage (TOAST, overflow pages) for big values.
+- File size in blocks = ⌈records ÷ blocking factor⌉. Example: 4,096-byte blocks, 100-byte records → bfr = 40; 1,000,000 records → 25,000 blocks. A full scan reads 25,000 blocks; binary search on a sorted file needs about ⌈log₂ 25,000⌉ = 15 block reads.
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
@@ -171,6 +190,18 @@ A page layout with a header, a slot array growing from the front and tuples grow
 
 A crash during a page write can leave a page partially updated because the database page is larger than the atomic write unit of the storage stack. PostgreSQL logs a full image of each page on its first modification after a checkpoint (full-page writes), so recovery restores the complete page before replaying later changes. InnoDB writes pages to a doublewrite buffer first and restores torn pages from it. Checksums detect corruption.
 
+### [L1 · compare] Heap file vs sorted file vs hashed file — what is each good at?
+
+A heap places records anywhere there's space: inserts are cheap, but every search is a scan unless an index exists. A sorted (sequential) file keeps key order: equality and range searches use binary search (~log₂ b block reads), but inserts must shift records or use overflow pages. A hashed file places each record by hash(key): equality lookups take about one block read, inserts are cheap, but range queries and ordered scans are useless. Real engines combine a heap or clustered B+ tree with secondary indexes to get cheap inserts *and* fast lookups.
+
+### [L2 · numerical] Records are 100 bytes, blocks are 4,096 bytes, unspanned. How many blocks for 1,000,000 records, and how many block reads for a binary search?
+
+Blocking factor = ⌊4096 / 100⌋ = 40 records per block (96 bytes wasted per block). Blocks = ⌈1,000,000 / 40⌉ = 25,000. Binary search on a file sorted by the search key takes ⌈log₂ 25,000⌉ = 15 block reads; a linear search averages 12,500 (and reads all 25,000 when the key is absent).
+
+### [L2 · compare] Fixed-length vs variable-length records? Spanned vs unspanned?
+
+Fixed-length records make addressing trivial (record k is at offset k × size) but waste space for short values; variable-length records save space and handle text and NULLs, at the cost of per-record offsets and a slot directory to locate them. Unspanned records fit wholly inside one block (simpler, wastes the tail of each block); spanned records may cross blocks (no waste, but some reads touch two blocks). Databases use variable-length, unspanned records and move oversized values out of line.
+
 ## Practice
 
 ### [numeric 128] A table's rows occupy 64 bytes each, including the slot pointer, and 8,192 bytes per page are usable (ignore the header). How many rows fit per page?
@@ -188,6 +219,21 @@ A crash during a page write can leave a page partially updated because the datab
 
 PostgreSQL indexes store TIDs; InnoDB secondary indexes store the primary key instead.
 
+### [numeric 25000] A table has 1,000,000 fixed-length records of 100 bytes in 4,096-byte blocks, unspanned. How many blocks does it occupy?
+
+:::answer
+Blocking factor = ⌊4096 / 100⌋ = 40 records per block. Blocks = ⌈1,000,000 / 40⌉ = **25,000**.
+:::
+
+### [mcq] Which file organization makes `WHERE id BETWEEN 1000 AND 2000` the most expensive, assuming no index?
+
+- [ ] Sorted on id
+- [ ] Clustered B+ tree on id
+- [x] Hashed on id
+- [ ] All the same
+
+Hashing scatters neighbouring keys across blocks, so a range needs a full scan; sorted and clustered layouts read a contiguous run.
+
 ## Quick Revision
 
 - Page = unit of I/O and caching (8 KB PG, 16 KB InnoDB). Cost ≈ pages touched.
@@ -195,3 +241,5 @@ PostgreSQL indexes store TIDs; InnoDB secondary indexes store the primary key in
 - Tuple header: xmin/xmax/ctid for MVCC; null bitmap; alignment padding.
 - Large values → TOAST / overflow pages. FSM finds free space. Fill factor leaves room for same-page updates.
 - Page LSN enforces write-ahead logging; full-page writes / doublewrite prevent torn pages.
+- File organizations: heap (cheap insert, scan search) · sorted (binary search, costly insert) · hashed (O(1) equality, no ranges) · clustered B+ tree.
+- Blocking factor = ⌊B / R⌋ (unspanned); blocks = ⌈n / bfr⌉; binary search ≈ ⌈log₂ blocks⌉ reads.

@@ -220,6 +220,35 @@ A join multiplied rows before aggregation — typically joining `orders` to `ord
 
 Either hash aggregation (build a hash table of groups with running aggregate state in one pass; good when groups fit in memory, output unordered) or sort-based group aggregation (sort by the group key or read pre-sorted input from an index, then aggregate runs of equal keys; low memory, ordered output). The planner compares estimated costs using the expected number of groups, available memory (`work_mem`) and whether sorted input is already available.
 
+### [L1 · compare] COUNT(*) vs COUNT(1) vs COUNT(col)?
+
+`COUNT(*)` and `COUNT(1)` both count rows and are equivalent — the "1" is just a non-null constant; neither reads column values, and modern optimizers treat them the same (in PostgreSQL `count(*)` is marginally cheaper). `COUNT(col)` counts rows where col is NOT NULL, so it can be smaller. `COUNT(DISTINCT col)` counts distinct non-NULL values.
+
+### [L2 · trace] What do `SELECT count(*), sum(amount) FROM payments WHERE false` and the same query with `GROUP BY customer_id` return?
+
+Without GROUP BY, an aggregate over zero rows still returns **one** row: `count = 0`, `sum = NULL` (sum of nothing is NULL, not 0 — wrap it in `COALESCE(sum(amount), 0)`). With GROUP BY there are no groups, so the result has **zero** rows. That difference breaks dashboards that expect a row per day; generate the days and LEFT JOIN the aggregates onto them.
+
+### [L2 · sql] Find the department(s) with the highest average salary, including ties.
+
+:::answer
+```sql
+WITH dept_avg AS (
+  SELECT department_id, avg(salary) AS avg_salary
+  FROM employees
+  GROUP BY department_id
+)
+SELECT department_id, avg_salary
+FROM dept_avg
+WHERE avg_salary = (SELECT max(avg_salary) FROM dept_avg);
+```
+
+`ORDER BY avg_salary DESC LIMIT 1` would silently drop a tied department. `rank() OVER (ORDER BY avg(salary) DESC)` filtered to rank 1 is the window-function version.
+:::
+
+### [L2 · how] What do ROLLUP and GROUPING SETS do?
+
+They compute several groupings in one pass. `GROUP BY ROLLUP (region, city)` returns per-(region, city) rows, a subtotal per region (city NULL) and a grand total (both NULL). `GROUPING SETS ((region), (city), ())` lists the groupings explicitly; `CUBE` gives every combination. `GROUPING(city) = 1` tells a subtotal row's NULL apart from a real NULL city.
+
 ## Practice
 
 ### [mcq] Which query returns departments with an average salary above 80,000?
@@ -248,6 +277,21 @@ ORDER BY 1;
 `100.0` forces numeric division; `FILTER` does the conditional count in the same pass.
 :::
 
+### [numeric 180] Department A has 2 employees averaging 100 and department B has 8 employees averaging 200. What is the average salary over all 10 employees?
+
+:::answer
+Weight each average by its headcount: (2 × 100 + 8 × 200) / 10 = 1,800 / 10 = **180**. Averaging the two department averages would give 150 — the classic "average of averages" mistake.
+:::
+
+### [mcq] `SELECT count(*) FROM orders WHERE status = 'refunded' GROUP BY status` on a table with no refunded orders returns…
+
+- [ ] One row with 0
+- [ ] One row with NULL
+- [x] No rows
+- [ ] An error
+
+GROUP BY produces one row per group, and there are no groups. Without GROUP BY you'd get a single row containing 0.
+
 ## Quick Revision
 
 - GROUP BY collapses rows; select only group keys or aggregates.
@@ -255,3 +299,5 @@ ORDER BY 1;
 - `COUNT(*) FILTER (WHERE …)` / `SUM(CASE …)` for pivots in one pass.
 - Beware join fan-out, integer division, NULL-skipping aggregates, average of averages.
 - Engine: HashAggregate (memory, unordered) vs Sort + GroupAggregate (sorted input).
+- `COUNT(*)` ≡ `COUNT(1)` (rows); `COUNT(col)` skips NULLs. Aggregates over zero rows: one row (count 0, sum NULL) — but zero rows with GROUP BY.
+- Weighted vs simple averages: never average averages. `ROLLUP`/`GROUPING SETS` give subtotals in one pass.

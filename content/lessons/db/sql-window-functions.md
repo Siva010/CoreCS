@@ -264,6 +264,33 @@ Aggregating per day first makes order_date unique, so the frame choice doesn't m
 
 With `ORDER BY` inside OVER and no explicit frame, the default frame is `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`, which includes all peer rows sharing the current ORDER BY value. Rows with the same date get identical totals that already include each other. Use `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` with a unique tiebreaker in ORDER BY, or aggregate to one row per date first.
 
+### [L2 · how] What does NTILE(n) do, and how does it handle uneven division?
+
+`NTILE(4) OVER (ORDER BY salary DESC)` splits the ordered rows into 4 buckets as evenly as possible and returns each row's bucket number (quartiles). If the row count isn't divisible, the **first** buckets get one extra row: 10 rows into 3 buckets gives sizes 4, 3, 3. Ties can land in different buckets, because NTILE counts rows, not values — use `percent_rank()` or `cume_dist()` when ties must stay together.
+
+### [L2 · sql] Compute a 7-day moving average of daily revenue and each day's share of its month's revenue.
+
+:::answer
+```sql
+WITH daily AS (
+  SELECT order_date::date AS day, sum(total) AS revenue
+  FROM orders WHERE status = 'paid'
+  GROUP BY 1
+)
+SELECT day, revenue,
+       avg(revenue) OVER (ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS ma_7d,
+       round(100.0 * revenue / sum(revenue) OVER (PARTITION BY date_trunc('month', day)), 2) AS pct_of_month
+FROM daily
+ORDER BY day;
+```
+
+`ROWS … 6 PRECEDING` counts rows, so missing days shrink the window's time span; for a true calendar window generate every day first (or use `RANGE BETWEEN INTERVAL '6 days' PRECEDING AND CURRENT ROW`).
+:::
+
+### [L2 · compare] Running total with a window function vs a self join — why is the window version faster?
+
+The self join (`SUM(b.amount) … JOIN t b ON b.ts <= a.ts`) compares every row with every earlier row: O(n²). The window version sorts once and keeps a running sum while streaming: O(n log n) for the sort and O(1) per row after it. On a million rows that's the difference between seconds and hours.
+
 ## Practice
 
 ### [mcq] Salaries 300, 200, 200, 100. What does DENSE_RANK() OVER (ORDER BY salary DESC) give the 100 row?
@@ -298,6 +325,12 @@ ORDER BY customer_id, order_date, id;
 Subtracting two `date` values gives an integer number of days in PostgreSQL. The `id` tiebreaker makes the order of same-day orders deterministic.
 :::
 
+### [numeric 4] `NTILE(3) OVER (ORDER BY id)` over 10 rows. How many rows are in bucket 1?
+
+:::answer
+10 ÷ 3 = 3 remainder 1, so the first bucket takes one extra row: sizes are 4, 3, 3. Bucket 1 has **4** rows.
+:::
+
 ## Quick Revision
 
 - `f() OVER (PARTITION BY … ORDER BY … frame)` — aggregate/rank/offset without collapsing rows.
@@ -306,3 +339,5 @@ Subtracting two `date` values gives an integer number of days in PostgreSQL. The
 - Default frame with ORDER BY = RANGE … CURRENT ROW (peers included); last_value trap.
 - Evaluated after WHERE/GROUP BY/HAVING → filter results in an outer query.
 - Top-N per group: window + filter, LATERAL + LIMIT, or DISTINCT ON.
+- `NTILE(n)`: near-equal buckets, earlier buckets get the extras (10 → 4, 3, 3); ties may split.
+- Moving average: `ROWS BETWEEN k PRECEDING AND CURRENT ROW`; share of total: `x / sum(x) OVER (PARTITION BY …)`.
