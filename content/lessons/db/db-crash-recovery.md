@@ -62,6 +62,23 @@ flowchart LR
 2. **Redo ("repeating history")**: reapply *all* logged changes — even losers' — to bring the database to its exact state at the crash. A change is applied only if the page's LSN is older than the record's LSN, so redo is **idempotent** (safe if we crash during recovery and start again).
 3. **Undo**: roll back losers' changes in reverse order, logging each undo step as a CLR. If recovery crashes mid-undo, the CLRs record what has already been undone, so it isn't undone twice.
 
+One crash, worked through. T1 commits; T2 doesn't; the buffer pool had stolen T2's page to disk but never wrote T1's:
+
+```text
+log:    LSN 10  T1  A: 100 → 50
+        LSN 20  T2  B:   7 → 9
+        LSN 30  T1  COMMIT
+        ── crash ──
+disk:   A = 100   (T1's committed change never reached the data file: no-force)
+        B = 9     (T2's uncommitted change did: steal)
+
+analysis:  T1 committed; T2 has no commit record → T2 is a loser
+redo:      LSN 10 → A's page is older than 10 → set A = 50
+           LSN 20 → B's page already has LSN 20 → skip (redo is idempotent)
+undo:      T2 → set B back to 7, write a CLR, then T2's end record
+result:    A = 50, B = 7 — exactly the committed state
+```
+
 ### PostgreSQL: redo-only
 
 PostgreSQL never needs a physical undo pass: uncommitted changes are new tuple versions stamped with the loser's xid, and since that xid never committed, the versions are simply **invisible** (and later vacuumed) ([MVCC](lesson:db-mvcc)). Recovery = replay WAL from the last checkpoint's redo point to the end. InnoDB performs redo from its redo log, then rolls back uncommitted transactions using undo logs (in the background, so the server opens sooner).
@@ -79,22 +96,35 @@ Recovery from a log needs the data files to still exist. Crash recovery handles 
 
 An older alternative: keep two page tables. The **current** page table points to pages the transaction modifies, which are written to **new** locations (copy-on-write); the **shadow** page table still points to the old versions. Commit = atomically switch a single pointer from the shadow table to the current one. Crash before the switch → the shadow table is still the truth; nothing to undo or redo.
 
-Why it isn't used for general-purpose databases: data scatters across the disk (no clustering), every commit must write all modified pages plus the page table, garbage collection of old pages is needed, and concurrent transactions are hard to support. The idea survives where those costs fit — LMDB's copy-on-write B+ tree and copy-on-write filesystems such as ZFS and Btrfs ([Journaling](lesson:os-journaling)).
+Why it isn't used for general-purpose databases:
+
+- data scatters across the disk (no clustering);
+- every commit must write all modified pages plus the page table;
+- old pages need garbage collection;
+- concurrent transactions are hard to support.
+
+The idea survives where those costs fit: LMDB's copy-on-write B+ tree, and copy-on-write filesystems such as ZFS and Btrfs ([Journaling](lesson:os-journaling)).
 
 ### Checkpoints in textbook recovery
 
-With a simple log, a checkpoint record `<checkpoint L>` (L = transactions active at that moment) is written after flushing all modified buffers. On recovery, scan back to the last checkpoint: transactions that committed before it need nothing; transactions that committed after it are **redone**; transactions still active (in L or started later) with no commit record are **undone**. ARIES refines this with fuzzy checkpoints and LSNs so the system doesn't stop to flush.
+With a simple log, a checkpoint record `<checkpoint L>` (L = transactions active at that moment) is written after flushing all modified buffers. On recovery, scan back to the last checkpoint:
+
+- transactions that committed before it need nothing;
+- transactions that committed after it are **redone**;
+- transactions still active (in L or started later) with no commit record are **undone**.
+
+ARIES refines this with fuzzy checkpoints and LSNs so the system doesn't stop to flush.
 
 ## Internal Mechanism
 
 :::depth{level=advanced}
 ### Fuzzy checkpoints
 
-Stopping all activity to flush everything would freeze the database. ARIES-style **fuzzy checkpoints** record the dirty page table and active transaction table at checkpoint time while activity continues; redo starts from the minimum recLSN (oldest change not yet on disk) among dirty pages, which may be before the checkpoint record. PostgreSQL's checkpoint spreads page writes and records a redo pointer taken at its start.
+Stopping all activity to flush everything would freeze the database. ARIES-style **fuzzy checkpoints** instead record the dirty page table and the active transaction table while activity continues. Redo then starts from the smallest recLSN among dirty pages (the oldest change not yet on disk), which may be earlier than the checkpoint record. PostgreSQL's checkpoint spreads page writes over time and records a redo pointer taken at its start.
 
 ### Why "repeat history" then undo?
 
-Redoing losers' changes before undoing them seems wasteful, but it restores the exact pre-crash state, which makes page-level (physiological) undo records valid, supports fine-grained locking and logical undo, and keeps redo simple (no need to know transaction outcomes while redoing).
+Redoing losers' changes before undoing them seems wasteful. But it restores the exact state at the moment of the crash, which has three benefits: page-level (physiological) undo records stay valid; fine-grained locking and logical undo work; and redo stays simple, because it doesn't need to know which transactions committed.
 
 ### Recovery time
 

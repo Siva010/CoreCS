@@ -59,6 +59,25 @@ Use `##` headings from this list (aliases in `src/lib/content/types.ts`), in any
 
 End the section with one `:::callout[That's all it is]{type=insight}` — two or three sentences a reader could repeat to a friend. Inside `How It Works` / `Internal Mechanism`, open any subsection that introduces new machinery with a sentence saying what problem that piece solves.
 
+### Writing for understanding
+
+The test for every theory section: could a reader who has never heard the term follow it on the first read?
+
+- **Plain meaning first, precise meaning second.** "A snapshot is the set of changes you're allowed to see" before "(xmin, xmax, in-progress list)".
+- **One idea per sentence.** Aim for under 30 words. A sentence that lists three or more things becomes a bullet list; a long dash-chain becomes two sentences.
+- **Every mechanism gets a worked example with real values** — a ` ```text ` trace of 4–10 lines (a split, a lock queue, a crash and its recovery, a join on five rows). Show the state before and after, and say in one sentence what the reader should notice.
+- **Pictures for structure and time.** Use a Mermaid diagram for components and flows, and a text timeline for interleavings and failures.
+- **Jargon.** Define a term where it's first used, or add it to the glossary (below).
+
+### Glossary
+
+`content/glossary.ts` holds short, plain definitions of database jargon. In database lessons, the first plain-text use of each term (outside code, links, headings and bold text) gets a dotted underline with the definition on hover or tap, plus a link to the lesson that explains it. Lessons that define the term themselves — its home `lesson`, or any lesson where the term appears in **bold** — are left alone.
+
+- Keep definitions under ~30 words and free of other jargon.
+- Acronyms (all capitals) match case-sensitively; other terms ignore case, and a plural "s"/"es" is matched automatically.
+- For words with an everyday meaning, use `exclude` (lesson ids, or prefixes ending in `-`) or `only` so the definition never appears where the word means something else ("page" of results, a "snapshot" backup).
+- The validator checks that every term's home lesson exists.
+
 ### Markdown extensions
 
 | Syntax | Renders as |

@@ -32,6 +32,24 @@ LIMIT/OFFSET  → cut
 
 Almost every beginner error — "column alias doesn't exist in WHERE", "must appear in GROUP BY", "can't use aggregate in WHERE" — is a consequence of this order. Learn the order, and those errors become predictable.
 
+Watch the order work on six rows. The query asks "which department has the most people earning over 50k, if it has at least two of them?":
+
+```text
+SELECT dept, count(*) AS n FROM emp WHERE salary > 50000
+GROUP BY dept HAVING count(*) >= 2 ORDER BY n DESC LIMIT 1;
+
+FROM emp        (Asha, Eng, 90k) (Ravi, Eng, 70k) (Meera, Eng, 40k)
+                (Kabir, Sales, 60k) (Tara, Sales, 55k) (Neel, HR, 80k)
+WHERE > 50000   Meera is dropped (40k)                                → 5 rows
+GROUP BY dept   Eng: {Asha, Ravi}   Sales: {Kabir, Tara}   HR: {Neel} → 3 groups
+HAVING >= 2     HR has only 1 → dropped                                → 2 groups
+SELECT          (Eng, n=2) (Sales, n=2)       ← the alias n exists only from here on
+ORDER BY n DESC (Eng, 2) (Sales, 2)            ← a tie
+LIMIT 1         (Eng, 2) or (Sales, 2)         ← either may win: add a tiebreaker (ORDER BY n DESC, dept)
+```
+
+`WHERE n > 1` would fail because `n` doesn't exist yet when WHERE runs, but `ORDER BY n` works because ORDER BY runs after SELECT.
+
 ## Definition
 
 - `SELECT` lists output expressions; `FROM` names the source; `WHERE` filters rows with a boolean condition.
@@ -46,7 +64,7 @@ Almost every beginner error — "column alias doesn't exist in WHERE", "must app
 
 **The design choice.** SQL was designed to read like an English request ("select name from customers where city is Pune") while compiling to relational algebra. The price of that readability is the mismatch between written and evaluated order — which is exactly why you must know the evaluation order explicitly.
 
-**Why the order is what it is.** You can't filter rows before you have them (FROM first), can't group before filtering (WHERE before GROUP BY), and can't name an output column before computing it (SELECT after both). The evaluation order is simply the order in which each step's inputs become available.
+**Why the order is what it is.** Each step needs the previous one's output. You can't filter rows before you have them (FROM first). You can't group before filtering (WHERE before GROUP BY). You can't name an output column before computing it (SELECT after both). The evaluation order is simply the order in which each step's inputs become available.
 
 :::callout[That's all it is]{type=insight}
 FROM builds the rows, WHERE drops some, GROUP BY bundles them, HAVING drops bundles, SELECT computes the output, ORDER BY sorts it, LIMIT cuts it. Every "why doesn't this work?" in basic SQL is that order.
@@ -117,7 +135,7 @@ Tables have no inherent order (they're sets), so any order you rely on must be a
 :::depth{level=advanced}
 ### Logical order ≠ physical order
 
-The evaluation order above is *logical* — it defines the result. The optimizer may execute things differently as long as the result is the same: it pushes filters into scans, uses an index that returns rows already sorted (so no sort step), or stops early for `ORDER BY … LIMIT 10` using a top-N heap instead of sorting everything ([Scans & Joins](lesson:db-scans-joins)).
+The evaluation order above is *logical*: it defines the result. The optimizer may execute things differently as long as the result is the same. It pushes filters into scans, uses an index that returns rows already sorted (so there's no sort step), or stops early for `ORDER BY … LIMIT 10` with a top-N heap instead of sorting everything ([Scans & Joins](lesson:db-scans-joins)).
 
 ### Sargable predicates
 

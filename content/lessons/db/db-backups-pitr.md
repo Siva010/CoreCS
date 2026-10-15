@@ -33,7 +33,7 @@ A backup is a way to travel back in time. **RPO** (recovery point objective) is 
 
 **Without it.** Replicas, RAID and multi-zone storage all faithfully preserve the damage. Without an independent copy from *before* the mistake, the only options are reconstructing data from logs and emails — or telling customers it's gone.
 
-**The idea.** Keep copies that are **independent** of the live system (different account, different storage, ideally immutable), and make them **continuous**, so you can stop the replay one second before the mistake rather than only at last night's copy.
+**The idea.** Keep copies that are **independent** of the live system: a different account, different storage, ideally immutable. And make them **continuous**, so you can stop the replay one second before the mistake instead of going back to last night's copy.
 
 **From idea to mechanism.**
 - *A copy of everything* → a full backup: a dump of the logical contents, or a copy of the data files (base backup).
@@ -102,7 +102,7 @@ recovery_target_time = '2024-06-12 14:37:14+05:30'
 recovery_target_action = 'promote'
 ```
 
-Create an empty `recovery.signal` file in the data directory and start the server. It replays archived WAL from the base backup's start point and stops at the target; then it starts a new **timeline** (a new history branch with its own WAL file names), so the abandoned future after 14:37:14 can never be confused with the new one.
+Create an empty `recovery.signal` file in the data directory and start the server. It replays archived WAL from the base backup's start point and stops at the target. Then it starts a new **timeline**: a new history branch with its own WAL file names. That way the abandoned future after 14:37:14 can never be confused with the new one.
 
 ```mermaid
 flowchart LR
@@ -137,7 +137,14 @@ Most teams combine a physical strategy managed by a tool (pgBackRest, Barman, WA
 
 ### Restore drills
 
-A backup you have never restored is a hope, not a backup. Automate a periodic job that restores the latest backup (and a PITR to a random point) onto a scratch server, runs sanity queries (row counts, latest order timestamp, application smoke tests), records how long each step took, and alerts if anything fails. The measured time *is* your real RTO; the age of the newest replayable WAL *is* your real RPO.
+A backup you have never restored is a hope, not a backup. Automate a periodic job that:
+
+1. restores the latest backup (and a PITR to a random point) onto a scratch server;
+2. runs sanity queries: row counts, the latest order timestamp, application smoke tests;
+3. records how long each step took;
+4. alerts if anything fails.
+
+The measured time *is* your real RTO; the age of the newest replayable WAL *is* your real RPO.
 
 ## Example
 

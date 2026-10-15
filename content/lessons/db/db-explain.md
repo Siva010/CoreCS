@@ -111,7 +111,13 @@ Story: scan all customers, keep 41k in Pune, hash them; scan 9.8M paid orders an
 :::depth{level=advanced}
 ### Why estimates go wrong
 
-Estimates come from `pg_statistic`: per-column most-common values and frequencies, histograms, distinct counts, null fraction, correlation. The planner assumes **independence** between predicates (`city = 'Pune' AND state = 'MH'` is estimated as P(city) × P(state), a huge underestimate since Pune implies MH), assumes uniformity outside the MCV list, and can't see through functions or complex expressions (defaults like 0.5% selectivity). Joins multiply errors: an error of 10× at each of three joins becomes 1000×.
+Estimates come from `pg_statistic`: per-column most-common values and their frequencies, histograms, distinct counts, null fraction and correlation. Three simplifications cause most misestimates:
+
+- **Independence**: `city = 'Pune' AND state = 'MH'` is estimated as P(city) × P(state), a huge underestimate since Pune implies MH.
+- **Uniformity**: values outside the most-common-values list are assumed equally likely.
+- **Opaque expressions**: the planner can't see through functions or complex expressions and falls back to defaults such as 0.5% selectivity.
+
+Joins multiply errors: an error of 10× at each of three joins becomes 1000×.
 
 ### Timing overhead
 

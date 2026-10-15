@@ -71,7 +71,19 @@ The planner considers, for each table, **access paths** (sequential scan, index 
 - **cardinality** — how many rows each step produces (from statistics: row counts, distinct values, most-common values, histograms);
 - **cost** — I/O and CPU, in abstract units calibrated by settings like `seq_page_cost`, `random_page_cost`, `cpu_tuple_cost`.
 
-The cheapest total cost wins. Cardinality estimation is the weak point — most bad plans trace back to wrong row estimates ([Query Optimization](lesson:db-query-optimization)).
+The cheapest total cost wins. Here is the arithmetic, simplified, with PostgreSQL's default weights (a sequential page costs 1, a random page 4, processing a row 0.01). `orders` has 1,000,000 rows on 10,000 pages:
+
+```text
+WHERE customer_id = 42      (statistics say ~500 rows match)
+  seq scan:    10,000 pages × 1  +  1,000,000 rows × 0.01  ≈ 20,000
+  index scan:     500 rows × 4 (one random page each)        ≈  2,000   ← cheaper: use the index
+
+WHERE status = 'shipped'    (statistics say ~300,000 rows match)
+  seq scan:                                                 ≈ 20,000   ← cheaper: scan the table
+  index scan: 300,000 × 4                                   ≈ 1,200,000
+```
+
+Same table, same index, opposite decisions — and both hinge on the *estimated* row count. That is why cardinality estimation is the weak point: most bad plans trace back to wrong row estimates ([Query Optimization](lesson:db-query-optimization)).
 
 ### 5. Execution: the iterator model
 
@@ -103,7 +115,7 @@ Parsing and analysis happen once. PostgreSQL plans the first executions with the
 
 Two layers of optimization work together:
 
-- **Heuristic (rule-based) rewrites** that are almost always good, applied regardless of data: push selections down so rows are filtered early, push projections down so fewer columns flow up, turn `σ` over `×` into a join, flatten subqueries into joins, remove redundant joins and conditions. They come from relational-algebra equivalences ([Relational Model](lesson:db-relational-model)).
+- **Heuristic (rule-based) rewrites** that are almost always good, applied regardless of the data. Push selections down so rows are filtered early; push projections down so fewer columns flow up; turn `σ` over `×` into a join; flatten subqueries into joins; remove redundant joins and conditions. They come from relational-algebra equivalences ([Relational Model](lesson:db-relational-model)).
 - **Cost-based choices** that depend on the data: which index, which join algorithm, which join order, whether to sort or hash. The planner estimates rows and cost for alternatives from statistics and picks the cheapest.
 
 Old optimizers (and some embedded databases) were mostly rule-based ("use an index if one exists"); every major database today is cost-based on top of heuristic rewrites.
@@ -134,7 +146,7 @@ Limit  (cost=0.43..8.31 rows=5 width=48)
         Index Cond: (customer_id = 42)
 ```
 
-Reading it with the lifecycle in mind: the planner chose an index that provides both the filter and the order, so no sort is needed; the Limit node stops pulling after 5 rows — the executor touches ~5 index entries, not 40. More on reading plans in [EXPLAIN](lesson:db-explain); experiment in the [Query Plan lab](lab:query-plan).
+Reading it with the lifecycle in mind: the planner chose an index that provides both the filter and the order, so no sort is needed. The Limit node stops pulling after 5 rows, so the executor touches ~5 index entries, not 40. More on reading plans in [EXPLAIN](lesson:db-explain); experiment in the [Query Plan lab](lab:query-plan).
 
 ## Complexity & Performance
 

@@ -42,7 +42,11 @@ The planner picks tools by estimated row counts. If you know when each tool is c
 
 **The problem.** No single algorithm is best for all data sizes. A nested loop with an index is unbeatable for "one customer's orders" and catastrophic for "all customers × all orders"; a hash join is the reverse. Having several algorithms and a cost model to choose among them is what lets one declarative query stay efficient as data changes.
 
-**Why there are exactly these join algorithms.** To join, you must find matching keys. There are only three basic ways to find matches: *look each one up* (nested loop, best with an index), *put one side in a hash table* (hash join), or *sort both and walk them together* (merge join).
+**Why there are exactly these join algorithms.** To join, you must find matching keys, and there are only three basic ways to find matches:
+
+- *look each one up* (nested loop, best with an index);
+- *put one side in a hash table* (hash join);
+- *sort both and walk them together* (merge join).
 
 :::callout[That's all it is]{type=insight}
 Reading: whole table, index slice, index only, or bitmap of pages. Joining: look up each row, hash one side, or merge two sorted sides. The planner picks by how many rows it expects.
@@ -55,7 +59,7 @@ Reading: whole table, index slice, index only, or bitmap of pages. Joining: look
 - **Sequential scan**: reads pages 0..N, checking the filter on each row. Sequential I/O is efficient and benefits from read-ahead; cost ∝ table size.
 - **Index scan**: descends the B+ tree, walks matching leaf entries in key order, fetching each row (random I/O unless cached/correlated). Provides sorted output.
 - **Index-only scan**: like an index scan, but skips the table when the visibility map allows ([Covering Indexes](lesson:db-composite-covering-indexes)).
-- **Bitmap scan**: Bitmap Index Scan builds a bitmap of matching TIDs (or pages, if memory is short — "lossy"), optionally combines bitmaps with BitmapAnd/BitmapOr, then Bitmap Heap Scan reads each page once in physical order and **rechecks** conditions. No sorted output.
+- **Bitmap scan**: first write a shopping list of which pages hold matches, sorted by page number, then visit each page once. Concretely, a Bitmap Index Scan builds a bitmap of matching TIDs (or of pages, if memory is short — "lossy"), and BitmapAnd/BitmapOr can combine bitmaps from several indexes. Then a Bitmap Heap Scan reads each page once, in physical order, and **rechecks** the conditions. The output isn't sorted.
 
 ### Nested loop join
 
@@ -78,6 +82,18 @@ build:  for each row s in inner (smaller side): table[hash(s.key)].append(s)
 probe:  for each row r in outer: for s in table[hash(r.key)] if s.key = r.key: emit (r, s)
 ```
 
+On tiny inputs:
+
+```text
+build (customers, the smaller side):   hash table {1 → Asha, 2 → Ravi, 3 → Meera}
+probe (orders):  order 10, customer 1 → found Asha  → emit (Asha, 10)
+                 order 11, customer 1 → found Asha  → emit (Asha, 11)
+                 order 12, customer 2 → found Ravi  → emit (Ravi, 12)
+                 order 13, customer 9 → no entry    → nothing
+```
+
+Each order costs one hash lookup, however many customers there are.
+
 - Cost O(|inner| + |outer|); memory ∝ inner size (must fit in `work_mem` × `hash_mem_multiplier`).
 - If the build side doesn't fit, it's partitioned into **batches** spilled to disk (grace hash join): both sides are partitioned by hash, then each batch pair is joined — more I/O, still linear.
 - Equality joins only. Output is unordered. Blocking on the build side (nothing is emitted until the hash table is complete).
@@ -88,6 +104,17 @@ probe:  for each row r in outer: for s in table[hash(r.key)] if s.key = r.key: e
 sort both inputs on key (or read them in key order from indexes)
 advance two cursors; emit pairs when keys match; handle runs of duplicates
 ```
+
+On two sorted key lists, A = 1, 3, 3, 5 and B = 1, 2, 3, 6:
+
+```text
+A:1 B:1  equal      → emit (1,1), advance both
+A:3 B:2  B smaller  → advance B
+A:3 B:3  equal      → emit (3,3) for both 3s in A
+A:5 B:6  A smaller  → advance A → A is finished → done
+```
+
+Each list is read once, front to back — like merging two sorted piles of cards.
 
 - O(|A| + |B|) once sorted; sorting costs O(n log n) if needed.
 - Excellent when both sides come pre-sorted from indexes, or when the result must be sorted by the join key anyway.

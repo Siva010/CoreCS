@@ -123,6 +123,14 @@ WHERE e.salary > m.salary;
 
 The direct consequence of "a join pairs rows": if each order has 3 items, each order row is repeated 3 times — and so is its total.
 
+```text
+orders ⋈ order_items for order 10 (total 500, three items):
+  order 10  total 500  item A
+  order 10  total 500  item B
+  order 10  total 500  item C
+sum(total) = 1500   ← the real total is 500
+```
+
 ```sql
 -- ✗ Wrong: orders.total is repeated once per item row
 SELECT c.name, sum(o.total)
@@ -156,9 +164,9 @@ The logical definition (Cartesian product then filter) is never how a real engin
 - **Hash join**: build a hash table on the smaller input's join key, probe it with each row of the larger input — O(n + m), equality conditions only.
 - **Merge join**: both inputs sorted on the key, advance through them in step — great when indexes already supply sorted order.
 
-The optimizer also chooses the **join order** for multi-table queries — with n tables there are exponentially many orders, so it uses dynamic programming for small n and heuristics/genetic search for large n ([Scans & Joins](lesson:db-scans-joins)).
+The optimizer also chooses the **join order** for multi-table queries. With n tables there are exponentially many orders, so it uses dynamic programming for small n and heuristics or genetic search for large n ([Scans & Joins](lesson:db-scans-joins)).
 
-Outer joins restrict reordering (A LEFT JOIN B LEFT JOIN C can't be freely rearranged), and a `WHERE` condition that rejects NULLs lets the optimizer *legally* convert an outer join into an inner join — precisely the ON/WHERE trap, seen from the optimizer's side.
+Outer joins restrict reordering: A LEFT JOIN B LEFT JOIN C can't be freely rearranged. And a `WHERE` condition that rejects NULLs lets the optimizer *legally* convert an outer join into an inner join. That is the ON/WHERE trap, seen from the optimizer's side.
 :::
 
 ## Example

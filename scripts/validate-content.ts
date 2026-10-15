@@ -9,6 +9,7 @@ import {
   getCaseStudies,
   getCounts,
   getDiagnostics,
+  getGlossaryProblems,
   getWalkthroughs,
   renderCaseStudy,
   renderLesson,
@@ -27,18 +28,20 @@ async function main() {
   const errors = diags.filter((d) => d.level === "error");
   const warns = diags.filter((d) => d.level === "warn");
   const broken = getBrokenLinks();
+  const glossary = getGlossaryProblems();
   const showAll = process.argv.includes("--all");
 
   console.log("Content counts:", getCounts());
   for (const e of errors) console.log(`ERROR  ${e.file}: ${e.message}`);
   for (const b of broken) console.log(`ERROR  ${b.ctx}: broken link ${b.href}`);
+  for (const g of glossary) console.log(`ERROR  content/glossary.ts: ${g}`);
   for (const w of showAll ? warns : warns.slice(0, 25)) console.log(`warn   ${w.file}: ${w.message}`);
   if (!showAll && warns.length > 25) console.log(`… ${warns.length - 25} more warnings (use --all)`);
 
   const bySubject: Record<string, number> = {};
   for (const l of lessons) bySubject[l.subject] = (bySubject[l.subject] ?? 0) + 1;
   console.log("Lessons by subject:", bySubject);
-  const total = errors.length + broken.length;
+  const total = errors.length + broken.length + glossary.length;
   console.log(total ? `\n${total} error(s).` : "\nNo errors.");
   process.exit(total ? 1 : 0);
 }

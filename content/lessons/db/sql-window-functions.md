@@ -52,7 +52,13 @@ Window functions are evaluated **after `WHERE`/`GROUP BY`/`HAVING` and before `O
 
 ## Why It Exists
 
-**The problem.** Some questions need *both* the individual row and a summary of rows around it: "each employee and their rank in the department", "each month and last month's revenue", "each transaction and the running balance". GROUP BY gives you the summary but throws the individual rows away.
+**The problem.** Some questions need *both* the individual row and a summary of the rows around it:
+
+- "each employee and their rank in the department";
+- "each month and last month's revenue";
+- "each transaction and the running balance".
+
+GROUP BY gives you the summary but throws the individual rows away.
 
 **Without it.** Before window functions, "rank employees within department", "compare each month with the previous one" or "running balance" required self joins or correlated subqueries — O(n²) and hard to read.
 
@@ -122,7 +128,19 @@ SELECT order_date, total,
 FROM orders;
 ```
 
-The **frame** defines which rows the aggregate sees:
+The **frame** is a window that slides along the ordered rows. Picture it on five days of values:
+
+```text
+day      1    2    3    4    5
+value   10   20   30   40   50
+
+frame at day 4                                      rows it sees            result
+ROWS BETWEEN 2 PRECEDING AND CURRENT ROW            {20, 30, 40}            avg 30  (moving average)
+ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW    {10, 20, 30, 40}        sum 100 (running total)
+no ORDER BY in the window                           {10, 20, 30, 40, 50}    sum 150 (whole partition)
+```
+
+At day 5 the moving-average frame slides one step right ({30, 40, 50}), the running total grows to include day 5, and the whole-partition frame stays the same. The frame clauses:
 
 | Frame | Meaning |
 |---|---|

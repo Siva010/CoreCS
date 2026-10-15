@@ -39,7 +39,7 @@ Key decisions covered here:
 **The principle behind every choice below.** Data outlives code. A wrong type or representation is cheap to fix with ten rows and painful with ten billion, so pick representations that stay correct, enforceable and changeable as the table grows.
 
 :::callout[That's all it is]{type=insight}
-Pick types that can't lie (exact numbers for money, timestamptz for instants), ids that suit your index, an explicit story for deletion and history, columns for anything you query, and a tenant key from day one if you're multi-tenant.
+Pick types that can't lie: exact numbers for money, timestamptz for instants. Choose ids that suit your index, and have an explicit story for deletion and history. Give anything you query its own column, and add a tenant key from day one if you're multi-tenant.
 :::
 
 ## How It Works
@@ -64,7 +64,7 @@ A common pattern: `bigint` primary key internally, plus a random public identifi
 
 ### Money
 
-`numeric(19,4)` or integer minor units (`amount_paise bigint`) plus a `currency char(3)`. Never floating point. Decide rounding rules (banker's rounding?) in one place.
+`numeric(19,4)` or integer minor units (`amount_paise bigint`) plus a `currency char(3)`. Never floating point: binary floats can't represent 0.1 exactly, so `SELECT 0.1::float8 + 0.2::float8` returns 0.30000000000000004, and those errors accumulate across millions of rows. Decide rounding rules (banker's rounding?) in one place.
 
 ### Deletion strategies
 
@@ -114,6 +114,11 @@ With shared tables, put `tenant_id` **first** in composite indexes and keys, so 
 ### Why random UUIDs hurt B+ trees
 
 A sequential key always inserts at the rightmost leaf, which stays in memory; pages fill to ~100%. A random key inserts into a random leaf: with an index larger than RAM, most inserts read a leaf from disk, and leaves split at ~50% fill, leaving the index ~30–40% larger. In InnoDB the **table itself** is clustered by the primary key, so random PKs scatter the table too. Time-ordered UUIDs restore append-mostly behavior.
+
+```text
+sequential ids:  [1 2 3 4] [5 6 7 8] [9 10 11 _]   ← every insert lands in the last page (hot, cached, full pages)
+random UUIDs:    [a3 c9 _ _] [d1 f0 _ _] [0b 47 _ _] ← inserts land anywhere: many pages touched, half-empty after splits
+```
 
 ### Column order and row width
 

@@ -28,13 +28,13 @@ It's copy-on-write for rows ([Copy-on-Write](lesson:os-cow-mmap)).
 
 - **Row version (tuple)**: one version of a logical row, stamped with the creating transaction (`xmin`) and, once superseded or deleted, the ending transaction (`xmax`).
 - **Snapshot**: (xmin horizon, xmax horizon, list of in-progress transaction ids) captured at statement start (Read Committed) or transaction start (Repeatable Read).
-- **Visibility rule**: a version is visible if its creator committed before the snapshot and its deleter hadn't committed before the snapshot (or doesn't exist, or aborted).
+- **Visibility rule**: a version is visible if its creator committed before the snapshot and its deleter hadn't committed before the snapshot (or doesn't exist, or aborted). In plain words: *I can see a version if whoever created it had finished when I started, and whoever deleted it hadn't.*
 - **Dead version**: invisible to every current and future snapshot → reclaimable.
 - **Vacuum (PostgreSQL) / purge (InnoDB)**: background removal of dead versions.
 
 ## Why It Exists
 
-**The problem.** A database has one copy of each row, and two kinds of users want it at the same time: a reader who needs a *consistent* picture ("total of all balances right now") and a writer who is halfway through changing it. If the reader sees the half-changed state, the answer is wrong. So something has to keep them apart.
+**The problem.** A database has one copy of each row, and two kinds of users want it at the same time. A reader needs a *consistent* picture ("total of all balances right now"). A writer is halfway through changing it. If the reader sees the half-changed state, the answer is wrong. So something has to keep them apart.
 
 **Without it.** The obvious tool is locking: readers take shared locks, writers take exclusive ones. With pure locking, a long report holding shared locks blocks every writer, and writers block readers — throughput collapses under mixed workloads. A 10-minute analytics query would freeze checkout for 10 minutes.
 
@@ -79,7 +79,7 @@ A `DELETE` just sets `xmax`. A rollback doesn't touch the tuples: xid 105 is mar
 
 ### InnoDB: latest version in place + undo log
 
-The opposite answer to "where does the old copy go": keep the table holding only the newest version (so the common reader, who wants the latest, finds it immediately) and push old copies out to a side log. InnoDB updates the row **in place** in the clustered index and writes the previous values to the **undo log**, linking them via a roll pointer. A reader whose read view shouldn't see the latest version follows the roll pointer chain, reconstructing older versions from undo records. The **purge** thread discards undo records no read view needs.
+InnoDB gives the opposite answer to "where does the old copy go". The table keeps only the newest version, so the common reader, who wants the latest, finds it immediately; old copies go to a side log. InnoDB updates the row **in place** in the clustered index and writes the previous values to the **undo log**, linked by a roll pointer. A reader that shouldn't see the latest version follows the roll pointer chain and rebuilds the older version from undo records. The **purge** thread discards undo records no reader needs any more.
 
 | | PostgreSQL | InnoDB |
 |---|---|---|
@@ -102,7 +102,7 @@ Plain VACUUM doesn't shrink files; it makes space reusable. `VACUUM FULL`/`pg_re
 
 ### The long-transaction problem
 
-This follows directly from the rule "delete a version only when no snapshot can see it". Vacuum can only remove versions older than the **oldest running snapshot**. One transaction open for 6 hours (a forgotten `BEGIN` in a console, a stuck report, an idle-in-transaction connection, an abandoned replication slot with `hot_standby_feedback`) pins the horizon: every update in those 6 hours leaves garbage that can't be reclaimed. Tables bloat, indexes bloat, queries slow down — on tables that transaction never touched.
+This follows directly from the rule "delete a version only when no snapshot can see it". Vacuum can only remove versions older than the **oldest running snapshot**. Suppose one transaction stays open for 6 hours: a forgotten `BEGIN` in a console, a stuck report, an idle-in-transaction connection, or an abandoned replication slot with `hot_standby_feedback`. It pins the horizon, so every update in those 6 hours leaves garbage that can't be reclaimed. Tables bloat, indexes bloat and queries slow down, even on tables that transaction never touched.
 
 ## Internal Mechanism
 
@@ -113,7 +113,13 @@ The problem: visibility is decided by comparing transaction ids, and ids are a f
 
 ### HOT updates
 
-The problem: a new version lives at a new physical address, so in principle *every index* on the table needs a new entry pointing at it — even when the update only changed a column no index covers (say, `last_seen_at`). On a table with five indexes, one tiny update becomes six writes. HOT avoids that. If an update changes no indexed column and the new version fits on the same page, PostgreSQL creates a **heap-only tuple**: no new index entries; index entries still point to the chain's root, and a page-level prune can clean dead HOT versions without a full vacuum. Keeping indexes off frequently updated columns and leaving free space (`fillfactor`) maximize HOT updates ([Pages & Records](lesson:db-pages-records)).
+The problem: a new version lives at a new physical address, so in principle *every index* on the table needs a new entry pointing at it. That's true even when the update only changed a column no index covers (say, `last_seen_at`). On a table with five indexes, one tiny update becomes six writes. HOT avoids that. If an update changes no indexed column and the new version fits on the same page, PostgreSQL creates a **heap-only tuple**:
+
+- no new index entries are written;
+- the existing index entries still point to the root of the version chain on that page;
+- a page-level prune can clean dead HOT versions without a full vacuum.
+
+Keeping indexes off frequently updated columns and leaving free space in pages (`fillfactor`) maximize HOT updates ([Pages & Records](lesson:db-pages-records)).
 
 ### Snapshot contents
 

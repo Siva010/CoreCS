@@ -20,6 +20,17 @@ tags: [index, b-tree index, selectivity, cardinality, sargable, index scan, sequ
 
 An index is **a separate, sorted copy of one or more columns, each entry pointing back to its row** — like the index at the back of a book: sorted terms, each with page numbers. To find "Pune" you don't read the whole book; you jump to P in the index and follow the pointers.
 
+Concretely, for a small table and an index on `city`:
+
+```text
+table (heap: rows wherever they fit)          index on city (sorted, separate)
+page 1: (1, Asha, Pune)  (2, Ravi, Delhi)      Delhi  → (page 1, slot 2), (page 3, slot 1)
+page 2: (3, Meera, Pune) (4, Kabir, Mumbai)    Mumbai → (page 2, slot 2)
+page 3: (5, Tara, Delhi)                       Pune   → (page 1, slot 1), (page 2, slot 1)
+```
+
+`WHERE city = 'Mumbai'` jumps to "Mumbai" in the sorted index and follows one pointer, instead of reading all three pages.
+
 Two consequences shape everything:
 
 1. An index helps only if the query can **use its sort order** — to jump to a starting point and read a contiguous range.
@@ -93,7 +104,7 @@ The index makes *finding* matches cheap, but each match still needs its row fetc
 | `WHERE status = 'shipped'` | 7M (70%) | Sequential scan |
 | `WHERE order_date >= now() - interval '1 day'` | 20k | Index or **bitmap** scan |
 
-A **bitmap index scan** is the middle ground: collect all matching TIDs from the index, sort them by page, then read each needed page once in physical order — avoiding repeated random reads of the same page ([Scans & Joins](lesson:db-scans-joins)).
+A **bitmap index scan** is the middle ground. It collects all matching TIDs from the index, sorts them by page, then reads each needed page once, in physical order. That avoids reading the same page randomly again and again ([Scans & Joins](lesson:db-scans-joins)).
 
 This is also why indexing a low-cardinality column like `is_active` (two values) rarely helps — except with a **partial index** on the rare value ([Specialized Indexes](lesson:db-specialized-indexes)).
 

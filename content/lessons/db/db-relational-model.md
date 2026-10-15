@@ -51,7 +51,7 @@ E. F. Codd's relational model separated the **logical** view (relations) from th
 - **Ad-hoc queries** — ask new questions without writing new navigation code.
 - **Optimizability** — algebraic rules let the system rewrite queries into cheaper equivalent forms.
 
-**The idea in one line.** Describe *what* data you want, never *where it is stored* — and store everything as plain tables of values, so that "related" means "has a matching value", not "has a pointer".
+**The idea in one line.** Describe *what* data you want, never *where it is stored*. Store everything as plain tables of values, so that "related" means "has a matching value", not "has a pointer".
 
 :::callout[That's all it is]{type=insight}
 Store everything as tables of facts. Answer questions by filtering, picking columns and matching rows across tables. Because a query only says *what*, the database is free to pick the fastest *how*.
@@ -71,6 +71,24 @@ Store everything as tables of facts. Answer questions by filtering, picking colu
 | Rename | ρ | `AS` | |
 | Grouping/aggregation | γ | `GROUP BY` + aggregates | `γ[city; count(*)](Customer)` |
 
+The operators on two tiny tables:
+
+```text
+Customer                 Order
+id  name   city          id  customer_id  total
+1   Asha   Pune          10  1            900
+2   Ravi   Delhi         11  1            7000
+3   Meera  Pune          12  2            300
+
+σ[city='Pune'](Customer)          → (1, Asha, Pune), (3, Meera, Pune)        keep matching rows
+π[name](Customer)                 → Asha, Ravi, Meera                         keep chosen columns
+Customer ⋈[id=customer_id] Order  → (Asha, 10, 900), (Asha, 11, 7000),
+                                    (Ravi, 12, 300)                           pair rows with equal values
+γ[customer_id; sum(total)](Order) → (1, 7900), (2, 300)                       one row per group
+```
+
+Meera has no orders, so she disappears from the join. That is an *inner* join: only matched pairs survive.
+
 Every operator takes relations and returns a relation — so operators compose into trees. A SQL query is compiled into exactly such a tree:
 
 ```mermaid
@@ -84,7 +102,7 @@ flowchart BT
 
 ### Equivalences enable optimization
 
-This is the payoff of describing *what* instead of *how*: the database can transform your request into a cheaper one that is guaranteed to return the same rows. Because the operators are mathematical, the optimizer can apply rewrite rules that are **guaranteed to preserve the result**:
+This is the payoff of describing *what* instead of *how*. The operators follow algebraic rules, like `a × b = b × a` in arithmetic. So the optimizer can rewrite your request into a cheaper one that is **guaranteed to return the same rows**:
 
 - Push selections down: filter `Customer` to Pune *before* joining, so the join processes fewer rows.
 - Reorder joins: A ⋈ B ⋈ C can be computed as (A ⋈ B) ⋈ C or A ⋈ (B ⋈ C) — pick the order with the smallest intermediate results.
@@ -112,7 +130,13 @@ Enrolled(student, course)            Core(course)
 Enrolled ÷ Core = { Asha }      — the only student paired with every course in Core
 ```
 
-Division isn't primitive; it can be written with the basic operators: all students paired with all courses (π_student(Enrolled) × Core), minus the pairs that actually exist, gives the students *missing* something; subtract those from all students. SQL has no `DIVIDE`; it's written with double `NOT EXISTS` or a count comparison ([Semi & Anti Joins](lesson:sql-semi-anti-joins)).
+Division isn't a primitive operator. You can build it from the basic ones, in three steps, using the example above:
+
+1. **Every pairing that *should* exist**: all students × all core courses = (Asha, DB), (Asha, OS), (Ravi, DB), (Ravi, OS).
+2. **Subtract the pairings that *do* exist** (Enrolled): what's left is (Ravi, OS). Those are the students *missing* something: {Ravi}.
+3. **Subtract them from all students**: {Asha, Ravi} − {Ravi} = {Asha}.
+
+SQL has no `DIVIDE`. It's written with double `NOT EXISTS` ("there is no core course this student hasn't taken") or by comparing counts ([Semi & Anti Joins](lesson:sql-semi-anti-joins)).
 
 ### Codd's rules — the ones worth remembering
 
@@ -134,7 +158,7 @@ In 1985 Codd published 12 rules (plus rule 0) for what makes a DBMS truly relati
 :::depth{level=advanced}
 ### Logical vs physical operators
 
-Relational algebra describes *logical* operations. The executor implements each with *physical* operators chosen per query: selection might become a sequential scan, an index scan or a bitmap scan; a join might become a nested-loop, hash or merge join ([Scans & Joins](lesson:db-scans-joins)). One logical plan has many physical implementations, and the cost model chooses among them.
+Relational algebra describes *logical* operations. The executor implements each with *physical* operators chosen per query. A selection might become a sequential scan, an index scan or a bitmap scan; a join might become a nested-loop, hash or merge join ([Scans & Joins](lesson:db-scans-joins)). One logical plan has many physical implementations, and the cost model chooses among them.
 
 ### Relational calculus and SQL's declarative nature
 

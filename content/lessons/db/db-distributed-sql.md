@@ -38,7 +38,14 @@ The price: every write pays consensus round trips, and cross-region deployments 
 
 **The problem.** Application-level sharding scales but pushes cross-shard joins, transactions, uniqueness and resharding onto every team. NoSQL scales but gives up SQL and transactions. Google built Spanner (2012) because even its engineers struggled with eventually consistent systems for business data; CockroachDB, TiDB and YugabyteDB brought the architecture to everyone. The goal: **scale out without giving up SQL, joins and serializable transactions**.
 
-**The idea.** None of the parts are new — they're the previous lessons stacked: range sharding to split the data, consensus to replicate each piece safely, 2PC with a replicated coordinator for cross-piece transactions, and MVCC timestamps to order everything. The database does the sharding work so applications don't have to.
+**The idea.** None of the parts are new; they're the previous lessons stacked:
+
+- range sharding to split the data;
+- consensus to replicate each piece safely;
+- 2PC with a replicated coordinator for cross-piece transactions;
+- MVCC timestamps to order everything.
+
+The database does the sharding work so applications don't have to.
 
 :::callout[That's all it is]{type=insight}
 Distributed SQL = sorted key ranges, each replicated by its own Raft group, plus transactions that span ranges using a fault-tolerant 2PC and timestamp-ordered MVCC. One SQL database on the outside; many consensus groups inside.
@@ -69,7 +76,15 @@ Because the coordinator's state lives in a consensus-replicated record, a node c
 
 ### Ordering with clocks
 
-Without a single machine handing out transaction numbers, nodes must agree on order using clocks — and real clocks disagree by milliseconds. Each system has a strategy for that uncertainty. MVCC needs transaction timestamps that agree with causality. Spanner's TrueTime: pick commit timestamp `s ≥ TT.now().latest`, then **wait until `TT.now().earliest > s`** before acknowledging — at most ~2× clock uncertainty (a few ms) — so any transaction starting afterwards gets a larger timestamp. CockroachDB instead bounds clock offset (e.g., 500 ms max) and, when a read sees a value within its uncertainty window, **restarts** at a higher timestamp; it provides serializability, with strict serializability not guaranteed in all cases.
+Without a single machine handing out transaction numbers, nodes must agree on order using clocks, and real clocks disagree by milliseconds. MVCC needs timestamps that agree with causality: if T2 starts after T1 finished, T2 must get a larger timestamp, or it won't see T1's writes. Each system handles the clock uncertainty differently.
+
+**Spanner (TrueTime).** Its clock API returns an interval guaranteed to contain the true time, say ±4 ms.
+
+1. To commit T1, pick the timestamp `s` at the *top* of the interval: `s = TT.now().latest`.
+2. **Commit wait**: don't reply until `TT.now().earliest > s`, about 2 × 4 = 8 ms later. Now every clock in the world is past `s`.
+3. Any T2 that starts after the reply therefore gets a timestamp above `s` and sees T1.
+
+**CockroachDB (hybrid logical clocks).** No special hardware. It assumes clocks differ by at most a configured offset (500 ms by default). When a read finds a value written "slightly in its future" (inside that uncertainty window), it can't tell which came first, so it **restarts** at a higher timestamp. This gives serializability, though not strict serializability in every case.
 
 ### Latency geography
 

@@ -71,7 +71,15 @@ WHERE id = 42 AND version = 7;
 -- 0 rows updated → someone else saved first: reload, merge or show a conflict
 ```
 
-No locks held while the user edits. The single `UPDATE` is atomic, so two concurrent saves can't both match `version = 7`.
+No locks held while the user edits. The single `UPDATE` is atomic, so two concurrent saves can't both match `version = 7`:
+
+```text
+Alice opens doc 42  → version 7          Bob opens doc 42 → version 7
+Alice saves: … WHERE version = 7  → 1 row updated, now version 8
+Bob saves:   … WHERE version = 7  → 0 rows updated (it's 8 now) → "Alice changed this; reload or merge"
+```
+
+Without the version check, Bob's save would silently overwrite Alice's edit.
 
 ORMs support this directly (JPA `@Version`, Rails `lock_version`, Django via conditional updates).
 

@@ -20,6 +20,18 @@ A row store keeps each row's values together: great for "fetch or update order 4
 
 A **column store** keeps each column's values together. That query reads just `order_date` and `total`: perhaps 5% of the data, and that 5% compresses extremely well because similar values sit next to each other.
 
+```text
+row store (one page):     |1, 2024-06-01, Pune, paid, 500|2, 2024-06-01, Delhi, paid, 300|3, 2024-06-02, Pune, new, 900|
+
+column store:  id      1           2           3
+               date    2024-06-01  2024-06-01  2024-06-02     ← repeats: compresses well
+               city    Pune        Delhi       Pune
+               status  paid        paid        new
+               total   500         300         900            ← sum(total) reads only this line
+```
+
+Row 3 is still "the third value in every column", so rows can be put back together by position when a query needs them.
+
 ## Definition
 
 - **Row-oriented (NSM)**: page = several complete rows.
@@ -66,7 +78,7 @@ Compression ratios of 5–20× are common, which multiplies the I/O savings — 
 
 ### Vectorized execution
 
-Instead of one row at a time through the operator tree (the classic Volcano model), operators process **batches of ~1,000 values** of one column in tight loops: fewer function calls, SIMD instructions, CPU caches used well ([CPU Caches](lesson:os-cpu-caches-contention)).
+Instead of passing one row at a time through the operator tree (the classic Volcano model), operators process **batches of ~1,000 values** of one column in tight loops. That means fewer function calls, SIMD instructions that handle several values at once, and CPU caches used well ([CPU Caches](lesson:os-cpu-caches-contention)).
 
 ### Skipping data: zone maps and sort order
 
@@ -111,7 +123,7 @@ erDiagram
     }
 ```
 
-The fact table (billions of rows, narrow numeric columns) is scanned column-wise; dimension tables are small and **denormalized** (product name, category, brand in one table) to minimize joins — the deliberate opposite of OLTP normalization ([Normalization](lesson:db-normalization)).
+The fact table (billions of rows, narrow numeric columns) is scanned column-wise. Dimension tables are small and **denormalized** (product name, category and brand in one table) to minimize joins. That is the deliberate opposite of OLTP normalization ([Normalization](lesson:db-normalization)).
 
 ## Complexity & Performance
 

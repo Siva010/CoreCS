@@ -31,7 +31,7 @@ Waiting risks deadlock; refusing and checking risk wasted work. Every protocol b
 
 **Without it.** You'd either run transactions serially (correct, slow) or interleave them freely and hope (fast, wrong — lost updates, write skew).
 
-**The idea.** Choose a simple local rule that can be checked per operation — "you need the lock", "you're too old for this item", "your read set was overwritten" — and prove that obeying the rule makes cycles impossible. Then handle the side effect each rule creates: deadlocks for waiting, restarts and starvation for refusing.
+**The idea.** Choose a simple local rule that can be checked on every operation: "you need the lock", "you're too old for this item", or "your read set was overwritten". Prove that obeying the rule makes cycles impossible. Then handle the side effect each rule creates: deadlocks for waiting, restarts and starvation for refusing.
 
 :::callout[That's all it is]{type=insight}
 2PL: take locks as you go, release none until you've taken them all — and in practice hold them until commit. Timestamp ordering: older transactions win; a younger one that arrives "too late" restarts. Validation: run freely, and at commit check whether anyone changed what you read.
@@ -63,9 +63,9 @@ A transaction's **lock point** is the moment it holds its last new lock. Basic 2
 | **Strict 2PL** | X locks held to commit | ✓ | ✗ | ✓ | most lock-based databases |
 | Rigorous 2PL | all locks held to commit | ✓ (in commit order) | ✗ | ✓ | lock-based Serializable levels |
 
-Why basic 2PL serializes: every transaction has a **lock point** (the moment it holds its final lock). If T1 → T2 is an edge, T2 had to wait until T1 released a lock, which happens after T1's lock point; so edges always go from an earlier lock point to a later one, and a cycle would need a transaction whose lock point is before its own.
+Why basic 2PL serializes: every transaction has a **lock point**, the moment it holds its final lock. If T1 → T2 is an edge, T2 had to wait until T1 released a lock, and T1 releases only after its lock point. So every edge goes from an earlier lock point to a later one. A cycle would need a transaction whose lock point comes before its own, which is impossible.
 
-**Lock conversion and the upgrade deadlock.** Two transactions read the same row with S locks, then both try to upgrade to X to update it: each waits for the other's S lock — a deadlock that has nothing to do with lock order. Remedies: take the write lock up front (`SELECT … FOR UPDATE`), or use an **update (U) lock** mode that is compatible with S but not with other U locks (SQL Server).
+**Lock conversion and the upgrade deadlock.** Two transactions read the same row with S locks, then both try to upgrade to X to update it. Each waits for the other's S lock: a deadlock that has nothing to do with lock order. Remedies: take the write lock up front (`SELECT … FOR UPDATE`), or use an **update (U) lock** mode that is compatible with S but not with other U locks (SQL Server).
 
 ### Multiple granularity and intention locks
 
@@ -95,9 +95,12 @@ Each transaction T gets TS(T) when it starts (older = smaller). Each item X reme
 | | TS(T) < write_TS(X)? — a younger transaction already wrote X | basic TO: **abort**; Thomas's write rule: **skip the write** |
 | | otherwise | write; write_TS(X) = TS(T) |
 
-Every edge in the precedence graph now goes from older to younger timestamp, so cycles are impossible — conflict serializable in timestamp order. Nobody waits, so there are **no deadlocks**; instead transactions restart, a long transaction can be restarted repeatedly (**starvation**), and basic TO allows reading uncommitted values, so practical versions add commit bits or delay reads until the writer commits (strict TO).
+Every edge in the precedence graph now goes from an older to a younger timestamp, so cycles are impossible: the schedule is conflict serializable in timestamp order. Nobody waits, so there are **no deadlocks**. The costs show up elsewhere:
 
-**Thomas's write rule.** If T1 (older) wants to write X after T2 (younger) already wrote it — and nobody younger read T1's would-be value — T1's write is obsolete in the timestamp order: the serial order T1, T2 would have overwritten it anyway. So skip it instead of aborting. The resulting schedules are **view** serializable but not always conflict serializable (blind writes, as in the previous lesson).
+- transactions restart instead of waiting, and a long transaction can be restarted again and again (**starvation**);
+- basic TO allows reading uncommitted values, so practical versions add commit bits or delay reads until the writer commits (strict TO).
+
+**Thomas's write rule.** Suppose T1 (older) wants to write X after T2 (younger) already wrote it, and nobody younger has read X since. In timestamp order T1 comes first, so T2's write would have overwritten T1's anyway: T1's write is obsolete. So skip it instead of aborting T1. The resulting schedules are **view** serializable but not always conflict serializable (blind writes, as in the previous lesson).
 
 Step through both rules on your own schedules in the analyzer's **Timestamp ordering** tab: it shows R-TS and W-TS for every item after each operation, and says which check failed.
 

@@ -16,7 +16,9 @@ tags: [dbms, database management system, files vs database, data independence, a
 
 ## Mental Model
 
-A database is **a program that owns your data so that your application doesn't have to solve the hard problems of storing it**. You describe *what* you want ("customers in Pune with an unpaid order"); the database decides *how* to find it, keeps it consistent while hundreds of clients change it at once, and makes sure a committed change survives a power cut.
+A database is **a program that owns your data so that your application doesn't have to solve the hard problems of storing it**. You describe *what* you want ("customers in Pune with an unpaid order"). The database decides *how* to find it, keeps it consistent while hundreds of clients change it at once, and makes sure a committed change survives a power cut.
+
+Think of a bank teller. Customers never walk into the vault; they ask the teller, who checks the request, writes it in the ledger and fetches what's needed. A DBMS is the teller for your data: every program asks it, and only it touches the files.
 
 The easiest way to understand every part of a DBMS is to start without one and watch things break.
 
@@ -65,11 +67,14 @@ flowchart TD
     W --> D2[("log files — fsync'd on COMMIT")]
 ```
 
-1. The client sends SQL over a network connection ([connection management](lesson:x-connection-management)).
-2. The **parser** checks syntax; the **planner** chooses an execution strategy (which index, which join algorithm) using statistics about the data.
-3. The **executor** runs the plan, reading pages through the **buffer pool** — the database's own cache of disk pages ([Buffer Pool](lesson:db-buffer-pool)).
-4. Changes are recorded in the **write-ahead log** first; on `COMMIT` the log is forced to disk, which is what makes the change durable ([WAL](lesson:db-wal-durability)).
-5. The **transaction manager** isolates concurrent transactions so each sees a consistent view ([Isolation Levels](lesson:db-isolation-levels)).
+Follow one request, `UPDATE orders SET status = 'paid' WHERE id = 42`, through the boxes:
+
+1. **Connection.** The app sends the SQL text over a network connection ([connection management](lesson:x-connection-management)).
+2. **Parser and planner.** The parser checks the grammar. The planner then picks a strategy. Here: "use the primary-key index to find order 42", because statistics say the table is big and the index is precise.
+3. **Executor and buffer pool.** The executor follows that plan. It asks the **buffer pool** (the database's own in-memory cache of disk pages) for the index pages and the page holding order 42. Pages already in memory cost nothing; others are read from disk ([Buffer Pool](lesson:db-buffer-pool)).
+4. **Transaction manager.** Before changing the row, the database makes sure no other transaction is changing the same row at the same moment. It also makes sure readers still see a consistent version ([Isolation Levels](lesson:db-isolation-levels)).
+5. **Write-ahead log.** The change is first appended to the **write-ahead log** (WAL), a sequential diary of every change. The page in memory is updated too, but written to the data file later.
+6. **Commit.** On `COMMIT`, the database forces the log to disk and only then replies "done". If the power fails one second later, replaying the log restores the change. That is what makes it durable ([WAL](lesson:db-wal-durability)).
 
 ### The three-schema architecture (ANSI/SPARC)
 
@@ -85,6 +90,11 @@ Between the levels sit **mappings**. Change one level and only the mapping to it
 
 - **Physical data independence**: change the internal schema (add an index, move a table to faster disks, switch to a column store) without changing the conceptual schema or any query. Almost every DBMS achieves this.
 - **Logical data independence**: change the conceptual schema (split a table, add a column) without changing external schemas or applications — usually by redefining a view to present the old shape. Harder, and only partly achieved in practice.
+
+Two concrete cases:
+
+- You add an index on `orders(city)`. Only the internal level changed. Every existing query keeps working and simply gets faster: **physical** independence.
+- You split `customers` into `customers` and `customer_addresses`, then create a view named after the old shape that joins them back together. The reports that read the old shape don't change: **logical** independence.
 
 ### DBMS languages
 
@@ -111,7 +121,7 @@ Between the levels sit **mappings**. Change one level and only the mapping to it
 The OS already provides files, a page cache and journaling ([Filesystems](lesson:os-filesystem-internals)), so why do databases reimplement caching and logging?
 
 - **Journaling protects filesystem metadata, not your application's invariants.** It guarantees the directory tree survives; it knows nothing about "debit and credit must both happen".
-- **The OS page cache evicts by its own policy.** A database knows that an index root page is hotter than a sequential-scan page, and it must control *when* dirty pages reach disk relative to log records (the WAL rule). Many engines use `O_DIRECT` to bypass the page cache; PostgreSQL deliberately uses it as a second-level cache ([Page Cache](lesson:os-page-cache)).
+- **The OS page cache evicts by its own policy.** A database knows that an index root page is hotter than a sequential-scan page. It must also control *when* dirty pages reach disk relative to log records (the WAL rule). Many engines use `O_DIRECT` to bypass the page cache; PostgreSQL deliberately uses it as a second-level cache ([Page Cache](lesson:os-page-cache)).
 - **`write()` returning is not durability.** Data sits in the page cache until `fsync()`. The database decides exactly which bytes must be durable at commit time — only the log — and writes data pages lazily.
 :::
 

@@ -21,6 +21,15 @@ Joins combine tables **side by side** (more columns). Set operations stack resul
 
 ## Definition
 
+On two tiny lists, A = {Asha, Ravi, Ravi} and B = {Ravi, Meera}:
+
+```text
+A UNION B       → Asha, Ravi, Meera            (stacked, duplicates removed)
+A UNION ALL B   → Asha, Ravi, Ravi, Ravi, Meera (stacked, everything kept)
+A INTERSECT B   → Ravi                         (in both)
+A EXCEPT B      → Asha                         (in A, not in B)
+```
+
 | Operation | Result | Duplicates |
 |---|---|---|
 | `A UNION B` | rows in A or B | removed |
@@ -79,8 +88,8 @@ SELECT 'supplier', email FROM suppliers;     -- rows can't collide: the source c
 
 :::depth{level=advanced}
 - `UNION ALL` → an **Append** node: run each branch, stream rows through. Branches can run in parallel.
-- `UNION`/`INTERSECT`/`EXCEPT` → Append followed by **HashSetOp/HashAggregate** or **Sort + Unique/SetOp**: the executor tags each row with its branch and counts occurrences per distinct row, then emits according to the operation (INTERSECT: count in both > 0; EXCEPT: count in A > 0 and in B = 0).
-- The optimizer can push `WHERE` conditions from an outer query into each `UNION ALL` branch — which is how partitioned tables work internally: a query on the parent becomes an Append over partitions, and pruning removes branches ([Partitioning](lesson:db-partitioning)).
+- `UNION`/`INTERSECT`/`EXCEPT` → Append followed by **HashSetOp/HashAggregate** or **Sort + Unique/SetOp**. The executor tags each row with the branch it came from and counts occurrences of each distinct row. Then it emits rows according to the operation: INTERSECT keeps rows counted in both inputs; EXCEPT keeps rows counted in A but not in B.
+- The optimizer can push `WHERE` conditions from an outer query into each `UNION ALL` branch. That's how partitioned tables work internally: a query on the parent becomes an Append over partitions, and pruning removes branches ([Partitioning](lesson:db-partitioning)).
 :::
 
 ## Example
@@ -102,7 +111,7 @@ WHERE o.order_date >= '2023-01-01' AND o.order_date < '2024-01-01'
                     AND o2.order_date >= '2024-01-01' AND o2.order_date < '2025-01-01');
 ```
 
-Both are correct. `EXCEPT` is shorter; the anti join lets you return other columns (name, email) without a further join, and NULL `customer_id`s behave differently (`EXCEPT` treats them as equal and removes a NULL if both years have one).
+Both are correct. `EXCEPT` is shorter. The anti join lets you return other columns (name, email) without another join. NULL `customer_id`s also behave differently: `EXCEPT` treats them as equal, so it removes a NULL if both years have one.
 
 ## Complexity & Performance
 

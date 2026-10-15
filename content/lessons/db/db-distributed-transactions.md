@@ -16,7 +16,15 @@ tags: [distributed transactions, two phase commit, 2pc, coordinator, prepare, bl
 
 ## Mental Model
 
-A single database makes a multi-step change atomic with one commit record in one log. Spread the change over two databases (two shards, or two services each owning its data) and there is **no single log**: each side can commit or fail independently, and the network between them can lose the message that says "the other side committed".
+A single database makes a multi-step change atomic with one commit record in one log. Spread the change over two databases (two shards, or two services each owning its data) and there is **no single log**. Each side can commit or fail independently, and the network between them can lose the message that says "the other side committed".
+
+Concretely, moving ₹500 between wallets on two shards with no coordination:
+
+```text
+shard 1: BEGIN; debit wallet A by 500; COMMIT       ✓ committed, can't be undone by the database
+         the request to shard 2 is lost (or shard 2 crashes before it commits)
+shard 2: credit wallet B never happens              → ₹500 has vanished
+```
 
 Two families of answers:
 
@@ -39,7 +47,10 @@ Two families of answers:
 
 **Why it's hard.** Atomicity in one database comes from one commit record in one log. With two databases there are two logs, and the message linking them can be lost — so neither side can know for certain what the other did.
 
-**The two ideas.** Either *make everyone promise first, then decide once* (2PC: strong, but participants must wait for the decision), or *commit each step on its own and undo with a compensating step if a later one fails* (sagas: never blocks, but others can see in-between states).
+**The two ideas.**
+
+- *Make everyone promise first, then decide once* (2PC). Strong, but participants must wait for the decision.
+- *Commit each step on its own, and undo with a compensating step if a later one fails* (sagas). Never blocks, but others can see in-between states.
 
 :::callout[That's all it is]{type=insight}
 2PC: ask every database "can you commit?", then tell all of them the single answer. Saga: do each step as its own transaction and, if one fails, run "undo" steps for the earlier ones. The outbox makes "change data + send event" one local transaction.
@@ -110,7 +121,7 @@ A relay (polling the outbox, or CDC reading the WAL — Debezium) publishes rows
 
 ### Exactly-once effects
 
-Networks force a choice between at-most-once (may lose) and at-least-once (may duplicate) delivery. "Exactly once" is achieved as an **effect**: at-least-once delivery + idempotent processing — e.g., an `inbox`/`processed_messages` table with a unique message id checked in the same transaction as the side effect, or naturally idempotent operations (`SET status = 'PAID'` rather than `balance = balance - 100`).
+Networks force a choice between at-most-once delivery (may lose messages) and at-least-once delivery (may duplicate them). "Exactly once" is achieved as an **effect**: at-least-once delivery plus idempotent processing. Two common ways: an `inbox`/`processed_messages` table with a unique message id, checked in the same transaction as the side effect; or naturally idempotent operations (`SET status = 'PAID'` rather than `balance = balance - 100`).
 
 ## Internal Mechanism
 
@@ -121,7 +132,11 @@ After voting YES, a participant has given up its right to decide. Only the coord
 
 ### Deterministic and single-shard designs
 
-The cheapest distributed transaction is the one you avoid: choose shard keys so that most transactions are single-shard ([Sharding](lesson:db-sharding)); co-locate data that must change atomically; turn cross-entity invariants into single-row operations (e.g., a ledger of immutable entries per account and asynchronous settlement).
+The cheapest distributed transaction is the one you avoid:
+
+- choose shard keys so that most transactions are single-shard ([Sharding](lesson:db-sharding));
+- co-locate data that must change atomically;
+- turn cross-entity invariants into single-row operations (e.g., a ledger of immutable entries per account, with asynchronous settlement).
 
 ### Saga orchestration engines
 

@@ -23,6 +23,14 @@ Updating data pages in place at every commit would mean many random writes scatt
 
 If the machine crashes, the log contains everything needed to redo committed changes that hadn't reached the data files yet. The log is the source of truth; data files are a cache of the log's effects, periodically caught up.
 
+It's how a shop keeps a sales register. Each sale is written on the next line of the register immediately; the stock shelves are tidied up at the end of the day. If someone knocks the shelves over at noon, the register says exactly what should be there. A WAL for one transfer looks like this:
+
+```text
+LSN 5000  xid 901  page 812: row 3 balance 1000 → 500
+LSN 5040  xid 901  page 913: row 8 balance  200 → 700
+LSN 5080  xid 901  COMMIT          ← flushed to disk before the client hears "OK"
+```
+
 ## Definition
 
 - **WAL (write-ahead log)** / redo log (InnoDB) / transaction log (SQL Server): an append-only sequence of records describing changes ("page 812: insert tuple at slot 5 with bytes …"; "xid 901 committed").
@@ -75,7 +83,7 @@ A flush takes ~0.1–2 ms on SSDs (more with network storage). While one flush i
 
 ### Checkpoints
 
-The log grows forever, and recovery would have to replay all of it. Checkpoints answer "how far back must recovery start?" Without checkpoints, recovery would replay the log from the beginning of time and the log would grow forever. A checkpoint:
+Without checkpoints, the log would grow forever and recovery would have to replay all of it, from the beginning of time. A checkpoint answers "how far back must recovery start?":
 
 1. Writes all dirty pages (spread over time to avoid I/O bursts — `checkpoint_completion_target`).
 2. Records the checkpoint's redo start position.

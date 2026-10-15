@@ -17,9 +17,22 @@ tags: [group by, having, count, sum, avg, min, max, count distinct, conditional 
 
 ## Mental Model
 
-`GROUP BY` **collapses** many rows into one row per group. After grouping, each output row represents a *bucket* of input rows, so for every column you select you must say either "this is the bucket's label" (it's in `GROUP BY`) or "summarize the bucket's values like this" (an aggregate). Anything else is ambiguous — which of the 40 employees' names should the department row show?
+`GROUP BY` **collapses** many rows into one row per group. After grouping, each output row represents a *bucket* of input rows. So for every column you select, you must say either "this is the bucket's label" (it's in `GROUP BY`) or "summarize the bucket's values like this" (an aggregate). Anything else is ambiguous: which of the 40 employees' names should the department row show?
 
 `WHERE` filters **rows before** they are grouped; `HAVING` filters **groups after** aggregation.
+
+On five rows:
+
+```text
+employees                 GROUP BY dept → buckets          aggregate each bucket
+Asha   Eng    90          Eng:   [Asha 90, Ravi 70]        Eng    count 2  avg 80   max 90
+Ravi   Eng    70          Sales: [Kabir 60, Tara 50]       Sales  count 2  avg 55   max 60
+Kabir  Sales  60          HR:    [Neel 80]                 HR     count 1  avg 80   max 80
+Tara   Sales  50
+Neel   HR     80
+```
+
+The output has three rows, one per bucket. `dept` is the bucket's label; `count`, `avg` and `max` each squash a bucket into one number. There is no single "name" for the Eng row — Asha or Ravi? — which is exactly why selecting `name` here is an error.
 
 ## Definition
 

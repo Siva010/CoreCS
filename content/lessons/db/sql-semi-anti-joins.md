@@ -24,6 +24,14 @@ A regular join answers **"pair me with every match"** — and multiplies rows. O
 
 Neither returns columns from B. They're filters on A.
 
+With the customers and orders from the [Joins](lesson:sql-joins) lesson (Asha has orders 10 and 11, Ravi has order 12, Meera has none):
+
+```text
+customers JOIN orders            → Asha, Asha, Ravi     (one row per order)
+semi join: EXISTS an order       → Asha, Ravi           (each customer once)
+anti join: NOT EXISTS an order   → Meera
+```
+
 ## Definition
 
 ```sql
@@ -51,7 +59,7 @@ WHERE o.id IS NULL;
 
 **Without it.** Using an inner join for "customers who ordered" returns each customer once per order; adding `DISTINCT` to fix it forces a sort/hash over the whole result.
 
-**The idea.** Ask the question you actually mean: "does at least one match exist?" A semi join states the real question, so the database can **stop at the first match** per row and never produces duplicates. An anti join is the same question with the answer flipped.
+**The idea.** Ask the question you actually mean: "does at least one match exist?" A semi join states that question directly. The database can **stop at the first match** for each row, and it never produces duplicates. An anti join is the same question with the answer flipped.
 
 :::callout[That's all it is]{type=insight}
 Semi join = keep A rows that have a match in B (EXISTS). Anti join = keep A rows that have no match (NOT EXISTS). Neither adds B's columns or duplicates A's rows. Avoid NOT IN when the subquery can contain NULLs.
@@ -107,7 +115,7 @@ PostgreSQL's planner converts `EXISTS`/`IN` into **Semi Join** nodes and `NOT EX
 - **Nested Loop Semi Join** with an index on `orders.customer_id`: one index probe per customer, stopping at the first entry.
 - **Merge Semi/Anti Join** when both inputs are sorted.
 
-`NOT IN (subquery)` usually **can't** be converted into an anti join because its NULL semantics differ; PostgreSQL executes it as a "hashed SubPlan" (fine when the subquery fits in memory) or, worse, re-scans the subquery per outer row. That — besides correctness — is why `NOT EXISTS` is the recommended form.
+`NOT IN (subquery)` usually **can't** be converted into an anti join, because its NULL semantics differ. PostgreSQL executes it as a "hashed SubPlan" (fine when the subquery fits in memory) or, worse, re-scans the subquery for every outer row. That, besides correctness, is why `NOT EXISTS` is the recommended form.
 
 Older MySQL versions executed `IN (subquery)` as a dependent subquery per outer row; modern MySQL (5.6+/8.0) also uses semi-join strategies (materialization, first-match, loose scan).
 :::

@@ -28,7 +28,7 @@ Because each page holds hundreds of keys, the tree is **very wide and very shall
 - **Internal node**: up to m − 1 separator keys and m child pointers; routes searches.
 - **Leaf node**: keys with their payload (a row pointer/TID, the primary key, or the whole row in a clustered index); leaves are linked in key order.
 - **Invariants**: all leaves at the same depth; every node except the root at least half full; keys sorted within and across nodes.
-- **B-tree vs B+ tree**: in a classic B-tree, internal nodes also carry data; in a B+ tree, **data lives only in leaves** and internal nodes are pure routing — higher fanout, and range scans simply walk the leaf chain. Databases use B+ trees (often still calling them "B-trees").
+- **B-tree vs B+ tree**: in a classic B-tree, internal nodes also carry data. In a B+ tree, **data lives only in leaves** and internal nodes only route searches. That gives higher fanout, and range scans simply walk the leaf chain. Databases use B+ trees (often still calling them "B-trees").
 
 ## Why It Exists
 
@@ -79,6 +79,19 @@ The challenge is keeping every leaf at the same depth no matter where keys are i
 2. If the leaf overflows, **split** it: keep the lower half, move the upper half to a new leaf, and insert the new leaf's first key as a separator into the parent.
 3. If the parent overflows, split it too — possibly up to the root. A root split creates a new root: **the only way the tree gets taller**, which is why all leaves stay at the same depth.
 
+One split, with leaves that hold at most 4 keys:
+
+```text
+parent:  [ … | 50 | … ]          leaf to the left of 50:  [10 20 30 40]  (full)
+insert 25 → 10 20 25 30 40 doesn't fit → split in two:
+  leaf     [10 20]
+  new leaf [25 30 40]
+  copy the new leaf's first key up as a separator:
+parent:  [ … | 25 | 50 | … ]     search for 27: 25 ≤ 27 < 50 → new leaf
+```
+
+The leaves stayed at the same depth; the parent just gained one separator. Only when the parent is also full does the split move up a level.
+
 ::viz{id=btree}
 
 ### Delete
@@ -95,7 +108,7 @@ With fanout f and n keys, height ≈ ⌈log_f(n)⌉ levels (plus the leaves' own
 | 1 billion | 5 | 4 |
 | 1 trillion | 6 | 5 |
 
-Internal levels are small: with fanout 500 and 1 billion keys, everything above the leaves is about 4,000 pages (~32 MB with 8 KB pages) — the hottest pages in the buffer pool — so most lookups cost **one leaf read** from storage.
+Internal levels are small. With fanout 500 and 1 billion keys, everything above the leaves is about 4,000 pages (~32 MB with 8 KB pages). Those are the hottest pages in the buffer pool and almost always in memory, so most lookups cost **one leaf read** from storage.
 
 ### Textbook order numericals
 
@@ -104,9 +117,18 @@ Exam-style questions give a block size B, key size V, child-pointer size P and r
 - Internal node of order p holds p child pointers and p − 1 keys: p·P + (p − 1)·V ≤ B.
 - Leaf node holds p_leaf (key, record pointer) pairs plus one next-leaf pointer: p_leaf·(V + Pr) + P ≤ B.
 
-Example (B = 512 bytes, V = 9, P = 6, Pr = 7): internal 6p + 9(p − 1) ≤ 512 → 15p ≤ 521 → **p = 34**; leaf 16·p_leaf + 6 ≤ 512 → **p_leaf = 31**.
+Example (B = 512 bytes, V = 9, P = 6, Pr = 7):
 
-Occupancy rules for a B+ tree of order p: every non-root internal node has between ⌈p/2⌉ and p children; the root has at least 2 children (unless it's a leaf); leaves hold between ⌈p_leaf/2⌉ and p_leaf keys. With nodes ~69% full on average (typical for random inserts), a 3-level tree of order 34 holds roughly 23 × 23 × 21 ≈ 11,000 keys — real pages are 8–16 KB, which is why real trees hold billions in 3–4 levels.
+- internal node: 6p + 9(p − 1) ≤ 512 → 15p ≤ 521 → **p = 34**;
+- leaf: 16·p_leaf + 6 ≤ 512 → **p_leaf = 31**.
+
+Occupancy rules for a B+ tree of order p:
+
+- every non-root internal node has between ⌈p/2⌉ and p children;
+- the root has at least 2 children (unless it's a leaf);
+- leaves hold between ⌈p_leaf/2⌉ and p_leaf keys.
+
+With random inserts, nodes are about 69% full on average. So a 3-level tree of order 34 holds roughly 23 × 23 × 21 ≈ 11,000 keys. Real pages are 8–16 KB, which is why real trees hold billions of keys in 3–4 levels.
 
 ## Internal Mechanism
 
@@ -121,7 +143,7 @@ Monotonically increasing keys (identity columns, timestamps, UUIDv7) always inse
 
 ### Concurrency: latch crabbing and B-link trees
 
-Many threads search and modify the tree concurrently. **Latch crabbing**: take a latch on a child before releasing the parent, and release ancestors early once a node is "safe" (won't split/merge). Optimistic variants take read latches all the way down and restart with write latches only if a split is needed. **B-link trees** (Lehman–Yao, used by PostgreSQL) add a right-link and a high key to every node, so a reader that lands on a node mid-split can move right to find its key — readers need almost no latching.
+Many threads search and modify the tree concurrently. **Latch crabbing**: take a latch on a child before releasing the parent, and release ancestors early once a node is "safe" (won't split/merge). Optimistic variants take read latches all the way down and restart with write latches only if a split is needed. **B-link trees** (Lehman–Yao, used by PostgreSQL) add a right-link and a high key to every node. A reader that lands on a node in the middle of a split can then move right to find its key, so readers need almost no latching.
 
 ### Write amplification
 

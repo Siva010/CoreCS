@@ -67,7 +67,7 @@ WHERE f1.user_id = $asha AND f2.friend_id <> $asha
   AND NOT EXISTS (SELECT 1 FROM friendships x WHERE x.user_id = $asha AND x.friend_id = f2.friend_id);
 ```
 
-Fine at depth 2 with indexes. At variable depth 4–6 with fan-out of hundreds per hop, intermediate results explode (100⁴ = 100 million paths) — in *any* system; graph databases handle it better by traversing with pruning and without per-hop index lookups, but "six degrees" queries on huge social graphs are expensive everywhere.
+Fine at depth 2 with indexes. At variable depth 4–6, with a fan-out of hundreds per hop, intermediate results explode (100⁴ = 100 million paths) in *any* system. Graph databases handle it better, because they traverse with pruning and without per-hop index lookups. Still, "six degrees" queries on huge social graphs are expensive everywhere.
 
 ### Where graphs shine
 

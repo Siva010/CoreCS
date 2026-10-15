@@ -16,7 +16,7 @@ tags: [page, block, slotted page, heap file, tuple, row header, ctid, tid, rowid
 
 ## Mental Model
 
-A database never reads "a row" from disk. It reads a **page** — a fixed-size block (8 KB in PostgreSQL, 16 KB in InnoDB) — containing many rows, because storage devices and the OS transfer data in blocks and the cost of one I/O is mostly fixed ([Storage Devices](lesson:os-storage-devices)). Everything above — buffer pool, indexes, WAL — speaks in pages.
+A database never reads "a row" from disk. It reads a **page**: a fixed-size block (8 KB in PostgreSQL, 16 KB in InnoDB) containing many rows. That's because storage devices and the OS transfer data in blocks, and the cost of one I/O is mostly fixed whatever its size ([Storage Devices](lesson:os-storage-devices)). Everything above — buffer pool, indexes, WAL — speaks in pages.
 
 Inside a page, rows are variable-length, get inserted, updated and deleted. The **slotted page** layout lets rows move within a page without changing their external address.
 
@@ -65,6 +65,17 @@ The design question: rows have different sizes and come and go, yet indexes need
 - A row's address is (page, **slot**), not (page, byte offset). The page can compact itself (defragment tuples) and just update slot offsets — external pointers stay valid.
 - Deleting a row marks its slot unused/dead; space is reclaimed by compaction (and, in MVCC systems, only after no transaction can see the old version — [MVCC](lesson:db-mvcc)).
 
+Why the indirection matters, in one example. An index entry says "row is at (page 7, slot 2)":
+
+```text
+before:  slot 2 → offset 8020, 80 bytes        index: (7, 2) ✓
+an in-place update makes the row 120 bytes; it no longer fits where it was
+after:   the page moves the row into free space and sets slot 2 → offset 7900, 120 bytes
+         index: still (7, 2) ✓   — nothing outside the page had to change
+```
+
+(PostgreSQL's MVCC usually writes a *new* row version instead of growing the old one, but compaction moves rows the same way.)
+
 ### Inside a tuple
 
 PostgreSQL heap tuple ≈ 23-byte header + null bitmap + aligned column data:
@@ -80,7 +91,7 @@ Columns are stored in declaration order with **alignment padding** (e.g., an 8-b
 
 ### Large values
 
-The page design assumes rows are much smaller than a page. A 1 MB JSON document breaks that assumption, so it needs a separate path. A row must fit in a page. Values larger than ~2 KB are compressed and/or moved out of line:
+The page design assumes rows are much smaller than a page, and a row must fit in one page. A 1 MB JSON document breaks that assumption, so large values take a separate path. Values larger than ~2 KB are compressed and/or moved out of line:
 
 - PostgreSQL **TOAST**: large `text`/`jsonb`/`bytea` values are stored in a side table in chunks; the row holds a pointer. Queries that don't select the column never read it.
 - InnoDB: large columns go to **overflow pages**, with a prefix or pointer kept in the row (depending on row format).
@@ -141,7 +152,7 @@ How many rows fit on a page? A table with `(id bigint, customer_id bigint, statu
 - (8192 − 24-byte page header) / 76 ≈ **107 rows per page**.
 - 100 million rows ≈ 935,000 pages ≈ **7.3 GB** before indexes.
 
-Such estimates let you predict whether a table's hot part fits in memory and how long a full scan takes (7.3 GB at ~1 GB/s ≈ 7 s from a fast SSD; far longer when competing with other I/O).
+Such estimates let you predict whether a table's hot part fits in memory and how long a full scan takes. Here, 7.3 GB at ~1 GB/s is about 7 s from a fast SSD, and far longer when competing with other I/O.
 
 ## Complexity & Performance
 

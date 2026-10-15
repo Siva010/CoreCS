@@ -66,7 +66,18 @@ flowchart TD
 2. Insert into the memtable. Done — no disk read, no random write.
 3. Full memtable becomes immutable; a new one takes writes; the old one is flushed to an L0 SSTable and its WAL segment can be discarded.
 
-Updates and deletes are just newer entries (a new value or a tombstone) — the old value remains in an older file until compaction.
+Updates and deletes are just newer entries (a new value or a tombstone) — the old value remains in an older file until compaction. Follow two keys through it:
+
+```text
+put(k1, "A"), put(k2, "B")   memtable {k1:A, k2:B}       → full → flush → SST-1 [k1:A, k2:B]
+put(k1, "C"), delete(k2)     memtable {k1:C, k2:✝}       → flush → SST-2 [k1:C, k2:✝]   (✝ = tombstone)
+
+get(k1)  memtable: no → SST-2: k1:C → return "C"     (SST-1's old "A" is never read)
+get(k2)  memtable: no → SST-2: tombstone → "not found"
+compact SST-1 + SST-2 → SST-3 [k1:C]                 ("A", "B" and the tombstone are gone)
+```
+
+Nothing was ever modified in place: newer files simply hide older ones, and compaction throws the hidden values away.
 
 ### Read path
 
@@ -118,7 +129,7 @@ Each write carries a sequence number; reads at a snapshot ignore newer entries. 
 
 A metrics service ingests 500,000 points/s of 100 bytes each (50 MB/s):
 
-- **B+ tree**: each insert modifies a leaf page; with random keys (metric id, timestamp), pages are scattered — at 8 KB per page write, the device could face gigabytes/second of random page writes before caching absorbs some.
+- **B+ tree**: each insert modifies a leaf page, and with random keys (metric id, timestamp) those pages are scattered. At 8 KB per page write, the device could face gigabytes per second of random page writes before caching absorbs some.
 - **LSM**: 50 MB/s of sequential WAL + memtable flushes, plus compaction (say 10× write amplification → 500 MB/s of large sequential writes). High, but sequential, and it's background work tunable with compaction strategy (time-window compaction nearly eliminates it for append-only time series).
 
 Reads of "the last 5 minutes of metric X" hit the memtable and the newest SSTables — mostly in memory.

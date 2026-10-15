@@ -95,6 +95,13 @@ COMMIT;
 
 Every statement takes a table-level lock of some mode: `SELECT` takes ACCESS SHARE, DML takes ROW EXCLUSIVE, most `ALTER TABLE` forms take **ACCESS EXCLUSIVE** (conflicts with everything). Locks are granted in **queue order**: an `ALTER TABLE` waiting behind a long `SELECT` blocks every later query on the table, even though those queries don't conflict with the `SELECT`. Result: a "harmless" migration stalls the site ([DML & DDL](lesson:sql-dml-ddl)). Use `lock_timeout` for DDL.
 
+```text
+09:00:00  report   SELECT … FROM orders          (runs 10 min)   holds ACCESS SHARE
+09:00:05  deploy   ALTER TABLE orders ADD …                      wants ACCESS EXCLUSIVE → waits for the report
+09:00:06  app      SELECT … FROM orders WHERE id = 7             wants ACCESS SHARE → queues behind the ALTER
+09:00:07  app      … every query on orders queues the same way   → checkout is down until 09:10
+```
+
 ### Gap and next-key locks (InnoDB)
 
 Locking rows can't stop phantoms — the problem row doesn't exist yet, so there's nothing to lock. The fix is to lock the *space* where it would go. To prevent phantoms for locking reads and writes, InnoDB locks not only index records but the **gaps** between them. A next-key lock = record lock + the gap before it.
@@ -132,7 +139,7 @@ The theory behind these locks — the 2PL variants, intention locks for multiple
 :::depth{level=advanced}
 ### Where locks live
 
-- PostgreSQL keeps heavyweight locks (tables, advisory locks, transaction ids) in a shared-memory lock table. **Row locks are stored in the tuple header** (`xmax` + infomask bits) rather than the lock table, so locking a million rows doesn't exhaust memory — but a waiter then waits on the locker's *transaction id*. Multiple sharers use a "MultiXact".
+- PostgreSQL keeps heavyweight locks (tables, advisory locks, transaction ids) in a shared-memory lock table. **Row locks are stored in the tuple header** (`xmax` + infomask bits) instead, so locking a million rows doesn't exhaust memory. The catch: a waiter then waits on the locker's *transaction id*. Multiple sharers use a "MultiXact".
 - InnoDB keeps lock structures per page in memory with bitmaps of locked records; very large locking statements can grow the lock memory significantly.
 - SQL Server can **escalate** many row locks into a table lock to save memory — sudden table-wide blocking.
 

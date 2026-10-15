@@ -23,6 +23,15 @@ There are two ways to store a table:
 
 "Clustered" means *the rows are physically stored in the index's order*. A table can be clustered by at most one key.
 
+```text
+heap + index (PostgreSQL)                        clustered (InnoDB)
+heap page 1: [id 7] [id 2] [id 9]   ← any order   leaf 1: [id 1 + row] [id 2 + row] [id 5 + row]   ← key order,
+heap page 2: [id 1] [id 5]                        leaf 2: [id 7 + row] [id 9 + row]                  rows inside
+PK index:  1 → (2,1)  2 → (1,2)  5 → (2,2)
+           7 → (1,1)  9 → (1,3)                   email index: asha@x → 7, ravi@x → 2
+email index: asha@x → (1,1)  ravi@x → (1,2)                    (stores the PK, then searches the clustered tree)
+```
+
 ## Definition
 
 - **Clustered index**: the index whose leaf level contains the table rows, ordered by its key.
@@ -31,9 +40,9 @@ There are two ways to store a table:
 
 ## Why It Exists
 
-**The problem.** With a heap, every index lookup ends with a jump to wherever the row happens to sit — and rows you usually read together (one customer's orders) may be scattered across thousands of pages.
+**The problem.** With a heap, every index lookup ends with a jump to wherever the row happens to sit. Rows you usually read together, such as one customer's orders, may be scattered across thousands of pages.
 
-**The idea.** If the table must be stored in *some* order anyway, store it in the order you most often read it: make the primary-key index *be* the table. Clustering makes access by the clustering key extremely fast: a point lookup lands directly on the row, and a range scan reads rows that are physically adjacent — a handful of pages instead of one random page per row. Rows frequently accessed together (all of one customer's orders) can be stored together by choosing the key well.
+**The idea.** If the table must be stored in *some* order anyway, store it in the order you most often read it: make the primary-key index *be* the table. Clustering makes access by the clustering key extremely fast. A point lookup lands directly on the row. A range scan reads rows that are physically adjacent: a handful of pages instead of one random page per row. Rows frequently accessed together (all of one customer's orders) can be stored together by choosing the key well.
 
 **The bill.** Rows can only be in one order, so every other index must find rows *through* the clustering key — and the clustering key's size and insert pattern now affect the whole table.
 
@@ -82,7 +91,7 @@ So in InnoDB: keep the PK **short, stable and monotonically increasing**, unless
 ### Updates and MVCC in both designs
 
 - InnoDB updates rows in place in the clustered index and keeps old versions in the **undo log**; secondary indexes are updated only if their columns change (plus delete-marking old entries).
-- PostgreSQL writes a new heap tuple version for every update; unless it's a **HOT** update (no indexed column changed and space on the same page), *every* index gets a new entry — the "write amplification" criticism of PostgreSQL for wide, heavily indexed, update-heavy tables ([MVCC](lesson:db-mvcc)).
+- PostgreSQL writes a new heap tuple version for every update. Unless it's a **HOT** update (no indexed column changed and there's space on the same page), *every* index gets a new entry. That is the "write amplification" criticism of PostgreSQL for wide, heavily indexed, update-heavy tables ([MVCC](lesson:db-mvcc)).
 
 ### Why InnoDB secondaries store the PK, not a physical location
 

@@ -17,7 +17,7 @@ tags: [sharding, shard key, horizontal partitioning, range sharding, hash shardi
 
 ## Mental Model
 
-When one database server can't hold all the data or absorb all the writes, you split the data **by key** across several independent databases — **shards** — each responsible for a subset (customers A–F on shard 1, …). Every shard is a full database (usually with its own replicas). The application or a routing layer sends each query to the shard that owns its key.
+When one database server can't hold all the data or absorb all the writes, you split the data **by key** across several independent databases called **shards**. Each one is responsible for a subset, for example customers A–F on shard 1. Every shard is a full database (usually with its own replicas). The application or a routing layer sends each query to the shard that owns its key.
 
 Sharding trades one hard problem (vertical limits of a single machine) for several (routing, cross-shard operations, uneven load, rebalancing). The **shard key** decides whether those problems are rare or constant.
 
@@ -105,7 +105,7 @@ Typical online move of a key range/tenant:
 3. Briefly block writes for the moving keys (or use dual-writes), verify, flip the routing entry.
 4. Clean up the source.
 
-Using many **logical shards** (e.g., 4,096 virtual shards mapped onto 16 physical servers) turns resharding into moving whole virtual shards between servers instead of re-hashing every row — the same idea as virtual nodes in consistent hashing.
+Use many **logical shards**, for example 4,096 virtual shards mapped onto 16 physical servers. Resharding then means moving whole virtual shards between servers instead of re-hashing every row: the same idea as virtual nodes in consistent hashing.
 
 ### Shards are replicated too
 

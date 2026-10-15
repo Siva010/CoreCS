@@ -16,7 +16,7 @@ tags: [nosql, key value store, document database, wide column, graph database, t
 
 ## Mental Model
 
-"NoSQL" isn't one thing; it's a family of databases that each **give up some relational generality to make a specific access pattern cheap at scale** — usually lookups by a known key, or a particular shape of data (documents, graphs, time series).
+"NoSQL" isn't one thing. It's a family of databases that each **give up some relational generality to make a specific access pattern cheap at scale**: usually lookups by a known key, or a particular shape of data (documents, graphs, time series).
 
 The decision rule is not "SQL vs NoSQL"; it's: **what questions will I ask of this data, how often, at what scale, and with what consistency?** Relational databases answer unanticipated questions well. Specialized stores answer *their* questions extremely well and others poorly or not at all.
 
@@ -39,7 +39,7 @@ The decision rule is not "SQL vs NoSQL"; it's: **what questions will I ask of th
 **The idea.** A relational database is general: it can answer any question, at the cost of coordination (joins, multi-row transactions) that is hard to spread across machines. If you know your questions in advance, you can give up that generality and shape the data so each question is one cheap lookup that scales out easily.
 
 :::callout[That's all it is]{type=insight}
-Each NoSQL family makes one access pattern cheap — get by key, fetch a whole document, append to a partition, follow edges, scan a time range, search text — by giving up the relational ability to answer anything. Pick by the questions you'll ask.
+Each NoSQL family makes one access pattern cheap by giving up the relational ability to answer anything: get by key, fetch a whole document, append to a partition, follow edges, scan a time range, or search text. Pick by the questions you'll ask.
 :::
 
 ## How It Works

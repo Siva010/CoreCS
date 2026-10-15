@@ -19,6 +19,14 @@ tags: [functional dependency, armstrong's axioms, attribute closure, candidate k
 
 A functional dependency **X → Y** says: *if you know X, Y is determined*. Two rows that agree on X must agree on Y. `email → name` means one email never appears with two different names.
 
+```text
+email        name     city
+asha@x.com   Asha     Pune
+asha@x.com   Asha     Pune     ✓ same email, same name: consistent with email → name
+ravi@x.com   Ravi     Delhi
+ravi@x.com   R. Kumar Delhi    ✗ same email, different names: email → name does not hold
+```
+
 FDs are **facts about the real world** (business rules), not about the current data. The rows in a table can suggest an FD, but only the domain can confirm it: "every employee has one department" is a rule; "no two current employees share a birthday" is a coincidence.
 
 Everything in normalization — keys, partial and transitive dependencies, BCNF — is computed from the FDs.
@@ -34,9 +42,9 @@ Everything in normalization — keys, partial and transitive dependencies, BCNF 
 
 **Armstrong's axioms** (sound and complete — they derive every implied FD):
 
-1. **Reflexivity**: if Y ⊆ X then X → Y.
-2. **Augmentation**: if X → Y then XZ → YZ.
-3. **Transitivity**: if X → Y and Y → Z then X → Z.
+1. **Reflexivity**: if Y ⊆ X then X → Y. *Knowing a set of columns tells you any part of it.* {email, city} → city.
+2. **Augmentation**: if X → Y then XZ → YZ. *Knowing one more thing on the left lets you also report that thing on the right.* email → name gives {email, city} → {name, city}.
+3. **Transitivity**: if X → Y and Y → Z then X → Z. *Chains of knowledge.* order_id → customer_id and customer_id → city give order_id → city.
 
 Derived rules: **union** (X → Y, X → Z ⇒ X → YZ), **decomposition** (X → YZ ⇒ X → Y), **pseudo-transitivity** (X → Y, WY → Z ⇒ WX → Z).
 
@@ -53,6 +61,8 @@ X → Y means "knowing X tells you Y". The closure of X is everything X tells yo
 ## How It Works
 
 ### Computing a closure X⁺
+
+Think of it as dominoes. You start out knowing X. Any rule whose left side you already know fully lets you learn its right side, which may unlock more rules. When no rule adds anything new, the set you know is X⁺.
 
 Algorithm: start with X; repeatedly, for every FD A → B with A ⊆ current set, add B; stop when nothing changes.
 
@@ -92,8 +102,8 @@ R(A, B, C), F = { A → B, B → A, A → C }.
 Why bother: the same rules can be written with lots of redundancy, which hides what the real dependencies are and makes normalization produce extra tables. A minimal cover is the shortest equivalent list. F = { A → BC, B → C, A → B, AB → C }:
 
 1. Split right sides: A → B, A → C, B → C, A → B, AB → C → remove the duplicate: {A → B, A → C, B → C, AB → C}.
-2. Remove extraneous left attributes: in AB → C, is B extraneous? A⁺ under F = {A, B, C} contains C → yes, AB → C becomes A → C (duplicate, remove).
-3. Remove redundant FDs: is A → C implied by the others {A → B, B → C}? A⁺ = {A, B, C} → yes, remove it.
+2. Remove extraneous left attributes. In AB → C, do we need B on the left, or does A alone already determine C? A⁺ = {A, B, C} contains C, so A alone is enough: AB → C shrinks to A → C, which is already in the list, so it disappears.
+3. Remove redundant FDs. Hide one FD and ask whether the rest still imply it. Without A → C, the rest are {A → B, B → C}, and A⁺ = {A, B, C} still contains C. So A → C was just a shortcut for A → B → C: remove it.
 
 Minimal cover: **{ A → B, B → C }**.
 
@@ -101,7 +111,10 @@ Minimal cover: **{ A → B, B → C }**.
 
 ### Equivalence of two FD sets
 
-Two sets F and G are **equivalent** if each implies the other: every FD in G can be derived from F, and vice versa. Test it with closures — for each X → Y in G, compute X⁺ under F and check Y ⊆ X⁺; then swap roles. Example: F = { A → B, B → C } and G = { A → B, B → C, A → C } are equivalent (A → C follows from F by transitivity); G = { A → C, B → C } is not, because A⁺ under it is {A, C}, which lacks B.
+Two sets F and G are **equivalent** if each implies the other: every FD in G can be derived from F, and vice versa. Test it with closures. For each X → Y in G, compute X⁺ under F and check that Y ⊆ X⁺; then swap the roles of F and G. Examples:
+
+- F = { A → B, B → C } and G = { A → B, B → C, A → C } are equivalent: A → C follows from F by transitivity.
+- F and H = { A → C, B → C } are not: under H, A⁺ = {A, C}, which lacks B, so H can't derive A → B.
 
 ### Counting super keys
 
@@ -120,7 +133,7 @@ Decomposing R into R1 and R2 is lossless iff the common attributes are a key of 
 
 ### Dependency preservation
 
-A decomposition preserves dependencies if every FD can be checked within a single piece (the union of the projected FDs implies F). 3NF synthesis always achieves lossless + dependency-preserving; BCNF decomposition is lossless but may lose some dependencies ([Normalization](lesson:db-normalization)).
+A decomposition preserves dependencies if every FD can be checked within a single piece (the union of the projected FDs implies F). 3NF synthesis always achieves both lossless join and dependency preservation. BCNF decomposition is lossless but may lose some dependencies ([Normalization](lesson:db-normalization)).
 
 ### Complexity
 

@@ -20,7 +20,7 @@ tags: [dense index, sparse index, primary index, clustering index, secondary ind
 
 An index is a smaller file you search first so you can read fewer blocks of the big one. Everything in this lesson is a variation on two questions:
 
-1. **Does the index have an entry for every record, or only one per block?** If the data file is sorted by the search key, one entry per block is enough — the block tells you where to look, and the order inside does the rest (**sparse**). If it isn't sorted, every record needs its own entry (**dense**).
+1. **Does the index have an entry for every record, or only one per block?** If the data file is sorted by the search key, one entry per block is enough (**sparse**): the entry tells you which block to read, and the sorted order inside the block does the rest. If the file isn't sorted, every record needs its own entry (**dense**).
 2. **Do you find the entry by searching in order, or by computing where it is?** Ordered indexes (and their multilevel / B+ tree form) narrow down by comparisons. **Hashing** computes the bucket directly from the key — one jump for equality, useless for ranges.
 
 ## Why It Exists
@@ -103,7 +103,7 @@ Keep a **directory** of 2^d pointers indexed by the first (or last) d bits of th
 ::::steps[Inserting into a full bucket]
 1. Hash the key, take d bits, follow the directory pointer to bucket B.
 2. B has room → insert, done.
-3. B is full and its local depth d′ **< global depth d** → split B into two buckets with local depth d′ + 1, redistribute its records by the next bit, and repoint the directory entries that pointed to B. The directory doesn't grow.
+3. B is full and its local depth d′ **< global depth d** → split B into two buckets with local depth d′ + 1. Redistribute its records by the next bit, and repoint the directory entries that pointed to B. The directory doesn't grow.
 4. B is full and **d′ = d** → **double the directory** (d + 1; each old entry is copied), then split B as in step 3.
 ::::
 
@@ -119,7 +119,7 @@ No directory. Buckets are split in a fixed order using a pointer `next`, regardl
 
 - h₀(k) = k mod (N · 2^level), h₁(k) = k mod (N · 2^(level+1)).
 - Address: compute h₀(k); if it's below `next`, that bucket has already been split this round, so use h₁(k).
-- A split (triggered by load factor or any overflow) moves bucket `next`'s records between it and its new image, then `next` advances; when every bucket of the round has split, `level` increases and `next` resets to 0.
+- A split (triggered by the load factor or by any overflow) moves bucket `next`'s records between it and its new image, then `next` advances. When every bucket of the round has split, `level` increases and `next` resets to 0.
 
 Growth is smooth — one bucket at a time, no directory doubling — at the cost of temporary overflow chains on buckets that haven't had their turn yet.
 
@@ -145,7 +145,7 @@ insert 1 (…001), 9 (…1001) → bit 1 → B
 d = 1    dir[0] → A (d'=1): 4, 6        dir[1] → B (d'=1): 1, 9
 ```
 
-**Insert 12 (…1100, last bit 0).** A is full and its local depth equals the global depth (1 = 1), so the directory doubles to d = 2, then A splits on the last two bits: 4 → `00`, 12 → `00`, 6 → `10`.
+**Insert 12 (…1100, last bit 0).** A is full, and its local depth equals the global depth (1 = 1). So the directory doubles to d = 2, then A splits on the last two bits: 4 → `00`, 12 → `00`, 6 → `10`.
 
 ```text
 d = 2    dir[00] → A  (d'=2): 4, 12
@@ -154,7 +154,7 @@ d = 2    dir[00] → A  (d'=2): 4, 12
          dir[11] → B
 ```
 
-**Insert 3 (…011, last two bits 11).** It lands in B, which is full — but B's local depth (1) is less than d (2), so B splits **without** touching the directory size: 1 and 9 end in `01`, 3 ends in `11`.
+**Insert 3 (…011, last two bits 11).** It lands in B, which is full. But B's local depth (1) is less than d (2), so B splits **without** changing the directory size: 1 and 9 end in `01`, and 3 ends in `11`.
 
 ```text
 d = 2    dir[00] → A (4, 12)   dir[10] → A2 (6)   dir[01] → B (1, 9)   dir[11] → B2 (3)

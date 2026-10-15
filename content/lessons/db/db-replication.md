@@ -19,7 +19,16 @@ tags: [replication, primary, replica, leader, follower, synchronous replication,
 
 Replication keeps **copies of the same data on several machines** by shipping the leader's log of changes to followers, which apply it in the same order. It's the WAL again, streamed over the network ([WAL](lesson:db-wal-durability)).
 
-The central tension: the leader can either **wait** for followers to confirm each change (safe, slower, and stuck if a follower is down) or **not wait** (fast, but followers lag behind, and a leader crash can lose recently acknowledged writes).
+The central tension is whether the leader **waits** for followers to confirm each change. Waiting is safe, but slower, and stuck if a follower is down. **Not waiting** is fast, but followers lag behind, and a leader crash can lose recently acknowledged writes.
+
+What "not waiting" can cost, on one timeline with an asynchronous follower 200 ms behind:
+
+```text
+t = 0 ms     leader commits order #9001 and replies "OK" (didn't wait for the follower)
+t = 5 ms     user reloads; the read goes to the follower → no order #9001 yet (stale read)
+t = 50 ms    leader's machine dies; #9001 never reached the follower
+t = 30 s     follower is promoted → order #9001 is gone, although the user was told "OK"
+```
 
 ## Definition
 
@@ -112,7 +121,7 @@ MySQL's binlog supports statement-based (replay SQL — nondeterminism risks), r
 :::depth{level=advanced}
 ### Replication slots and feedback
 
-PostgreSQL replication slots make the leader retain WAL until the consumer has received it — preventing a lagging replica from falling off the end of the log, and risking disk exhaustion if the consumer disappears ([WAL](lesson:db-wal-durability)). `hot_standby_feedback` tells the leader about the replica's oldest snapshot so vacuum doesn't remove rows a replica query needs — at the cost of bloat on the leader.
+PostgreSQL replication slots make the leader keep WAL until the consumer has received it. That stops a lagging replica from falling off the end of the log, but risks filling the disk if the consumer disappears ([WAL](lesson:db-wal-durability)). `hot_standby_feedback` tells the leader about the replica's oldest snapshot, so vacuum doesn't remove rows a replica query still needs. The cost is bloat on the leader.
 
 ### Replay conflicts
 

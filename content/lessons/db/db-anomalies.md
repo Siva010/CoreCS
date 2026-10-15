@@ -123,7 +123,7 @@ Other write-skew bugs: double-booking a meeting room (each checks "no overlappin
 :::depth{level=advanced}
 ### Serializability, formally
 
-(The full treatment — precedence graphs, view serializability and the recoverability ladder — is in [Schedules & Serializability](lesson:db-schedules-serializability).) A schedule (interleaving) is **conflict-serializable** if it can be transformed into a serial schedule by swapping adjacent non-conflicting operations. Two operations conflict if they're from different transactions, touch the same item and at least one is a write (RW, WR, WW). Build a **precedence graph** with an edge T1 → T2 for each conflict where T1's operation comes first: the schedule is conflict-serializable **iff the graph has no cycle**.
+A schedule (an interleaving of transactions' operations) is **conflict-serializable** if you can turn it into a serial schedule by swapping adjacent operations that don't conflict. Two operations conflict if they come from different transactions, touch the same item, and at least one is a write (RW, WR, WW). To test it, build a **precedence graph**: an edge T1 → T2 for each conflict where T1's operation comes first. The schedule is conflict-serializable **iff the graph has no cycle**. The full treatment — precedence graphs, view serializability and the recoverability ladder — is in [Schedules & Serializability](lesson:db-schedules-serializability).
 
 Write skew in graph terms: T1 reads what T2 writes (T1 →rw T2) and T2 reads what T1 writes (T2 →rw T1) — a cycle of two **read-write anti-dependencies**. Serializable Snapshot Isolation detects exactly this "dangerous structure" and aborts one transaction ([Isolation Levels](lesson:db-isolation-levels)).
 

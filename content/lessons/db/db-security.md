@@ -32,7 +32,13 @@ A database will do anything a connected, authorized session asks — that is its
 
 **Without it.** One injectable search box lets an attacker read every table the app's account can read — and if that account owns the schema, drop them. One missing `WHERE tenant_id = …` shows a customer someone else's invoices. An unencrypted snapshot copied to the wrong place leaks everything, no SQL required.
 
-**The idea.** Don't rely on every line of application code being perfect. Build layers that each fail safe on their own: the SQL text can't be changed by data; the account can't touch what it doesn't need; the database itself filters rows by tenant; the bytes are useless without keys; and every privileged action leaves a trail.
+**The idea.** Don't rely on every line of application code being perfect. Build layers that each fail safe on their own:
+
+- the SQL text can't be changed by data;
+- the account can't touch what it doesn't need;
+- the database itself filters rows by tenant;
+- the bytes are useless without keys;
+- every privileged action leaves a trail.
 
 **From idea to mechanism.**
 - *Data must never become code* → send the SQL and the values separately (prepared statements / bind parameters).
@@ -159,7 +165,7 @@ Alternatives: a database or schema per tenant (strongest isolation, many objects
 | **TDE** (SQL Server, Oracle, MySQL InnoDB data-at-rest encryption) | copied data files and backups of them | SQL access — the engine decrypts for every authorized query |
 | **Application-level column encryption** | DBAs, database compromise, leaked dumps for that column | the app itself; you also lose indexing and range search on it |
 
-TLS only authenticates the server if the client checks: in libpq `sslmode=require` encrypts but **doesn't verify the certificate** (a man-in-the-middle can present any certificate; if a root CA file happens to be installed it checks the chain, but never the hostname); `verify-full` checks the chain and the hostname ([TLS Handshake](lesson:cn-tls-handshake), [Certificates & PKI](lesson:cn-certificates-pki)). Community PostgreSQL has no built-in TDE; it relies on storage encryption, and some distributions add it.
+TLS only authenticates the server if the client checks. In libpq, `sslmode=require` encrypts but **doesn't verify the certificate**, so a man-in-the-middle can present any certificate. (If a root CA file happens to be installed, it checks the chain, but never the hostname.) `verify-full` checks both the chain and the hostname ([TLS Handshake](lesson:cn-tls-handshake), [Certificates & PKI](lesson:cn-certificates-pki)). Community PostgreSQL has no built-in TDE; it relies on storage encryption, and some distributions add it.
 
 Backups and replicas are copies of the same data: encrypt them, keep their keys in a key management service rather than next to the backup, and restrict who can read the bucket ([Backups & PITR](lesson:db-backups-pitr)).
 

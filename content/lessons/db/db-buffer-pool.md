@@ -18,7 +18,7 @@ tags: [buffer pool, shared buffers, innodb buffer pool, frame, pin, dirty page, 
 
 The buffer pool is **a fixed array of page-sized slots in RAM** plus a hash table mapping "which disk page is in which slot". Every page the database touches — table, index, even the free-space map — goes through it. A query asking for page 42 of `orders` either finds it there (a hit: ~100 ns) or must evict something and read it from storage (a miss: ~100 µs on SSD, ~10 ms on disk).
 
-It's the OS page-replacement problem ([Page Replacement](lesson:os-page-replacement)), solved again by the database, because the database knows things the OS doesn't: which pages are index roots, which reads are one-off scans, and — crucially — **when a dirty page is allowed to be written**.
+It's the OS page-replacement problem ([Page Replacement](lesson:os-page-replacement)), solved again by the database. The database does it itself because it knows things the OS doesn't: which pages are index roots, which reads are one-off scans, and, crucially, **when a dirty page is allowed to be written**.
 
 ## Definition
 
@@ -70,6 +70,17 @@ flowchart TD
 Pure LRU fails on **sequential flooding**: one big scan touches millions of pages once each and evicts the entire working set. Databases counter it:
 
 - **PostgreSQL clock-sweep**: each frame has a usage count (0–5), incremented on access. A "clock hand" sweeps frames, decrementing counts, and evicts the first unpinned frame with count 0 — an approximation of LRU/LFU ([Page Replacement](lesson:os-page-replacement) CLOCK). Large sequential scans and VACUUM use a small **ring buffer** of frames instead of the main pool, so they can't flush it.
+
+  ```text
+  frames:  A (count 2)   B (count 0, pinned)   C (count 1)   D (count 0)
+  the hand needs a victim, starting at A:
+    A: count 2 → 1, move on      (recently used: gets another chance)
+    B: pinned → skip             (someone is using it right now)
+    C: count 1 → 0, move on
+    D: count 0, unpinned → evict D
+  ```
+
+  A page used often keeps a high count and survives several sweeps; a page read once by a scan sits at count 1 and is gone after one pass.
 - **InnoDB midpoint insertion LRU**: new pages enter at the 3/8 point of the list (the "old" sublist) and are promoted to the "young" head only if accessed again after a delay (`innodb_old_blocks_time`). A one-time scan cycles through the old sublist without touching hot pages.
 
 ### Writing dirty pages

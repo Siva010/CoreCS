@@ -27,6 +27,8 @@ import {
   type SubjectId,
 } from "./types";
 import { createRenderer, parseMarkdown, plainText, slugify, splitAnswer, splitByHeading } from "./markdown";
+import { applyGlossary } from "./glossary";
+import { GLOSSARY } from "@content/glossary";
 import { visit } from "unist-util-visit";
 
 const CONTENT_DIR = path.join(process.cwd(), "content");
@@ -542,6 +544,12 @@ export function getBrokenLinks() {
   return brokenLinks;
 }
 
+/** Glossary entries whose home lesson doesn't exist (reported by the validator). */
+export function getGlossaryProblems(): string[] {
+  const ids = load().lessonsById;
+  return GLOSSARY.filter((g) => !ids.has(g.lesson)).map((g) => `glossary term "${g.term}" points to unknown lesson ${g.lesson}`);
+}
+
 // ───────────────────────────── Public API ─────────────────────────────
 
 export function getSubjects(): SubjectDef[] {
@@ -639,17 +647,23 @@ export async function renderLesson(id: string): Promise<RenderedLesson | null> {
   const rec = getLessonRecord(id);
   if (!rec) return null;
   const r = renderer();
+  // Database lessons get hover definitions for jargon on its first use (content/glossary.ts).
+  const prose = rec.sections.filter((s) => s.key !== "interview-questions" && s.key !== "practice");
+  const marked =
+    rec.meta.subject === "db"
+      ? applyGlossary([rec.intro, ...prose.map((s) => s.nodes)], id, (lessonId) => load().lessonsById.get(lessonId)?.meta.href)
+      : [rec.intro, ...prose.map((s) => s.nodes)];
   const sections: RenderedSection[] = [];
   for (const s of rec.sections) {
     if (s.key === "interview-questions" || s.key === "practice") {
       sections.push({ key: s.key, title: SECTION_TITLES[s.key], hast: { type: "root", children: [] } });
       continue;
     }
-    sections.push({ key: s.key, title: SECTION_TITLES[s.key], hast: await r.toHast(s.nodes, id) });
+    sections.push({ key: s.key, title: SECTION_TITLES[s.key], hast: await r.toHast(marked[1 + prose.indexOf(s)], id) });
   }
   return {
     meta: rec.meta,
-    intro: rec.intro.length ? await r.toHast(rec.intro, id) : null,
+    intro: rec.intro.length ? await r.toHast(marked[0], id) : null,
     sections,
     questions: await Promise.all(rec.questions.map((q) => renderQuestion(q, rec.meta.subject, id))),
     practice: await Promise.all(rec.practice.map((p) => renderPractice(p, id))),

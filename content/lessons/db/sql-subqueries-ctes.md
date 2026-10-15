@@ -120,6 +120,18 @@ flowchart LR
 
 Execution: the anchor fills a working table; each iteration joins the working table to `employees` and produces the next level; iteration stops when a step produces no rows.
 
+On a small org chart where Aarav (1) manages Diya (2) and Kabir (3), and Diya manages Rohan (5):
+
+```text
+anchor       working table = {Aarav, depth 0}
+iteration 1  who has manager_id ∈ {1}?   → {Diya, Kabir}   depth 1
+iteration 2  who has manager_id ∈ {2, 3}? → {Rohan}        depth 2
+iteration 3  who has manager_id ∈ {5}?   → {}              stop
+result       Aarav 0, Diya 1, Kabir 1, Rohan 2
+```
+
+Each iteration only looks at the rows the *previous* iteration found, so the query walks down one level at a time, however deep the tree is.
+
 **Cycles**: in graph data (not trees), recursion can loop forever. Track the path and stop when revisiting (`WHERE NOT e.id = ANY(r.path)`), use `UNION` instead of `UNION ALL` to discard duplicate rows, or use PostgreSQL 14's `CYCLE` clause. Also cap depth as a safety net.
 
 ### LATERAL: a subquery per row that can return several rows and columns

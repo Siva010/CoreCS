@@ -30,7 +30,11 @@ Learn these five rows and you can derive most of the rest.
 
 ## Why It Exists
 
-**The problem.** "Postgres or MySQL?" is a real decision teams make, a common interview question, and a source of production surprises when people move between them: a UUID primary key that was fine in one is slow in the other, a transaction that raised a serialization error in one silently loses an update in the other, a server that handled 5,000 connections in one falls over in the other.
+**The problem.** "Postgres or MySQL?" is a real decision teams make and a common interview question. It's also a source of production surprises when people move between them:
+
+- a UUID primary key that was fine in one is slow in the other;
+- a transaction that raised a serialization error in one silently loses an update in the other;
+- a server that handled 5,000 connections in one falls over in the other.
 
 **Without it.** Engineers apply one engine's mental model to the other — tuning autovacuum on MySQL, ignoring primary-key design on InnoDB, assuming DDL can be rolled back everywhere.
 
@@ -59,7 +63,7 @@ In PostgreSQL every index, including the primary key, is a separate B+ tree whos
 In InnoDB the primary key *is* the table. A lookup by primary key ends at the leaf that holds the row — no extra read. A lookup by a secondary index ends at a leaf holding the primary key, so InnoDB then traverses the primary-key tree as well (a "double lookup", unless the secondary index covers the query) ([Clustered Indexes](lesson:db-clustered-indexes)).
 
 Consequences:
-- **Primary-key choice matters much more in InnoDB.** Random keys (UUIDv4) insert all over the clustered tree, causing page splits, half-empty pages and a working set that no longer fits in memory; sequential keys (auto-increment, UUIDv7, ULID) append at the right edge. A wide primary key is also copied into **every secondary index**. In PostgreSQL a random primary key only affects the PK index itself.
+- **Primary-key choice matters much more in InnoDB.** Random keys (UUIDv4) insert all over the clustered tree. That causes page splits, half-empty pages and a working set that no longer fits in memory. Sequential keys (auto-increment, UUIDv7, ULID) append at the right edge instead. A wide primary key is also copied into **every secondary index**. In PostgreSQL a random primary key only affects the PK index itself.
 - **Range scans by primary key** are very efficient in InnoDB (rows are physically ordered); PostgreSQL's heap is ordered only by insertion unless you `CLUSTER` (one-off) or use BRIN-friendly append patterns.
 - If you don't declare a primary key, InnoDB uses the first `UNIQUE NOT NULL` index or generates a hidden 6-byte row id — declare one.
 
@@ -88,19 +92,33 @@ This difference was central to Uber's widely discussed 2016 move from PostgreSQL
 
 ### Logging and replication
 
-PostgreSQL has one WAL. Crash recovery replays it; **physical streaming replication** ships it byte for byte, so replicas are exact copies (same major version required); **logical replication** (publications/subscriptions, since PostgreSQL 10) decodes WAL into row changes for selective or cross-version replication.
+PostgreSQL has one WAL, used three ways:
+
+- crash recovery replays it;
+- **physical streaming replication** ships it byte for byte, so replicas are exact copies (same major version required);
+- **logical replication** (publications/subscriptions, since PostgreSQL 10) decodes it into row changes, for selective or cross-version replication.
 
 MySQL has two logs: InnoDB's **redo log** for crash recovery, and the server's **binlog** for replication and PITR. A commit must be durable in both, so MySQL coordinates them with an internal two-phase commit (`innodb_flush_log_at_trx_commit = 1` and `sync_binlog = 1` — both defaults in modern versions — for full durability). The binlog is logical (row-based by default), which makes replicating across versions, and to non-MySQL consumers via CDC, natural. GTIDs identify transactions across a topology; Group Replication / InnoDB Cluster add consensus-based replication.
 
 ### Connections
 
-PostgreSQL forks a **process per connection**. Each one costs memory (several MB, more with large `work_mem` sorts), and thousands of mostly idle connections hurt snapshot computation and scheduling — so production PostgreSQL almost always sits behind a pooler such as PgBouncer ([Connection Management](lesson:x-connection-management)). MySQL uses a **thread per connection**, cheaper to create and hold, and offers thread pooling (Enterprise, Percona Server, MariaDB) for very high counts. Either way, a few dozen active connections per core is the useful limit.
+PostgreSQL forks a **process per connection**. Each one costs memory (several MB, more with large `work_mem` sorts), and thousands of mostly idle connections slow down snapshot computation and scheduling. So production PostgreSQL almost always sits behind a pooler such as PgBouncer ([Connection Management](lesson:x-connection-management)). MySQL uses a **thread per connection**, which is cheaper to create and hold, and offers thread pooling (Enterprise, Percona Server, MariaDB) for very high counts. Either way, a few dozen active connections per core is the useful limit.
 
 ### SQL features and DDL
 
-- **PostgreSQL**: transactional DDL (`CREATE`, `ALTER`, `DROP` can be rolled back inside a transaction — migrations either fully apply or not at all), rich types (arrays, `jsonb` with GIN indexes, ranges, enums, custom types), partial and expression indexes, GiST/GIN/BRIN/SP-GiST, `RETURNING`, `INSERT … ON CONFLICT`, an extension ecosystem (PostGIS, pgvector, TimescaleDB), `CREATE INDEX CONCURRENTLY`. No optimizer hints in core (the `pg_hint_plan` extension adds them). Major-version upgrades need `pg_upgrade` or logical replication.
-- **MySQL**: DDL causes an implicit commit (since 8.0 each DDL statement is atomic, but it can't be part of a larger transaction); **online DDL** with `ALGORITHM=INSTANT` / `INPLACE` adds many columns and indexes without copying the table; invisible indexes for safely testing index removal; optimizer and index hints (`FORCE INDEX`); `INSERT … ON DUPLICATE KEY UPDATE`; no `RETURNING`. Window functions and CTEs arrived in 8.0; hash joins in 8.0.18 (there is no merge join).
-- **Strings**: MySQL 8's default collation `utf8mb4_0900_ai_ci` is accent- and case-insensitive, so `'abc' = 'ABC'` is true and unique indexes treat them as duplicates; PostgreSQL compares case-sensitively by default (use `citext`, `lower()` expression indexes or nondeterministic ICU collations). MySQL's old `utf8` charset is the 3-byte `utf8mb3` and can't store emoji — use `utf8mb4`.
+- **PostgreSQL**:
+  - transactional DDL: `CREATE`, `ALTER` and `DROP` can be rolled back inside a transaction, so migrations either fully apply or not at all;
+  - rich types (arrays, `jsonb` with GIN indexes, ranges, enums, custom types), partial and expression indexes, GiST/GIN/BRIN/SP-GiST;
+  - `RETURNING`, `INSERT … ON CONFLICT`, `CREATE INDEX CONCURRENTLY`;
+  - an extension ecosystem (PostGIS, pgvector, TimescaleDB);
+  - no optimizer hints in core (the `pg_hint_plan` extension adds them); major-version upgrades need `pg_upgrade` or logical replication.
+- **MySQL**:
+  - DDL causes an implicit commit: since 8.0 each DDL statement is atomic, but it can't be part of a larger transaction;
+  - **online DDL** with `ALGORITHM=INSTANT` / `INPLACE` adds many columns and indexes without copying the table;
+  - invisible indexes for safely testing index removal; optimizer and index hints (`FORCE INDEX`);
+  - `INSERT … ON DUPLICATE KEY UPDATE`, but no `RETURNING`;
+  - window functions and CTEs arrived in 8.0, hash joins in 8.0.18 (there is no merge join).
+- **Strings**: MySQL 8's default collation `utf8mb4_0900_ai_ci` is accent- and case-insensitive. So `'abc' = 'ABC'` is true, and unique indexes treat them as duplicates. PostgreSQL compares case-sensitively by default (use `citext`, `lower()` expression indexes or nondeterministic ICU collations). MySQL's old `utf8` charset is the 3-byte `utf8mb3` and can't store emoji — use `utf8mb4`.
 
 ## Example
 
@@ -117,7 +135,10 @@ InnoDB
   old version                      → in undo until purge
 ```
 
-And a lookup through a secondary index on a table whose B+ trees are three levels deep: PostgreSQL reads 3 index pages + 1 heap page = 4; InnoDB reads 3 secondary-index pages + 3 clustered-index pages = 6 (or just 3 if the secondary index covers the query).
+And a lookup through a secondary index, on a table whose B+ trees are three levels deep:
+
+- PostgreSQL reads 3 index pages + 1 heap page = 4;
+- InnoDB reads 3 secondary-index pages + 3 clustered-index pages = 6, or just 3 if the secondary index covers the query.
 
 ## Complexity & Performance
 

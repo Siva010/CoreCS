@@ -20,7 +20,7 @@ tags: [quorum, w r n, sloppy quorum, hinted handoff, read repair, anti entropy, 
 Two related tools let replicas act like one system:
 
 - **Quorums**: never talk to *all* replicas — talk to *enough* of them that any two groups you might talk to **overlap**. Write to W of N, read from R of N; if W + R > N, every read group contains at least one replica with the latest successful write.
-- **Consensus**: get a group of nodes to **agree on a sequence of decisions** (a log) even when some crash or messages are delayed — so they can all apply the same commands in the same order and behave like a single, fault-tolerant machine (state-machine replication).
+- **Consensus**: get a group of nodes to **agree on a sequence of decisions** (a log), even when some crash or messages are delayed. Then they can all apply the same commands in the same order and behave like a single, fault-tolerant machine (state-machine replication).
 
 Majorities are the trick behind both: **any two majorities of the same set intersect.**
 
@@ -54,7 +54,13 @@ write v2:  R1 ✓  R2 ✓  R3 ✗ (down)        → success (2 acks)
 read:      R2 (v2)  R3 (v1, stale)        → return newest by version: v2; repair R3
 ```
 
-Any 2 of 3 overlaps any other 2 of 3 in at least one node, which has v2.
+Any 2 of 3 overlaps any other 2 of 3 in at least one node, which has v2. Check every possible read set against the write set {R1, R2}:
+
+```text
+read {R1, R2} → shares R1, R2      read {R1, R3} → shares R1      read {R2, R3} → shares R2
+```
+
+No read set misses the write: that's all "W + R > N" means.
 
 | N, W, R | Property |
 |---|---|
@@ -97,6 +103,14 @@ stateDiagram-v2
 3. When a **majority** has stored an entry, the leader marks it **committed**, applies it to its state machine, and replies to the client.
 4. Followers learn the commit index and apply entries in order.
 
+```text
+5 nodes, leader L in term 3; a client sends "x = 5":
+L appends it as entry #7 and sends it to F1, F2, F3, F4
+F1 ✓ stored   F2 ✓ stored   F3 slow   F4 down
+L + F1 + F2 = 3 of 5 = majority → #7 is committed → L applies it and replies "OK"
+F3 stores #7 a moment later; F4 copies it from L when it comes back
+```
+
 With 5 nodes, 2 may fail and the cluster still commits (3-node majority). A partitioned minority can't elect a leader or commit anything — CP behavior ([CAP & PACELC](lesson:db-cap-pacelc)).
 
 ## Internal Mechanism
@@ -112,7 +126,7 @@ Fischer, Lynch and Paterson (1985): in a fully asynchronous system where even on
 
 ### Reads in Raft
 
-A leader might have been deposed without knowing it. Linearizable reads therefore either go through the log, confirm leadership with a round of heartbeats ("ReadIndex"), or rely on a **leader lease** (time-based, assumes bounded clock drift). etcd offers linearizable reads by default and serializable (possibly stale) reads as an option.
+A leader might have been deposed without knowing it. So linearizable reads must do one of three things: go through the log, confirm leadership with a round of heartbeats ("ReadIndex"), or rely on a **leader lease** (time-based, assuming bounded clock drift). etcd offers linearizable reads by default and serializable (possibly stale) reads as an option.
 
 ### Where consensus is used
 

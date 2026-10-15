@@ -96,7 +96,16 @@ SELECT name FROM customers
 WHERE id NOT IN (SELECT customer_id FROM orders);
 ```
 
-If **any** `orders.customer_id` is NULL, this returns **zero rows**. `x NOT IN (1, 2, NULL)` means `x <> 1 AND x <> 2 AND x <> NULL`, and the last term is UNKNOWN, so the whole condition is never TRUE. Use `NOT EXISTS`, which only asks "is there a matching row?" and is unaffected by NULLs ([Semi & Anti Joins](lesson:sql-semi-anti-joins)):
+If **any** `orders.customer_id` is NULL, this returns **zero rows**. Follow customer 4 through it, with the subquery returning (1, 2, NULL):
+
+```text
+4 NOT IN (1, 2, NULL)
+  = 4 <> 1   AND   4 <> 2   AND   4 <> NULL
+  = TRUE     AND   TRUE     AND   UNKNOWN
+  = UNKNOWN                      → WHERE drops the row
+```
+
+Every customer ends the same way, because the last comparison is UNKNOWN for all of them. Use `NOT EXISTS`, which only asks "is there a matching row?" — a yes/no question that NULLs can't make unknown ([Semi & Anti Joins](lesson:sql-semi-anti-joins)):
 
 ```sql
 SELECT c.name FROM customers c

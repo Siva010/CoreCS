@@ -119,7 +119,23 @@ Three "extended ER" ideas that textbooks and campus interviews ask about by name
 
 - **Specialization** (top-down): split an entity into subtypes with extra attributes — `Employee` → `Engineer` (skills), `Manager` (budget). **Generalization** (bottom-up) is the same relationship discovered the other way: `Car` and `Truck` share attributes, so factor out `Vehicle`. Subtypes inherit the parent's attributes and key.
 - Two constraints describe the hierarchy: **disjoint vs overlapping** (can an employee be both an engineer and a manager?) and **total vs partial** (must every employee belong to some subtype?). They decide whether a `type` column suffices and whether it may be NULL.
-- **Aggregation** treats a relationship as an entity so that another relationship can point at it: `Employee works-on Project` is aggregated, and `Manager monitors (works-on)` relates to the *assignment*, not to the employee or project alone. In tables, the aggregated relationship becomes an associative table with its own key, and the outer relationship references that key.
+- **Aggregation** treats a relationship as an entity so that another relationship can point at it: `Employee works-on Project` is aggregated, and `Manager monitors (works-on)` relates to the *assignment*, not to the employee or project alone. In tables, the aggregated relationship becomes an associative table with its own key, and the outer relationship references that key:
+
+```sql
+CREATE TABLE works_on (
+  employee_id bigint REFERENCES employees(id),
+  project_id  bigint REFERENCES projects(id),
+  PRIMARY KEY (employee_id, project_id)            -- one row = one assignment
+);
+CREATE TABLE monitors (
+  manager_id  bigint REFERENCES employees(id),
+  employee_id bigint,
+  project_id  bigint,
+  FOREIGN KEY (employee_id, project_id) REFERENCES works_on   -- points at the assignment itself
+);
+```
+
+"Meera monitors Asha's work on Search" is a fact about the (Asha, Search) assignment. It isn't about Asha in general or about Search in general.
 
 ### Counting tables: the classic numerical
 

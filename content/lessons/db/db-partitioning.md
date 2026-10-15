@@ -18,7 +18,7 @@ tags: [partitioning, range partitioning, list partitioning, hash partitioning, p
 
 Partitioning splits one logical table into many physical tables (**partitions**) by a rule on a column — e.g., one partition per month. Queries still address the parent table; the database routes rows on insert and, on read, **skips partitions that can't contain matching rows** (pruning).
 
-It's the difference between one enormous filing cabinet and a cabinet per month: finding March's papers means opening one drawer, and throwing away 2019 means discarding one cabinet instead of pulling out pages one by one.
+It's the difference between one enormous filing cabinet and a cabinet per month. Finding March's papers means opening one drawer. Throwing away 2019 means discarding one cabinet instead of pulling out pages one by one.
 
 Partitioning happens **inside one database server**. Spreading partitions across servers is sharding ([Sharding](lesson:db-sharding)).
 

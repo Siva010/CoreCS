@@ -48,15 +48,20 @@ Hash nodes and keys onto a circle; each key belongs to the next node clockwise. 
 
 ### The ring
 
-```text
-                 0
-           N3 ●     ● k1 → N1
-        k4 ●           ● N1
-          N2 ●       ● k2 → N2 … (next clockwise)
-               ● k3
-```
+Unroll the circle into a line of positions 0–99 that wraps around after 99:
 
-(Positions are hash values; each key walks clockwise to the first node.)
+```text
+position   0 ……… 10 ……… 20 ……… 35 ……… 50 ……… 70 ……… 80 ……… 90 ……… 99 → back to 0
+nodes                     N1             N2             N3
+keys            k1               k2             k3             k4
+
+k1 (10) → next node clockwise is N1 (20)
+k2 (35) → N2 (50)
+k3 (70) → N3 (80)
+k4 (90) → past 99, wraps to 0 → N1 (20)
+
+add N4 at 40: only keys in (20, 40] change owner → k2 moves from N2 to N4; k1, k3, k4 stay put
+```
 
 - Add N4 between N1 and N2: only keys in (N1, N4] move from N2 to N4. Everything else stays.
 - Remove N2: its keys go to the next node clockwise; others unaffected.
@@ -94,7 +99,7 @@ Adding one node to N existing nodes: the new node takes ~1/(N+1) of the keyspace
 
 ### Bounded loads
 
-Even with vnodes, popular keys make load uneven. "Consistent hashing with bounded loads" (used by some load balancers, e.g., for cache affinity) caps each node at (1 + ε) × average load and spills excess keys to the next node clockwise, trading a little affinity for balance.
+Even with vnodes, popular keys make load uneven. "Consistent hashing with bounded loads" (used by some load balancers, e.g., for cache affinity) caps each node at (1 + ε) × the average load. Keys beyond the cap spill to the next node clockwise, trading a little affinity for balance.
 
 ### Membership is the real problem
 
@@ -103,7 +108,7 @@ The ring needs every client/router to agree on membership. Cassandra gossips rin
 
 ## Example
 
-A 4-node cache cluster using `mod 4`, grown to 5 nodes: about 80% of keys map to a different node → cache hit rate collapses from 95% to ~20% and the database behind it is flooded ([Redis & Caching](lesson:db-redis-caching)). With a ring and 200 vnodes per node, adding the fifth node moves ~20% of keys; the hit rate dips briefly to ~76% and recovers as the new node warms.
+A 4-node cache cluster using `mod 4` grows to 5 nodes. About 80% of keys now map to a different node, so the cache hit rate collapses from 95% to ~20% and the database behind it is flooded ([Redis & Caching](lesson:db-redis-caching)). With a ring and 200 vnodes per node, adding the fifth node moves ~20% of keys; the hit rate dips briefly to ~76% and recovers as the new node warms.
 
 Try adding and removing nodes, and changing the vnode count, in the [Consistent Hashing lab](lab:consistent-hashing).
 

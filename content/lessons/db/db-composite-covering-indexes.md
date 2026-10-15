@@ -71,7 +71,18 @@ Entries are sorted like this:
 
 ### Equality first, range last
 
-Why the order matters: within one value of the first column, the second column is sorted; across a *range* of the first column, it isn't. Once a column is used with a **range** (`>`, `<`, `BETWEEN`, `LIKE 'x%'`), later columns can't narrow the seek — within the range, they're not sorted globally. So order columns:
+Why the order matters: within one value of the first column, the second column is sorted; across a *range* of the first column, it isn't. Look at the entries above for `customer_id > 40 AND status = 'paid'`:
+
+```text
+(41, paid, …)       ← paid
+(42, cancelled, …)
+(42, paid, …)       ← paid
+(42, paid, …)       ← paid
+(42, pending, …)
+(43, paid, …)       ← paid
+```
+
+The paid entries are scattered through the range, because status is only sorted *within* each customer. So the database must read the whole `customer_id > 40` range and check status on every entry. Once a column is used with a **range** (`>`, `<`, `BETWEEN`, `LIKE 'x%'`), later columns can't narrow the seek. So order columns:
 
 1. Columns tested with **equality** (most selective first is a common tiebreaker, but equality-vs-range matters far more),
 2. then the **range** or **sort** column,
@@ -102,7 +113,7 @@ All required columns are in the index → **Index Only Scan**: no table page fet
 :::depth{level=advanced}
 ### Index-only scans and the visibility map (PostgreSQL)
 
-Index entries carry no MVCC visibility info. To return a row from the index alone, PostgreSQL checks the **visibility map**: if the row's heap page is marked all-visible (every tuple on it is visible to all transactions), the heap fetch is skipped; otherwise it must visit the heap anyway. `EXPLAIN ANALYZE` reports `Heap Fetches: N`. Tables with heavy churn and lagging VACUUM get little benefit from covering indexes until vacuum sets the bits ([MVCC](lesson:db-mvcc)).
+Index entries carry no MVCC visibility info. To return a row from the index alone, PostgreSQL checks the **visibility map**. If the row's heap page is marked all-visible (every tuple on it is visible to all transactions), the heap fetch is skipped. Otherwise it must visit the heap anyway. `EXPLAIN ANALYZE` reports `Heap Fetches: N`. Tables with heavy churn and lagging VACUUM get little benefit from covering indexes until vacuum sets the bits ([MVCC](lesson:db-mvcc)).
 
 InnoDB secondary indexes contain the primary key, so any index is automatically "covering" for queries needing only indexed columns plus the PK.
 

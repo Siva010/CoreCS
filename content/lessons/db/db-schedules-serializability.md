@@ -31,7 +31,7 @@ Everything else in this lesson is a way to check those two questions mechanicall
 
 **Without it.** You can't prove that a concurrency-control protocol (locking, timestamps, MVCC) is correct, and you can't say exactly which interleavings an isolation level forbids.
 
-**The idea.** Define correctness relative to the obviously-correct case — serial execution — and reduce "is this interleaving equivalent to a serial one?" to graph theory: only the order of *conflicting* operations matters, so draw an edge for each conflict and look for a cycle. Separately, require that nobody commits on top of data that might still be rolled back.
+**The idea.** Define correctness relative to the obviously correct case, serial execution. Then turn "is this interleaving equivalent to a serial one?" into a graph question: only the order of *conflicting* operations matters, so draw an edge for each conflict and look for a cycle. Separately, require that nobody commits on top of data that might still be rolled back.
 
 :::callout[That's all it is]{type=insight}
 Two operations conflict if they touch the same item, come from different transactions, and at least one writes. Draw an arrow for every conflict in the order it happened; no cycle means the schedule acts like some serial order. And never let a transaction commit after reading data whose writer might still abort.
@@ -149,7 +149,7 @@ Each level contains the next: **strict ⊂ cascadeless ⊂ recoverable**. Strict
 :::depth{level=advanced}
 ### How real systems get serializability
 
-- **Strict 2PL** produces conflict-serializable, strict schedules: conflicting operations wait, so a precedence edge can only point from the lock holder to the waiter, and a cycle would require a deadlock (which is detected and broken) ([Locking](lesson:db-locking)).
+- **Strict 2PL** produces conflict-serializable, strict schedules. Conflicting operations wait, so a precedence edge can only point from the lock holder to the waiter. A cycle would therefore require a deadlock, which the database detects and breaks ([Locking](lesson:db-locking)).
 - **Timestamp ordering** forces precedence edges to follow timestamp order, so cycles are impossible by construction ([Concurrency Protocols](lesson:db-concurrency-protocols)).
 - **Snapshot isolation** is *not* serializable: write skew is a precedence cycle made only of read–write anti-dependencies. **Serializable Snapshot Isolation** watches for exactly that "dangerous structure" (two consecutive rw edges) and aborts one transaction ([Isolation Levels](lesson:db-isolation-levels)).
 - **MVCC never shows uncommitted data**, so MVCC schedules are cascadeless by construction; writers still lock rows against other writers, which keeps them strict for writes.
@@ -169,7 +169,7 @@ edges on A: T1 → T2  (T1 wrote A before T2 read/wrote it)
 edges on B: T2 → T1  (T2 wrote B before T1 read/wrote it)    → cycle
 ```
 
-Not serializable: interest is applied to A *after* the debit but to B *before* the credit, so the ₹100 in flight earns no interest anywhere — a result no serial order would produce. Under strict 2PL this interleaving can't happen: T2's read of A waits for T1's exclusive lock on A, which T1 holds until it commits — so T2 effectively runs after T1, the serial order T1, T2. (Had T2 touched B before A, the two would deadlock instead, and the database would abort and retry one of them.)
+Not serializable. Interest is applied to A *after* the debit but to B *before* the credit, so the ₹100 in flight earns no interest anywhere: a result no serial order would produce. Under strict 2PL this interleaving can't happen. T2's read of A waits for T1's exclusive lock on A, which T1 holds until it commits, so T2 effectively runs after T1 (the serial order T1, T2). Had T2 touched B before A, the two would deadlock instead, and the database would abort and retry one of them.
 
 ## Complexity & Performance
 

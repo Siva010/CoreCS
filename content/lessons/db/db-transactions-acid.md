@@ -43,9 +43,9 @@ Consistency is the odd one out: it's mostly the application's responsibility. Th
 
 **The problem.** Real operations are several writes that only make sense together — debit *and* credit, order *and* its items. Two things can break that togetherness: a failure halfway through, and another request interleaving its own writes.
 
-**Without it.** Every application would need to handle partial failure (crash after the first of five writes) and concurrency (another request interleaving its writes) by itself — with compensation logic, retries and locking scattered through the code.
+**Without it.** Every application would have to handle partial failure (a crash after the first of five writes) and concurrency (another request interleaving its writes) by itself. Compensation logic, retries and locking would be scattered through the code.
 
-**The idea.** Let the application draw a boundary — BEGIN … COMMIT — and promise that everything inside behaves as a single step: it happens entirely or not at all, nobody sees it half-done, and once confirmed it stays. Transactions move that burden into the database, where it's implemented once, carefully.
+**The idea.** Let the application draw a boundary, BEGIN … COMMIT, and promise that everything inside behaves as a single step. It happens entirely or not at all, nobody sees it half-done, and once confirmed it stays. Transactions move that burden into the database, where it's implemented once, carefully.
 
 **From idea to mechanism.** Each letter needs its own machinery: undo information for **A**, constraints for **C**, locks or snapshots for **I**, and a log flushed at commit for **D**. The following lessons take them one at a time.
 
@@ -75,6 +75,19 @@ COMMIT;                        -- or ROLLBACK;
 - During the transaction, changes are written as new row versions (PostgreSQL) or in place with undo records (InnoDB), and described in the WAL.
 - On `ROLLBACK`: PostgreSQL marks the transaction aborted — its row versions become invisible instantly; InnoDB applies undo records to restore old values.
 - On crash: recovery replays the WAL and treats transactions without a commit record as aborted ([Crash Recovery](lesson:db-crash-recovery)).
+
+What a power cut does to the ₹500 transfer, depending on when it hits:
+
+```text
+power fails …                                          after restart
+after UPDATE A, before COMMIT                          A's debit is undone; both balances as before
+after COMMIT was sent, before the commit record        same: the transaction never committed
+  reached disk
+after COMMIT returned "OK"                             both updates present, even if neither data page
+                                                       had been written yet (replayed from the log)
+```
+
+There is no moment at which only the debit survives. That is atomicity and durability working together.
 
 ### Durability: what COMMIT waits for
 

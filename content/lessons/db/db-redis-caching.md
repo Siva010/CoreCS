@@ -70,6 +70,14 @@ def update_product(pid, fields):
 
 Why **delete** rather than **set** on update: two concurrent writers setting the cache can leave the older value in cache permanently; deleting forces the next reader to load the current DB state.
 
+```text
+W1: UPDATE price = 10 in DB
+W2: UPDATE price = 12 in DB         (later, so the DB ends at 12)
+W2: SET cache price = 12
+W1: SET cache price = 10            ← W1 was slow; cache says 10 until the TTL, DB says 12
+with DELETE instead: both writers delete; the next reader loads 12 from the DB
+```
+
 ### The invalidation race (and the TTL safety net)
 
 ```text

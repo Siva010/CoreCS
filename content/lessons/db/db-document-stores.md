@@ -18,7 +18,7 @@ tags: [document database, mongodb, bson, json, jsonb, aggregate, embedding, refe
 
 A document store saves each **aggregate** — a cluster of data that's read and written together, like an order with its line items and shipping address — as **one JSON-like document**. Loading the order is one read; updating it atomically is one write. No joins needed for the common path.
 
-The design question is always: **what goes inside the document (embed) and what lives in its own document (reference)?** Embed what you read together and what belongs to the parent; reference what's shared, large, unbounded, or independently updated.
+The design question is always: what goes **inside** the document (embed), and what lives in its own document (reference)? Embed what you read together and what belongs to the parent. Reference what's shared, large, unbounded, or independently updated.
 
 ## Definition
 

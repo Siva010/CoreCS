@@ -59,11 +59,23 @@ Read Committed: each statement sees committed data. Repeatable Read: the whole t
 
 ## How It Works
 
+The difference between the two default levels in one trace. Account 1 holds 100:
+
+```text
+T1: BEGIN; SELECT balance FROM acc WHERE id = 1;    → 100
+T2: UPDATE acc SET balance = 70 WHERE id = 1; COMMIT;
+T1: SELECT balance FROM acc WHERE id = 1;
+      Read Committed  → 70    each statement takes a fresh snapshot, so T1 sees T2's commit
+      Repeatable Read → 100   the whole transaction keeps the snapshot from its first statement
+```
+
+Neither answer is "wrong". They're different promises, and a report adding up many rows usually wants the second one.
+
 ### Read Committed (PostgreSQL default)
 
 Each **statement** sees data committed before *it* started. Two statements in one transaction can see different data (non-repeatable reads, phantoms, read skew).
 
-When an `UPDATE` finds that a target row was changed by a concurrent transaction that has since committed, PostgreSQL waits for it, then **re-evaluates the WHERE clause on the new version** and updates it if it still matches. That's why `UPDATE accounts SET balance = balance - 100 WHERE id = 1` is safe at Read Committed (atomic arithmetic on the latest version), while "read balance in app, write computed value" is not.
+Suppose an `UPDATE` finds that its target row was changed by a concurrent transaction. PostgreSQL waits for that transaction to finish. If it committed, PostgreSQL **re-evaluates the WHERE clause on the new version** and updates the row if it still matches. That's why `UPDATE accounts SET balance = balance - 100 WHERE id = 1` is safe at Read Committed: the arithmetic runs on the latest version. "Read the balance in the app, then write a computed value" is not safe.
 
 ### Repeatable Read / Snapshot Isolation (PostgreSQL)
 
@@ -83,7 +95,7 @@ Plain `SELECT`s read from a transaction-wide snapshot. But `UPDATE`, `DELETE` an
 
 Snapshots alone can't stop write skew, because the conflict is between what one transaction *read* and what another *wrote*. To get full serializability you must track reads too — either by locking them (blocking) or by watching for dangerous patterns (aborting).
 
-- **PostgreSQL SSI**: runs on snapshots, additionally tracks read sets with lightweight predicate "SIREAD" locks (they never block), and aborts a transaction when it detects a pattern of rw-dependencies that could form a cycle (two consecutive rw anti-dependencies with a particular commit order). Some false positives: aborts even when no anomaly would occur.
+- **PostgreSQL SSI**: runs on snapshots and also tracks what each transaction read, using lightweight predicate "SIREAD" locks that never block. It aborts a transaction when it sees a pattern of read-write dependencies that could form a cycle (two consecutive rw anti-dependencies with a particular commit order). There are some false positives: it sometimes aborts even when no anomaly would have occurred.
 - **Lock-based (MySQL, SQL Server default Serializable)**: reads take shared locks on rows and ranges held to commit — writers block readers and vice versa; deadlocks are more common.
 
 Either way: **serializable transactions must be retried** on serialization failure or deadlock.
@@ -115,7 +127,7 @@ PostgreSQL `SERIALIZABLE READ ONLY DEFERRABLE` waits for a "safe snapshot" and t
 
 ### Where isolation lives in replicas
 
-Replicas serve reads from replayed WAL: queries on a hot standby see snapshots of replayed state, never data "ahead" of what's replayed, but possibly behind the primary (replication lag) — a consistency issue orthogonal to isolation ([Replication](lesson:db-replication)).
+Replicas serve reads from replayed WAL. Queries on a hot standby see snapshots of the replayed state: never data "ahead" of what's replayed, but possibly behind the primary (replication lag). That's a consistency issue separate from isolation ([Replication](lesson:db-replication)).
 :::
 
 ## Example

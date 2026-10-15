@@ -17,7 +17,7 @@ tags: [primary key, foreign key, candidate key, super key, composite key, surrog
 
 ## Mental Model
 
-Constraints are **invariants the database enforces for every writer, forever**. Application code checks rules when *that code path* runs; a constraint checks them for every path — the new microservice, the migration script, the engineer running a manual `UPDATE` at 2 a.m., and two requests racing each other.
+Constraints are **invariants the database enforces for every writer, forever**. Application code checks rules only when *that code path* runs. A constraint checks them on every path: the new microservice, the migration script, the engineer running a manual `UPDATE` at 2 a.m., and two requests racing each other.
 
 Keys are the most important constraints: they define **identity** (which row is which) and **relationships** (which row refers to which).
 
@@ -32,6 +32,21 @@ Keys are the most important constraints: they define **identity** (which row is 
 - **Natural key** (meaningful: email, ISBN) vs **surrogate key** (meaningless, generated: `bigint` identity, UUID).
 
 Other constraints: `NOT NULL`, `UNIQUE`, `CHECK (expression)`, `DEFAULT`, and exclusion constraints (PostgreSQL: "no two bookings overlap for the same room").
+
+The key vocabulary on a tiny table. Note that keys are decided by the *rules* of the data (emails are unique by policy), not by what three rows happen to look like:
+
+```text
+customers
+id  email          name
+1   asha@x.com     Asha
+2   ravi@x.com     Ravi
+3   asha2@x.com    Asha
+
+{name}       → two Ashas: not unique                → not a key
+{id}         → unique                               → candidate key (chosen as primary key)
+{email}      → unique by rule                       → candidate key (alternate key, UNIQUE)
+{id, name}   → unique, but id alone already is      → super key, not candidate (not minimal)
+```
 
 ## Why It Exists
 
@@ -96,7 +111,7 @@ CREATE INDEX ON orders (customer_id);  -- FKs are not indexed automatically in P
 
 ### Referential actions
 
-A foreign key creates a question the database must answer whenever a parent row goes away: what about the rows pointing at it? What happens to children when a parent row is deleted (or its key updated):
+A foreign key raises a question whenever a parent row goes away (deleted, or its key updated): what happens to the child rows pointing at it? You choose the answer per foreign key:
 
 | Action | Effect |
 |---|---|

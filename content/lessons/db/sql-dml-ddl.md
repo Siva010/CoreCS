@@ -64,7 +64,16 @@ WHERE id = 42 AND stock > 0
 RETURNING stock;                     -- 0 rows returned ⇒ out of stock
 ```
 
-Compare the racy version: `SELECT stock` in the app, check `> 0`, then `UPDATE … SET stock = <value computed in app>`. Two concurrent requests read the same stock and one decrement is lost ([Anomalies](lesson:db-anomalies)).
+Compare the racy version, where the app reads, decides and writes back. With one item left:
+
+```text
+Request A: SELECT stock → 1          "1 > 0, sell it"
+Request B: SELECT stock → 1          "1 > 0, sell it"
+Request A: UPDATE … SET stock = 0
+Request B: UPDATE … SET stock = 0    two items sold, one existed
+```
+
+The gap between A's read and A's write is where B slips in. In the atomic version the database locks the row while it runs `stock > 0` and `stock - 1` together, so B waits, then sees 0 and updates nothing ([Anomalies](lesson:db-anomalies)).
 
 Update using another table:
 

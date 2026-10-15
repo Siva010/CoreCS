@@ -17,7 +17,7 @@ tags: [data warehouse, olap, oltp, dimensional modeling, star schema, snowflake 
 
 ## Mental Model
 
-Your production database answers **"what is true right now, for this one customer?"** thousands of times a second. The business also asks **"how did revenue per category change, month by month, for the last three years?"** — one question that touches hundreds of millions of rows, some of which the production database already overwrote.
+Your production database answers **"what is true right now, for this one customer?"** thousands of times a second. The business also asks **"how did revenue per category change, month by month, for the last three years?"** That is one question touching hundreds of millions of rows, and the production database has already overwritten some of them.
 
 Those are different jobs, so they get different databases:
 
@@ -35,9 +35,14 @@ A **data warehouse** is the analytical database, fed from the operational ones b
 
 **The problem.** Analysts need history and integration: revenue by month needs last year's prices, not today's; a "customer" lives in the shop database, the CRM and the payments provider. And their queries are huge scans.
 
-**Without it.** Running analytics on the production database slows down checkout (big scans fight the OLTP workload for I/O and buffer cache), the normalized schema needs ten-way joins for a simple report, history that was updated in place is simply gone, and every team computes "revenue" slightly differently from different sources.
+**Without it.** Running analytics on the production database causes four problems:
 
-**The idea.** Copy the data into a separate store built for reading: keep history instead of overwriting, integrate sources into shared definitions, and reshape tables around *how questions are asked* — measurements in the middle, descriptive context around them.
+- it slows down checkout, because big scans fight the OLTP workload for I/O and buffer cache;
+- the normalized schema needs ten-way joins for a simple report;
+- history that was updated in place is simply gone;
+- every team computes "revenue" slightly differently, from different sources.
+
+**The idea.** Copy the data into a separate store built for reading. Keep history instead of overwriting it, merge sources into shared definitions, and reshape tables around *how questions are asked*: measurements in the middle, descriptive context around them.
 
 **From idea to mechanism.**
 - *Questions are "measure by context"* → **fact tables** of numeric measurements, joined to **dimension tables** of descriptive attributes: a **star schema**.
@@ -46,7 +51,7 @@ A **data warehouse** is the analytical database, fed from the operational ones b
 - *Data must arrive from many systems* → **ETL/ELT** pipelines, increasingly fed by **change data capture** from the source databases' logs.
 
 :::callout[That's all it is]{type=insight}
-A warehouse is a read-optimized copy of your data that remembers history. You put the numbers you measure in one long table (facts), the words you filter and group by in small tables around it (dimensions), and store it by column so that summing one column over a billion rows is cheap.
+A warehouse is a read-optimized copy of your data that remembers history. The numbers you measure go in one long table (facts). The words you filter and group by go in small tables around it (dimensions). Everything is stored by column, so summing one column over a billion rows is cheap.
 :::
 
 ## Definition

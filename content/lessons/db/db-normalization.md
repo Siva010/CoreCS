@@ -45,6 +45,19 @@ The normal forms are progressively stricter checks of "does every non-key column
 - **Insert anomaly**: you can't record a new customer until they place an order (no order_id to form the key).
 - **Delete anomaly**: delete a customer's only order and you lose the customer entirely.
 
+See them on three rows:
+
+```text
+order_id  customer_id  customer_city  product
+101       7            Pune           Lamp
+102       7            Pune           Desk
+103       9            Delhi          Lamp
+
+update: customer 7 moves to Mumbai → change rows 101 AND 102; miss one and 7 lives in two cities
+insert: new customer 12, no order yet → no order_id for the key, so there's nowhere to put them
+delete: cancel order 103 → customer 9 and the fact "lives in Delhi" vanish with it
+```
+
 **The root cause.** All three anomalies have one cause: a table stores facts about *two different things* (customers and orders) in the same row. The customer's city is a fact about the customer, but it's being stored per order.
 
 **The idea.** Decomposing into `customers`, `orders`, `products`, `order_items` removes all three: each fact lives in one row. The normal forms are just increasingly careful checklists for spotting "this column is really a fact about something other than this table's key".
@@ -100,17 +113,38 @@ BCNF decomposition on teacher → subject: `TeacherSubject(teacher, subject)` an
 
 Splitting must not invent data when you join back. `R(A, B, C)` split into `R1(A, B)` and `R2(B, C)` is lossless only if B is a key of R1 or R2. Otherwise, the join produces spurious rows — rows that were never in R ([Functional Dependencies](lesson:db-functional-dependencies)).
 
+```text
+Work(emp, dept, project):  (Asha, Eng, Search)  (Ravi, Eng, Payments)
+
+split on dept:  (emp, dept) = (Asha, Eng) (Ravi, Eng)
+                (dept, project) = (Eng, Search) (Eng, Payments)
+join back on dept:
+  (Asha, Eng, Search)    real
+  (Asha, Eng, Payments)  invented
+  (Ravi, Eng, Search)    invented
+  (Ravi, Eng, Payments)  real
+```
+
+`dept` is not a key of either piece (Eng appears twice in each), so the join can't tell which project went with which employee.
+
 ### 4NF in one idea
 
 `EmployeeSkillsLanguages(emp, skill, language)` where skills and languages are independent lists: storing them in one table forces every skill × language combination (3 skills × 2 languages = 6 rows), and adding a language means adding 3 rows. Split into `EmployeeSkills(emp, skill)` and `EmployeeLanguages(emp, language)`. The underlying rule is a **multi-valued dependency** emp ↠ skill.
 
 ### 5NF in one sentence
 
-A table is in **5NF** (project-join normal form) when it can't be split into three or more smaller tables that join back losslessly, unless that split follows from the keys. It catches cyclic rules like "if a supplier supplies a part, and the supplier works with a project, and the project uses the part, then the supplier supplies that part to that project" — rare in practice, but the definition is a standard interview checkbox.
+A table is in **5NF** (project-join normal form) when it can't be split into three or more smaller tables that join back losslessly, unless that split follows from the keys. It catches cyclic rules such as: "if a supplier supplies a part, the supplier works with a project, and the project uses the part, then the supplier supplies that part to that project". Rare in practice, but the definition is a standard interview checkbox.
 
 ### Denormalization: breaking the rules on purpose
 
-Normal forms minimise redundancy; sometimes a read path needs redundancy. Common, deliberate denormalizations: storing `order_items.unit_price` (a historical snapshot, not a copy of the current price), a cached `comment_count` on posts, materialized views or summary tables for dashboards, and duplicating a customer name into a search index. Each one needs an answer to "who keeps the copy correct?" — a transaction, a trigger, or an asynchronous job with tolerated lag.
+Normal forms minimise redundancy, but sometimes a read path needs redundancy. Common, deliberate denormalizations:
+
+- storing `order_items.unit_price` (a historical snapshot, not a copy of the current price);
+- a cached `comment_count` on posts;
+- materialized views or summary tables for dashboards;
+- duplicating a customer name into a search index.
+
+Each one needs an answer to "who keeps the copy correct?": a transaction, a trigger, or an asynchronous job with tolerated lag.
 
 ## Internal Mechanism
 

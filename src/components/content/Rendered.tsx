@@ -6,6 +6,7 @@ import { Pre } from "./CodeBlock";
 import { Mermaid } from "./Mermaid";
 import { AnswerReveal } from "./AnswerReveal";
 import { VizEmbed } from "./VizEmbed";
+import { Term } from "./Term";
 
 const components = {
   "x-callout": Callout,
@@ -17,6 +18,7 @@ const components = {
   "x-viz": VizEmbed,
   "x-lab": LabCard,
   "x-mermaid": Mermaid,
+  "x-term": Term,
   pre: Pre,
   table: Table,
   a: SmartLink,

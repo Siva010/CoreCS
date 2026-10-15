@@ -21,12 +21,22 @@ Failover sounds simple: the primary died, promote a replica. The difficulty is t
 
 Safe failover therefore needs three things: a trustworthy decision about who is leader (consensus), a way to make sure the old leader **stops** (fencing), and a way to move clients to the new leader.
 
+```text
+10:00:00   network fault: primary P can still reach app server 1, but not the monitor
+10:00:20   monitor hears nothing from P for 20 s → promotes replica R
+10:00:21   app server 1 writes order #1 to P      (P doesn't know it was replaced)
+10:00:21   app server 2 writes order #2 to R
+           → two primaries, two histories of the same database: split brain
+with fencing: before promoting R, the monitor powers P off (or P's lease expires and it
+           stops accepting writes) → order #1 is refused instead of silently diverging
+```
+
 ## Definition
 
 - **Failover**: unplanned promotion of a replica after the primary fails. **Switchover**: planned, graceful role change (maintenance, upgrades).
 - **Promotion**: a replica stops replaying and starts accepting writes, starting a new **timeline** (PostgreSQL).
 - **Split brain**: two nodes simultaneously act as primary.
-- **Fencing**: preventing the old primary from accepting writes or touching shared resources — revoke its access, power it off (**STONITH**: "shoot the other node in the head"), or reject its requests using **fencing tokens** (monotonic epoch numbers).
+- **Fencing**: preventing the old primary from accepting writes or touching shared resources. You can revoke its access, power it off (**STONITH**: "shoot the other node in the head"), or reject its requests using **fencing tokens** (epoch numbers that only increase).
 - **RPO / RTO**: how much data you can lose / how long you can be down.
 
 ## Why It Exists
@@ -73,7 +83,14 @@ Consensus decides who *should* be leader; it doesn't stop the old leader from *a
 
 ### 4–5. Promotion and rerouting
 
-Clients must find the new primary: update DNS (subject to TTL caching — [DNS](lesson:cn-dns-fundamentals)), move a virtual IP, reconfigure a proxy/pooler (HAProxy, PgBouncer, cloud endpoint), or use smart drivers that try hosts and check which one is writable (`target_session_attrs=read-write`). Existing connections to the old primary break; applications must reconnect and **retry idempotently**.
+Clients must find the new primary. The options:
+
+- update DNS (subject to TTL caching — [DNS](lesson:cn-dns-fundamentals));
+- move a virtual IP;
+- reconfigure a proxy or pooler (HAProxy, PgBouncer, a cloud endpoint);
+- use smart drivers that try several hosts and check which one is writable (`target_session_attrs=read-write`).
+
+Existing connections to the old primary break; applications must reconnect and **retry idempotently**.
 
 ### 6. After failover
 
@@ -84,7 +101,7 @@ The old primary may have WAL that never reached the new primary (divergent histo
 :::depth{level=advanced}
 ### Why you need consensus
 
-"The monitor decides" makes the monitor a single point of failure; two monitors can disagree during a partition. Failover managers (Patroni, Stolon, Orchestrator with Raft, cloud control planes) store leadership in a consensus system (etcd, Consul, ZooKeeper, or their own Raft) so that **at most one leader key exists per term**, even under partitions — only the side with a majority can elect ([Quorums & Consensus](lesson:db-quorums-consensus)).
+"The monitor decides" makes the monitor a single point of failure, and two monitors can disagree during a partition. So failover managers (Patroni, Stolon, Orchestrator with Raft, cloud control planes) store leadership in a consensus system (etcd, Consul, ZooKeeper, or their own Raft). That guarantees **at most one leader key exists per term**, even under partitions, because only the side with a majority can elect ([Quorums & Consensus](lesson:db-quorums-consensus)).
 
 ### Leases and clocks
 
