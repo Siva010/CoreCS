@@ -24,6 +24,14 @@ There are four attitudes toward deadlock, like four ways to handle traffic gridl
 3. **Detection and recovery — let traffic flow freely, watch for gridlock, then tow a car.** Databases do this.
 4. **Ignore it — the "ostrich algorithm".** If gridlock is rare and a reboot is cheap, do nothing. General-purpose OSes mostly do this for application locks.
 
+```mermaid
+flowchart LR
+    Q{"what do you know<br/>in advance?"} -->|"which locks exist,<br/>so they can be ordered"| P["Prevention<br/>lock ordering"]
+    Q -->|"each process's<br/>maximum demand"| A["Avoidance<br/>Banker's algorithm"]
+    Q -->|"nothing, but work<br/>can be rolled back"| D["Detection + recovery<br/>abort a victim, retry"]
+    Q -->|"nothing, and<br/>deadlock is rare"| I["Ignore (ostrich)<br/>restart if it happens"]
+```
+
 ## Definition
 
 - **Deadlock prevention**: constrain how resources are requested so at least one Coffman condition can never hold.
@@ -269,6 +277,54 @@ Allocated A = 0 + 2 + 3 + 2 + 0 = 7, so Available A = 10 − 7 = **3**.
 
 Banker's keeps the system in safe states; unsafe states are the ones where deadlock becomes possible.
 
+### [numeric 1] A system has 12 identical tape drives. P0 holds 5 (maximum 10), P1 holds 2 (maximum 4), P2 holds 2 (maximum 9). P2 asks for 1 more drive. If it were granted, how many processes could the safety algorithm mark as finished?
+
+:::answer
+After the grant, Available = 12 − (5 + 2 + 3) = 2. Needs: P0 = 5, P1 = 2, P2 = 6. P1 fits (2 ≤ 2) and finishes, releasing its 4 → Work = 4. Now P0 needs 5 and P2 needs 6, and neither fits. Only **1** process can finish, so the state is unsafe: Banker's makes P2 wait even though a drive is free. Before the request the state was safe: ⟨P1, P0, P2⟩.
+:::
+
+### [mcq] A database uses wound–wait. An older transaction T1 requests a row lock held by a younger transaction T2. What happens?
+
+- [ ] T1 waits for T2 to finish
+- [x] T2 is aborted (wounded) and T1 gets the lock; T2 later restarts with its original timestamp
+- [ ] T1 is aborted and restarts
+- [ ] Both block until the deadlock detector picks a victim
+
+Under wound–wait an older transaction never waits for a younger one; it takes the lock by aborting the holder. A younger requester waits for an older holder. Waits therefore only point from younger to older transactions, so no cycle can form.
+
+### [exercise] Implement the Banker's safety algorithm in Java: given `available`, `allocation` and `need`, return whether the state is safe and fill in a safe sequence. Check it against the lesson's example, then try other states in the [Banker's algorithm lab](lab:bankers).
+
+:::solution
+```java
+static boolean isSafe(int[] available, int[][] allocation, int[][] need, List<Integer> sequence) {
+    int n = allocation.length, m = available.length;
+    int[] work = available.clone();
+    boolean[] finished = new boolean[n];
+    boolean progress = true;
+    while (progress) {
+        progress = false;
+        for (int i = 0; i < n; i++) {
+            if (!finished[i] && fits(need[i], work)) {
+                for (int r = 0; r < m; r++) work[r] += allocation[i][r];  // Pi finishes, releases all
+                finished[i] = true;
+                sequence.add(i);
+                progress = true;
+            }
+        }
+    }
+    for (boolean f : finished) if (!f) return false;   // someone can never finish
+    return true;
+}
+
+static boolean fits(int[] need, int[] work) {
+    for (int r = 0; r < need.length; r++) if (need[r] > work[r]) return false;
+    return true;
+}
+```
+
+On the lesson's example (Available = (3,3,2)), the first pass finishes P1, P3 and P4, and the second pass finishes P0 and P2: the sequence is ⟨P1, P3, P4, P0, P2⟩. Each pass is O(n·m) and at most n passes are needed, so the check is O(m·n²), which is why it is too expensive to run on every request in a general-purpose OS.
+:::
+
 ## Quick Revision
 
 - **Prevention**: break a Coffman condition — in practice, **global lock ordering** (circular wait).
@@ -278,3 +334,4 @@ Banker's keeps the system in safe states; unsafe states are the ones where deadl
 - **Recovery**: abort/rollback a victim (cheapest; avoid repeat victims).
 - DBs: detect + abort → **apps must retry**. Wait-die / wound-wait use timestamps.
 - OSes mostly ignore application deadlocks (ostrich).
+- Choose by what you know: lock order → prevent; max demands → avoid; can roll back → detect + recover; nothing and rare → ignore.

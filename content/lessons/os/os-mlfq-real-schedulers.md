@@ -12,7 +12,7 @@ stage: 4
 prerequisites: [os-scheduling-algorithms]
 related: [os-scheduling-basics, os-virtualization-containers, os-hugepages-numa, os-context-switch]
 visualizations: [cpu-scheduler]
-tags: [multilevel queue, mlfq, cfs, eevdf, nice, vruntime, real-time scheduling, sched_fifo, affinity, load balancing, cgroups cpu]
+tags: [multilevel queue, mlfq, cfs, eevdf, nice, vruntime, real-time scheduling, sched_fifo, affinity, load balancing, cgroups cpu, rate monotonic, edf, cpu throttling]
 ---
 
 ## Mental Model
@@ -75,7 +75,7 @@ Lower levels typically get **longer quanta** — CPU-bound jobs benefit from few
 
 ### Linux CFS: fair share via virtual runtime
 
-A different philosophy from MLFQ: instead of guessing burst lengths with a pile of tunable rules, define "fair" precisely — each task should get CPU in proportion to its weight — and always run whoever is furthest behind. Each runnable task accumulates **vruntime** — actual runtime scaled inversely by its weight (derived from the nice value; each nice step ≈ 10% CPU share difference, weight ratio ≈ 1.25 per step):
+A different philosophy from MLFQ: instead of guessing burst lengths with a pile of tunable rules, define "fair" precisely. Each task should get CPU in proportion to its weight, so always run whoever is furthest behind. Each runnable task accumulates **vruntime**: actual runtime scaled inversely by its weight. The weight comes from the nice value; each nice step is about a 10% CPU share difference, a weight ratio of about 1.25:
 
 ```text
 vruntime += delta_exec × (weight_of_nice_0 / weight_of_task)
@@ -88,7 +88,7 @@ The time slice isn't fixed: the scheduler targets a **scheduling latency** perio
 :::depth{level=advanced}
 ### EEVDF (Linux 6.6+)
 
-EEVDF keeps weighted fair sharing but schedules by **virtual deadline**: each task has a requested slice; a task is *eligible* if it hasn't received more than its fair share (non-negative "lag"), and among eligible tasks the one with the earliest virtual deadline runs. Latency-sensitive tasks can request shorter slices (earlier deadlines) without getting more total CPU. It replaced a pile of CFS heuristics with a principled rule.
+EEVDF keeps weighted fair sharing but schedules by **virtual deadline**. Each task has a requested slice. A task is *eligible* if it hasn't received more than its fair share (its "lag" is not negative), and among eligible tasks the one with the earliest virtual deadline runs. Latency-sensitive tasks can request shorter slices (earlier deadlines) without getting more total CPU. It replaced a pile of CFS heuristics with a principled rule.
 :::
 
 ### Scheduling classes and real-time
@@ -104,12 +104,23 @@ Fairness is the wrong goal for some tasks: an audio thread that misses a 5 ms de
 
 A runaway `SCHED_FIFO` thread can lock up a core; Linux reserves a little CPU for normal tasks by default (`sched_rt_runtime_us` = 950 ms per second).
 
+:::depth{level=advanced}
+### Real-time theory: rate-monotonic vs EDF
+
+Textbooks model real-time work as **periodic tasks**: task *i* needs *Cᵢ* ms of CPU every *Pᵢ* ms and must finish before its next period starts. The CPU utilization is U = Σ Cᵢ / Pᵢ.
+
+- **Rate-monotonic (RM)**: fixed priorities, where a shorter period means a higher priority. It is guaranteed to meet every deadline if U ≤ n(2^(1/n) − 1), which is 82.8% for two tasks and approaches 69% for many.
+- **Earliest deadline first (EDF)**: dynamic priorities, where the task whose deadline is nearest runs. On one CPU it meets every deadline whenever U ≤ 100%.
+
+Example: T1 needs 25 ms every 50 ms, T2 needs 35 ms every 80 ms. U = 25/50 + 35/80 = 0.5 + 0.4375 = 93.75%, above RM's 82.8% bound. Under RM, T1 always preempts T2, and T2 misses its first deadline at 80 ms. EDF meets all deadlines because the total is under 100%. Linux's `SCHED_DEADLINE` is EDF with admission control: it refuses a task whose reservation would push total utilization too high.
+:::
+
 ### Multiprocessor scheduling
 
 - **Per-CPU run queues** avoid a global lock.
 - **Load balancing** periodically migrates tasks from busy to idle CPUs, respecting the topology hierarchy (hyperthread siblings → cores sharing L3 → NUMA nodes), because migrating across NUMA nodes loses cache and memory locality.
 - **Processor affinity**: soft (the scheduler prefers the last CPU) and hard (`taskset`, `sched_setaffinity`, cpusets) — pinning.
-- **Group scheduling**: with cgroups, CPU is shared fairly among *groups* first (e.g., containers), then among tasks within a group — so a container with 100 threads doesn't get 100× the CPU of one with 1 thread. `cpu.weight` sets relative shares; `cpu.max` sets a hard quota per period.
+- **Group scheduling**: with cgroups, CPU is shared fairly among *groups* first (e.g., containers), then among the tasks within each group. So a container with 100 threads doesn't get 100× the CPU of one with 1 thread. `cpu.weight` sets relative shares; `cpu.max` sets a hard quota per period.
 
 ## Example
 
@@ -118,6 +129,12 @@ MLFQ in action with three levels (quanta 10/20/40 ms), a CPU-bound job A (long) 
 - A starts in Q0, uses 10 ms → Q1, uses 20 ms → Q2 where it runs with 40 ms slices whenever nothing else is ready.
 - B arrives, enters Q0, runs 1 ms per keystroke and never exhausts its allotment → stays in Q0 and preempts A immediately each time. Keystroke latency ≈ 1 ms.
 - Every S = 1 s, the boost moves A back to Q0 briefly so it can't starve even if many interactive jobs appear.
+
+### The JVM inside a CPU quota
+
+A container's `cpu.max` is enforced per 100 ms period, and it counts CPU time from all threads together. A JVM has many threads: request handlers, GC workers, JIT compilers. With a 2-CPU limit, the container gets 200 ms of CPU time per 100 ms period. If 8 threads are busy at once, they use it up in 200 / 8 = 25 ms, and then every thread waits 75 ms for the next period, even if the host is idle. That is the p99 spike in the debugging question below.
+
+Since JDK 10 the JVM reads the cgroup limit: `Runtime.getRuntime().availableProcessors()` returns 2 here, and default pool sizes, GC thread counts and the common `ForkJoinPool` follow it. Application pools sized by hand (`newFixedThreadPool(64)`) don't, and they are what burns through the quota.
 
 ## Visualization
 
@@ -199,6 +216,39 @@ Isolate cores: cpusets or `isolcpus`/`nohz_full` for the critical thread's cores
 
 Every job is initially assumed to be short/interactive.
 
+### [numeric 75 unit=ms] A Java service runs in a container limited to 2 CPUs (`cpu.max` = 200 ms per 100 ms period). During a burst, 8 of its threads are runnable and the host has plenty of idle cores. For how many milliseconds of each 100 ms period are its threads throttled?
+
+:::answer
+The quota is 200 ms of CPU time per period. 8 threads running in parallel use 8 ms of quota per millisecond of wall time, so it is gone after 200 / 8 = 25 ms. All threads then wait for the rest of the period: 100 − 25 = **75** ms of throttling, which shows up as latency spikes.
+:::
+
+### [numeric 5 unit=ms] Under CFS, task A has nice 0 (weight 1024) and task B has weight 2048. Each runs for 10 ms of real time. By how much does B's vruntime increase?
+
+:::answer
+vruntime grows by delta × (1024 / weight). For A: 10 × 1024/1024 = 10 ms. For B: 10 × 1024/2048 = **5** ms. B's vruntime grows half as fast, so the scheduler picks it twice as often, giving it two thirds of the CPU when both are runnable.
+:::
+
+### [numeric 25 unit=%] Two CPU-bound tasks share one core under CFS: A has weight 1024 and B has weight 3072. What share of the CPU does A get?
+
+:::answer
+CPU is split in proportion to weight: 1024 / (1024 + 3072) = 1024 / 4096 = **25**%. B gets 75%.
+:::
+
+### [exercise] An MLFQ has three levels: Q0 with quantum 2, Q1 with quantum 4, and Q2 run first-come-first-served. Job A arrives at 0 needing 7 units of CPU; job B arrives at 1 needing 2 units. A job that uses its full quantum is demoted; there is no boost. Draw the schedule and give each job's completion and response time. Then check it in the [CPU scheduling lab](lab:cpu-scheduler) in MLFQ mode.
+
+:::solution
+```text
+| A (Q0) | B (Q0) | A (Q1)          | A (Q2) |
+0        2        4                 8        9
+```
+
+- A starts in Q0 and runs 0–2. B arrives at 1, also in Q0; same level means round robin, so A keeps its quantum. A used all of it, so it drops to Q1 with 5 units left.
+- B runs 2–4 and finishes within its first quantum, never demoted.
+- A runs in Q1 from 4 to 8, uses the whole quantum again and drops to Q2 with 1 unit left. It finishes at 9.
+
+Completion: A 9, B 4. Response time (first run − arrival): A 0, B 2 − 1 = 1. The short job finished almost immediately, and the long job sank to the lower levels — MLFQ discovered which was which without being told.
+:::
+
 ### [mcq] Which Linux scheduling class preempts normal (CFS/EEVDF) tasks regardless of their nice value?
 
 - [ ] SCHED_BATCH
@@ -214,4 +264,6 @@ Real-time classes always run before the fair class.
 - **CFS**: pick smallest weighted **vruntime** (red-black tree); sleepers wake with low vruntime → interactive. **EEVDF** (6.6+): fairness + virtual deadlines.
 - Classes: deadline > real-time (FIFO/RR, 1–99) > fair (nice −20…19) > idle.
 - Multicore: per-CPU queues, load balancing by topology, affinity/pinning, NUMA.
-- cgroups: `cpu.weight` = shares; `cpu.max` = quota → **throttling** latency.
+- cgroups: `cpu.weight` = shares; `cpu.max` = quota → **throttling** latency. N busy threads burn a Q ms quota in Q/N ms.
+- JVM: `availableProcessors()` follows the container limit since JDK 10; hand-sized pools don't.
+- Real-time: RM (fixed, shorter period = higher priority) guaranteed if U ≤ n(2^(1/n) − 1) (82.8% for 2 tasks); EDF up to 100%.

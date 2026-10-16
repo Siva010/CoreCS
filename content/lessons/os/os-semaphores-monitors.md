@@ -12,7 +12,7 @@ stage: 2
 prerequisites: [os-atomic-instructions, os-sync-primitives]
 related: [os-classic-sync-problems, os-sync-primitives, os-deadlocks]
 visualizations: [producer-consumer]
-tags: [semaphore, p v operations, wait signal, binary semaphore, counting semaphore, monitor, condition variable, hoare, mesa, spurious wakeup]
+tags: [semaphore, p v operations, wait signal, binary semaphore, counting semaphore, monitor, condition variable, hoare, mesa, spurious wakeup, java.util.concurrent.Semaphore, synchronized, notifyAll]
 ---
 
 ## Mental Model
@@ -39,9 +39,9 @@ signal(S) / V(S) / up(S):   S = S + 1;  if S ≤ 0: wake one thread from S's que
 
 ## Why It Exists
 
-**The problem.** Busy-waiting locks waste CPU and don't express *waiting for a condition*. **First answer: the semaphore.** Dijkstra (1965) introduced semaphores as a single primitive for both mutual exclusion and ordering/signaling between processes — one counter that can mean "free slots", "items available" or "the lock is free", with sleeping built in.
+**The problem.** Busy-waiting locks waste CPU and don't express *waiting for a condition*. **First answer: the semaphore.** Dijkstra (1965) introduced semaphores as a single primitive for both mutual exclusion and ordering/signaling between processes. It's one counter, with sleeping built in, that can mean "free slots", "items available" or "the lock is free".
 
-**Second answer: the monitor.** Monitors (Hoare, Brinch Hansen, 1970s) came next because semaphore code is error-prone — a single misplaced `P` or missing `V` causes deadlock — and monitors let the compiler/runtime handle the mutual exclusion part. The programmer only writes the *waiting* logic; locking happens automatically on entry and exit.
+**Second answer: the monitor.** Monitors (Hoare, Brinch Hansen, 1970s) came next because semaphore code is error-prone: a single misplaced `P` or missing `V` causes deadlock. Monitors let the compiler or runtime handle the mutual exclusion part. The programmer only writes the *waiting* logic; locking happens automatically on entry and exit.
 
 :::callout[That's all it is]{type=insight}
 A semaphore is a counter you can sleep on. A monitor is an object where only one thread runs at a time, with "wait here until..." benches inside. The second exists because people kept getting the first wrong.
@@ -51,48 +51,50 @@ A semaphore is a counter you can sleep on. A monitor is an object where only one
 
 ### Three canonical semaphore uses
 
-```c
+```java
 // 1) Mutual exclusion (binary semaphore)
-semaphore mutex = 1;
-wait(mutex);   /* critical section */   signal(mutex);
+Semaphore mutex = new Semaphore(1);
+mutex.acquire();   /* critical section */   mutex.release();
 
 // 2) Resource counting
-semaphore slots = 5;          // 5 identical resources
-wait(slots);   use_one();     signal(slots);
+Semaphore slots = new Semaphore(5);          // 5 identical resources
+slots.acquire();   useOne();   slots.release();
 
-// 3) Ordering: ensure S1 (in thread A) runs before S2 (in thread B)
-semaphore done = 0;
-// Thread A:  S1;  signal(done);
-// Thread B:  wait(done);  S2;
+// 3) Ordering: make s1() in thread A run before s2() in thread B
+Semaphore done = new Semaphore(0);
+// Thread A:  s1();  done.release();
+// Thread B:  done.acquire();  s2();
 ```
+
+`acquire()` is P (wait) and `release()` is V (signal). Java's count never goes negative: `acquire()` blocks while it is 0, which is the "wait while S ≤ 0" textbook form.
 
 Pattern 3 shows the power of initializing to 0: the semaphore records that an event happened, even if the signal occurs before the wait (unlike condition variables, which have no memory).
 
 ### Implementation without busy waiting
 
-The whole point of a semaphore is that waiters *sleep* instead of spinning. That needs two pieces: a queue of sleeping threads, and a tiny internal lock so the count and the queue change together.
+The whole point of a semaphore is that waiters *sleep* instead of spinning. That needs two pieces: a queue of sleeping threads, and a tiny internal lock so the count and the queue change together. In Java, an object's monitor provides both:
 
-```c
-typedef struct { int value; queue_t waiters; spinlock_t guard; } semaphore;
+```java
+class SimpleSemaphore {
+    private int value;                               // the count
 
-void wait(semaphore *s) {
-    spin_lock(&s->guard);
-    s->value--;
-    if (s->value < 0) {
-        enqueue(&s->waiters, current_thread);
-        sleep_and_unlock(&s->guard);    // atomically release guard and block
-    } else spin_unlock(&s->guard);
-}
+    SimpleSemaphore(int initial) { value = initial; }
 
-void signal(semaphore *s) {
-    spin_lock(&s->guard);
-    s->value++;
-    if (s->value <= 0) wakeup(dequeue(&s->waiters));
-    spin_unlock(&s->guard);
+    synchronized void acquire() throws InterruptedException {   // P / wait
+        while (value == 0) {
+            wait();          // atomically release the monitor and sleep on its wait queue
+        }
+        value--;
+    }
+
+    synchronized void release() {                    // V / signal
+        value++;
+        notify();            // wake one sleeper, if there is one
+    }
 }
 ```
 
-Busy waiting isn't eliminated entirely — it moves to the tiny internal guard (held for a few instructions) instead of the application's critical section. The "release guard and sleep atomically" step prevents lost wakeups.
+The monitor's lock is the guard: `synchronized` makes the count update and the decision to sleep one step. `wait()` releases the lock and puts the thread to sleep atomically, so a `release()` can't slip in between and be missed (a lost wakeup). Busy waiting isn't eliminated entirely. It moves inside the JVM's monitor implementation, a CAS on the lock word that spins briefly before parking the thread, for a few instructions instead of the application's critical section.
 
 ### Monitor with condition variables (bounded buffer)
 
@@ -117,7 +119,7 @@ class BoundedBuffer<T> {
 }
 ```
 
-Java objects have **one** condition queue, so producers and consumers wait on the same queue — hence `notifyAll()` (with `notify()`, you might wake a producer when a consumer was needed, and everyone goes back to sleep: a lost wakeup in effect). `ReentrantLock` with two `Condition`s (`notFull`, `notEmpty`) lets you `signal()` precisely.
+Java objects have **one** condition queue, so producers and consumers wait on the same queue. Hence `notifyAll()`: with `notify()` you might wake a producer when a consumer was needed, and everyone goes back to sleep, which is a lost wakeup in effect. `ReentrantLock` with two `Condition`s (`notFull`, `notEmpty`) lets you `signal()` precisely.
 
 ### Hoare vs Mesa semantics
 
@@ -131,6 +133,25 @@ The question this answers: when thread A signals "the buffer is no longer empty"
 | Used by | Theory, some languages | pthreads, Java, C#, Go's `sync.Cond` — virtually all real systems |
 
 Mesa won because it's simpler to implement, allows spurious wakeups and `broadcast`, and doesn't force an extra context switch on every signal.
+
+Why a woken Mesa thread must re-check:
+
+```mermaid
+%%{init: {"sequence": {"width": 100, "actorMargin": 30}}}%%
+sequenceDiagram
+    participant C1 as Consumer 1
+    participant M as Monitor
+    participant P as Producer
+    participant C2 as Consumer 2
+    C1->>M: buffer empty: wait()
+    P->>M: put(item), notify()
+    Note over C1: woken, must re-lock
+    C2->>M: gets in first, takes it
+    C1->>M: re-locks: empty again
+    C1->>M: while loop: wait()
+```
+
+With `if` instead of `while`, Consumer 1 would go on to take from an empty buffer.
 
 ## Internal Mechanism
 
@@ -147,11 +168,13 @@ Mutexes know their owner, so the OS can apply priority inheritance and detect er
 
 Order three threads so they print A, then B, then C, regardless of scheduling:
 
-```c
-semaphore sAB = 0, sBC = 0;
-// T1: print("A"); signal(sAB);
-// T2: wait(sAB); print("B"); signal(sBC);
-// T3: wait(sBC); print("C");
+```java
+Semaphore ab = new Semaphore(0), bc = new Semaphore(0);
+
+Thread t1 = new Thread(() -> { System.out.print("A"); ab.release(); });
+Thread t2 = new Thread(() -> { ab.acquireUninterruptibly(); System.out.print("B"); bc.release(); });
+Thread t3 = new Thread(() -> { bc.acquireUninterruptibly(); System.out.print("C"); });
+t3.start(); t2.start(); t1.start();     // start order doesn't matter: always prints ABC
 ```
 
 ## Visualization
@@ -244,6 +267,50 @@ A counting semaphore (16 permits) acquired before each upload and released in `f
 
 Condition variables have no memory, need a mutex, and Mesa wakeups don't guarantee the condition.
 
+### [numeric 1] `Semaphore s = new Semaphore(0)`. One thread calls `s.release()` three times. Then four threads each call `s.acquire()`. How many of them block?
+
+:::answer
+The three releases are remembered: the count is 3. The first three acquires take those permits and pass; the fourth finds 0 and blocks. Answer: **1**. A condition variable would have forgotten signals sent while nobody was waiting.
+:::
+
+### [numeric 2] A bounded buffer of size 5 uses semaphores `empty` (starts at 5) and `full` (starts at 0). Producers have inserted 8 items and consumers have removed 5, and no thread is blocked. What is the value of `empty`?
+
+:::answer
+The buffer holds 8 − 5 = 3 items, so `full` = 3 and `empty` = 5 − 3 = **2**. Each produce does wait(empty) … signal(full); each consume does wait(full) … signal(empty). Step through it in the [producer–consumer lab](lab:producer-consumer).
+:::
+
+### [mcq] `SimpleSemaphore` above uses `notify()`, yet the bounded buffer above needs `notifyAll()`. Why is `notify()` safe in the semaphore?
+
+- [ ] `notify()` always wakes the thread that has waited longest
+- [x] Every waiter waits for the same condition (count > 0), and each `release()` adds exactly one permit, so waking any one waiter is correct
+- [ ] `synchronized` methods ignore the difference between `notify()` and `notifyAll()`
+- [ ] It isn't safe; the semaphore can deadlock
+
+In the bounded buffer, producers wait for "not full" and consumers for "not empty" on the same queue, so `notify()` could wake a thread of the wrong kind. In the semaphore, any waiter can use the new permit. If it gets beaten to it, its `while` loop simply waits again.
+
+### [exercise] Three threads must print "A", "B" and "C" so the output is exactly ABCABCABC: each thread prints its letter 3 times, in turn. Write it in Java with semaphores and explain the initial values.
+
+:::solution
+```java
+Semaphore turnA = new Semaphore(1);   // A may go first
+Semaphore turnB = new Semaphore(0);
+Semaphore turnC = new Semaphore(0);
+
+Thread a = new Thread(() -> {
+    for (int i = 0; i < 3; i++) { turnA.acquireUninterruptibly(); System.out.print("A"); turnB.release(); }
+});
+Thread b = new Thread(() -> {
+    for (int i = 0; i < 3; i++) { turnB.acquireUninterruptibly(); System.out.print("B"); turnC.release(); }
+});
+Thread c = new Thread(() -> {
+    for (int i = 0; i < 3; i++) { turnC.acquireUninterruptibly(); System.out.print("C"); turnA.release(); }
+});
+a.start(); b.start(); c.start();
+```
+
+Each semaphore means "it's this thread's turn". Exactly one permit circulates: it starts with A (`turnA` = 1, others 0), and each thread passes it to the next after printing. Because there is only ever one permit in total, only one thread prints at a time, and the order is forced to A → B → C → A, whatever the scheduler does.
+:::
+
 ## Quick Revision
 
 - Semaphore: `wait/P` (decrement, block if negative), `signal/V` (increment, wake one). Initial 1 = mutex, N = resources, 0 = ordering.
@@ -253,3 +320,4 @@ Condition variables have no memory, need a mutex, and Mesa wakeups don't guarant
 - **Hoare**: signal hands over; condition true. **Mesa** (real world): signal-and-continue → `while (!cond) wait()`.
 - Producer–consumer: wait on the counting semaphore **before** the mutex.
 - Java intrinsic monitors have one condition queue → `notifyAll()`.
+- Java: `Semaphore.acquire()` = P, `release()` = V (count never negative); `new Semaphore(0)` = ordering; one circulating permit = turn-taking.

@@ -12,14 +12,14 @@ stage: 1
 prerequisites: [os-program-execution]
 related: [os-process-creation, os-threads, os-context-switch, os-address-spaces]
 visualizations: [process-lifecycle]
-tags: [process, program, pcb, process states, process control block, pid]
+tags: [process, program, pcb, process states, process control block, pid, suspended state, long-term scheduler, medium-term scheduler, short-term scheduler, degree of multiprogramming, ProcessHandle]
 ---
 
 ## Mental Model
 
-A **program** is a recipe written down in a book: a file on disk containing instructions and some initial data. A **process** is a cook actually making the recipe in a kitchen: it has a position in the recipe (the program counter), ingredients laid out on the counter (memory), tools it has checked out (open files, sockets), and a name tag the manager uses to track it (the PID).
+A **program** is a recipe written down in a book: a file on disk containing instructions and some initial data. A **process** is a cook actually making the recipe in a kitchen. It has a position in the recipe (the program counter), ingredients laid out on the counter (memory), tools it has checked out (open files, sockets), and a name tag the manager uses to track it (the PID).
 
-The operating system is the kitchen manager. It decides which cook gets the single stove (the CPU) right now, keeps every cook's counter space separate so they cannot steal each other's ingredients, and keeps a clipboard for each cook recording exactly where they left off — so a cook can be sent on a break mid-recipe and resume later as if nothing happened. That clipboard is the **Process Control Block (PCB)**.
+The operating system is the kitchen manager. It decides which cook gets the single stove (the CPU) right now, and keeps every cook's counter space separate so they can't steal each other's ingredients. It also keeps a clipboard for each cook recording exactly where they left off. A cook can then be sent on a break mid-recipe and resume later as if nothing happened. That clipboard is the **Process Control Block (PCB)**.
 
 Hold on to one idea above all: **a process is the unit of isolation and resource ownership.** Memory, open files and permissions belong to a process. Threads (next level) are the unit of *execution* inside it.
 
@@ -43,7 +43,7 @@ The kernel tracks all of this in a per-process data structure, the **Process Con
 
 **Without it.** You either waste the CPU (it sits idle every time a job waits) or you run several jobs and let any one of them scribble over the others.
 
-**The idea.** Wrap each running program in a box the OS controls: the box records *where the program was* (so it can be paused and resumed) and *what it's allowed to touch* (so it can't reach outside). The process abstraction solves both at once. It gives every running program the illusion of **a private CPU** (the OS multiplexes the real one by saving and restoring state) and **a private memory** (the OS and hardware enforce separate address spaces). Every higher-level concept — threads, containers, even the database server you connect to — is built on this illusion.
+**The idea.** Wrap each running program in a box the OS controls: the box records *where the program was* (so it can be paused and resumed) and *what it's allowed to touch* (so it can't reach outside). The process abstraction solves both at once. It gives every running program the illusion of **a private CPU**, because the OS multiplexes the real one by saving and restoring state. It also gives each one **a private memory**, because the OS and hardware enforce separate address spaces. Every higher-level concept — threads, containers, even the database server you connect to — is built on this illusion.
 
 **From idea to mechanism.** "Pause and resume" needs somewhere to save the state → the **PCB**. "Run something else while one waits" needs to know who is waiting and who is ready → the **process states** and their queues. "Can't touch others" needs a private view of memory → the **address space**.
 
@@ -104,6 +104,31 @@ The transitions carry real meaning:
 - **Blocked → Running is impossible.** When the event arrives, the process becomes *eligible*, not *scheduled*. It must wait in the ready queue like everyone else.
 - **Ready → Blocked is impossible.** A process can only block by *doing something* (making a blocking system call), and only running processes do things.
 - **Running → Ready** happens involuntarily (preemption by the timer interrupt) — this is how a single CPU is shared fairly.
+
+### Suspended states and the three schedulers
+
+When memory runs short, the OS can move a whole process out to disk (**swap it out**) to make room. A swapped-out process is **suspended**: it can't run until it is brought back, whatever else is true. Textbooks add two states for this, giving the seven-state model:
+
+```mermaid
+stateDiagram-v2
+    state "Ready, suspended" as RS
+    state "Blocked, suspended" as BS
+    Ready --> RS: swapped out
+    RS --> Ready: swapped in
+    Blocked --> BS: swapped out
+    BS --> RS: event occurs
+    BS --> Blocked: swapped in
+```
+
+Three schedulers decide the moves, named by how often they run:
+
+| Scheduler | Decides | Runs |
+|---|---|---|
+| **Long-term** (admission) | Which new jobs enter memory (New → Ready); this sets the **degree of multiprogramming**, the number of processes in memory | Rarely (seconds or minutes) |
+| **Medium-term** (swapper) | Which processes to swap out to disk and back in (the suspended states) | Under memory pressure |
+| **Short-term** (CPU scheduler) | Which ready process gets the CPU next (Ready → Running) | Every few milliseconds |
+
+A good long-term scheduler admits a mix of **CPU-bound** processes (long computations) and **I/O-bound** ones (short bursts between I/O waits), so neither the CPU nor the disks sit idle. Modern Linux has no separate long-term scheduler; every process is admitted. Instead, the kernel swaps individual pages rather than whole processes, and cgroup limits play the admission role. The short-term scheduler is the one the [scheduling lessons](lesson:os-scheduling-basics) are about.
 
 ### The PCB: what the kernel remembers
 
@@ -166,6 +191,18 @@ $ ps -o pid,ppid,stat,vsz,rss,comm -p 4121,4122
 - `PPID 3990` is the shell that created both.
 - `STAT S` means **interruptible sleep** — Blocked, waiting on a timer. Other codes: `R` running/runnable (Linux does not distinguish Ready from Running in `ps`), `D` uninterruptible sleep (usually disk I/O), `Z` zombie, `T` stopped.
 - `VSZ` (virtual size) vs `RSS` (resident set size): the process has 5 MB of address space mapped but only ~1 MB actually in RAM. Most of the mapping is shared libraries not yet touched.
+
+From Java, `ProcessHandle` reads the same kernel data:
+
+```java
+ProcessHandle me = ProcessHandle.current();
+System.out.println("pid  " + me.pid());
+System.out.println("ppid " + me.parent().map(ProcessHandle::pid).orElse(-1L));
+me.info().command().ifPresent(c -> System.out.println("cmd  " + c));
+me.info().totalCpuDuration().ifPresent(d -> System.out.println("cpu  " + d));
+```
+
+On Linux the JDK gets these values from files under `/proc/<pid>/`, where the kernel publishes its per-process records.
 
 You can see the kernel's view directly:
 
@@ -248,6 +285,10 @@ The PCB is the kernel data structure representing a process. It contains the pro
 
 New → Ready (admitted), Ready → Running (dispatched), Running → Ready (preempted), Running → Blocked (waits for I/O/event), Blocked → Ready (event occurs), Running → Terminated (exit). Key insight: a blocked process never goes straight to Running; it re-enters the ready queue.
 
+### [L1 · compare] What do the long-term, medium-term and short-term schedulers do?
+
+The **long-term** scheduler decides which new jobs are admitted into memory, controlling the degree of multiprogramming; it runs rarely, and a good one admits a balanced mix of CPU-bound and I/O-bound jobs. The **medium-term** scheduler swaps processes out to disk and back in when memory is short, which creates the "ready, suspended" and "blocked, suspended" states. The **short-term** scheduler (the CPU scheduler) picks which ready process runs next; it runs every few milliseconds, so it must be fast. Linux has no separate long-term scheduler and swaps pages rather than whole processes, but the three roles still describe the decisions every OS makes.
+
 ### [L2 · why] Why can't a process go directly from Blocked to Running?
 
 Because becoming unblocked only makes the process *eligible* to run. The CPU may be busy with another process, and choosing who runs is the scheduler's job. The interrupt handler that signals I/O completion moves the process to the ready queue; the scheduler later dispatches it. Allowing Blocked → Running would mean the event source (a disk interrupt) makes scheduling decisions, bypassing fairness and priority.
@@ -295,6 +336,27 @@ The interrupt handler makes the process eligible to run by moving it to a run qu
 
 The PCB stores *metadata* and saved registers. Heap contents live in the process's own pages of memory; the PCB only points to the address space (via page tables).
 
+### [numeric 59 ±1 unit=%] Each process in memory spends 80% of its time waiting for I/O, independently of the others. With 4 such processes in memory, what is the expected CPU utilization?
+
+:::answer
+The CPU is idle only when all 4 processes are waiting at once: 0.8⁴ = 0.4096. Utilization = 1 − 0.4096 = 0.5904 ≈ **59**%. With only 1 process it would be 20%; this is why multiprogramming exists, and why the degree of multiprogramming matters.
+:::
+
+### [numeric 3] A 4-core machine has 10 processes in memory. 3 are blocked waiting for disk reads; the rest want to run, and the scheduler keeps every core busy. How many processes are in the Ready state?
+
+:::answer
+7 processes are runnable. 4 of them are Running, one per core, so **3** wait in the ready queue. The 3 blocked processes are on wait queues and use no CPU.
+:::
+
+### [mcq] Memory is short, so the OS writes an entire blocked process out to swap. Which scheduler made that decision, and what state is the process in now?
+
+- [ ] Long-term scheduler; New
+- [x] Medium-term scheduler; Blocked, suspended
+- [ ] Short-term scheduler; Ready
+- [ ] Short-term scheduler; Blocked
+
+Swapping whole processes out and back in is the medium-term scheduler's job. The process is still waiting for its event *and* is out of memory. When the event occurs it becomes Ready, suspended, and it must be swapped in before it can run. Step through the basic states in the [process lifecycle lab](lab:process-lifecycle).
+
 ### [exercise] Using ps, how would you find all processes currently in uninterruptible sleep and the kernel function they are blocked in?
 
 :::solution
@@ -309,6 +371,8 @@ ps -eo state,pid,wchan:32,comm | awk '$1=="D"'
 - **Program** = passive file. **Process** = program in execution + address space + resources + PCB.
 - **PCB** holds: state, PID/PPID, saved registers, page-table pointer, open files, scheduling info, credentials, signals.
 - **States**: New → Ready ⇄ Running → Terminated; Running → Blocked → Ready. Never Blocked → Running; never Ready → Blocked.
+- **Suspended** states (swapped out): Ready, suspended and Blocked, suspended. **Schedulers**: long-term (admission), medium-term (swapping), short-term (CPU).
+- CPU utilization with n processes each waiting for I/O a fraction p of the time ≈ 1 − pⁿ.
 - Blocked processes use **no CPU**; they sit on a wait queue for a specific event.
 - Process = unit of **isolation and ownership**; thread = unit of **execution**.
 - Linux: processes and threads are both `task_struct`s created by `clone()` with different sharing flags.

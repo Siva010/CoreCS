@@ -48,7 +48,7 @@ Other scripts:
 - **Progress**: a Zustand store persisted to `localStorage` (`src/lib/progress/`), with SM-2 style spaced repetition, mastery estimation and a revision queue. Nothing leaves the browser.
 - **Search**: a static `/search-index.json` consumed by MiniSearch in the ⌘K palette.
 
-See [CONTENT_GUIDE.md](CONTENT_GUIDE.md) for how to write or extend lessons, questions, case studies and walkthroughs, and [DBMS_REVIEW.md](DBMS_REVIEW.md) for an assessment of the database track.
+See [CONTENT_GUIDE.md](CONTENT_GUIDE.md) for how to write or extend lessons, questions, case studies and walkthroughs, and [DBMS_REVIEW.md](DBMS_REVIEW.md) and [OS_REVIEW.md](OS_REVIEW.md) for assessments of the database and operating-systems tracks.
 
 ## Deployment
 

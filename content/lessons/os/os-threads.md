@@ -11,7 +11,7 @@ relevance: essential
 stage: 1
 prerequisites: [os-processes, os-context-switch]
 related: [os-concurrency-vs-parallelism, os-race-conditions, os-thread-pools, os-context-switch]
-tags: [thread, pthread, user thread, kernel thread, many-to-one, one-to-one, m:n, thread local storage, virtual threads, goroutines]
+tags: [thread, pthread, user thread, kernel thread, many-to-one, one-to-one, m:n, thread local storage, virtual threads, goroutines, Thread.State, thread cancellation, interrupt]
 ---
 
 ## Mental Model
@@ -47,38 +47,51 @@ All threads in a process share:
 **The idea.** A process bundles two things: *a space* (memory, files) and *a worker* (registers, a stack, a place in the code). Nothing forces one worker per space. Unbundle them: keep one space, put several workers in it. Threads are cheaper than processes to create (~10–20 µs vs 100s of µs), switch between (no address-space change), and communicate between (shared memory, no IPC).
 
 :::callout[That's all it is]{type=insight}
-A thread is a second program counter and stack inside the same process. Everything is shared except "where am I in the code" and "my local variables" — which is exactly why threads are fast to talk to each other, and exactly why they can corrupt each other's data.
+A thread is a second program counter and stack inside the same process. Everything is shared except "where am I in the code" and "my local variables". That's exactly why threads are fast to talk to each other, and exactly why they can corrupt each other's data.
 :::
 
 ## How It Works
 
 ### Creating and joining threads
 
-```c
-#include <pthread.h>
-
-void *worker(void *arg) {
-    int id = *(int *)arg;
-    printf("worker %d running\n", id);   // shares stdout with other threads
-    return NULL;
-}
-
-int main(void) {
-    pthread_t t[4];
-    int ids[4];
-    for (int i = 0; i < 4; i++) {
-        ids[i] = i;
-        pthread_create(&t[i], NULL, worker, &ids[i]);
+```java
+public class Workers {
+    public static void main(String[] args) throws InterruptedException {
+        Thread[] workers = new Thread[4];
+        for (int i = 0; i < 4; i++) {
+            int id = i;                                   // each lambda captures its own copy
+            workers[i] = new Thread(() ->
+                    System.out.println("worker " + id + " running"));   // all share System.out
+            workers[i].start();                           // creates a kernel thread
+        }
+        for (Thread w : workers) w.join();                // wait for each to finish
     }
-    for (int i = 0; i < 4; i++) pthread_join(t[i], NULL);   // wait for each
 }
 ```
 
-Equivalent in Java: `new Thread(runnable).start()` / `join()`; Python: `threading.Thread`; Go: `go f()` (a goroutine, see below).
+On Linux, each `start()` of a platform thread makes the JVM call `pthread_create`, which calls the `clone()` system call (see the advanced section below). Since Java 21, `Thread.ofVirtual().start(task)` starts a virtual thread instead, with no new kernel thread. The C equivalent is `pthread_create` / `pthread_join`; in Go it's `go f()`.
 
 ### Thread lifecycle
 
 Threads go through the same states as processes — new, ready, running, blocked, terminated — because on most systems the kernel schedules **threads**, not processes. A thread terminates by returning from its function or calling `pthread_exit`; another thread can **join** it (collect its result, like `wait` for processes) or it can be **detached** so its resources are freed automatically. Calling `exit()` from *any* thread ends the whole process.
+
+Java names its thread states differently, and they don't map one-to-one onto the kernel's:
+
+| Java `Thread.State` | What the kernel sees for that thread |
+|---|---|
+| `NEW` | Nothing yet: no kernel thread until `start()` |
+| `RUNNABLE` | Running, ready, **or blocked inside a system call** such as a socket read |
+| `BLOCKED` | Waiting to enter a `synchronized` block held by another thread (asleep in the kernel) |
+| `WAITING`, `TIMED_WAITING` | Parked in `wait()`, `join()`, `LockSupport.park()` or `sleep()` (asleep in the kernel) |
+| `TERMINATED` | The kernel thread has exited |
+
+The surprise is `RUNNABLE`. The JVM only knows a thread entered native code to read a socket; it doesn't know the kernel put it to sleep. A thread dump full of `RUNNABLE` threads in `socketRead` is a service waiting on the network, not one burning CPU.
+
+### Stopping a thread: cancellation
+
+Textbooks name two ways to cancel a thread. **Asynchronous cancellation** kills it immediately, wherever it is, possibly holding a lock or halfway through updating shared data. **Deferred cancellation** sets a flag, and the thread stops itself at a point where it is safe to.
+
+Java uses deferred cancellation. `thread.interrupt()` sets the thread's interrupt flag, and blocking calls such as `sleep`, `wait`, `join` and `BlockingQueue.take` throw `InterruptedException` when they see it. The old asynchronous `Thread.stop()` was deprecated because it left locked objects in broken states, and since JDK 20 it throws `UnsupportedOperationException`.
 
 ### Memory layout with threads
 
@@ -147,24 +160,27 @@ Linux has a single "task" abstraction. `pthread_create` calls `clone()` with fla
 
 ## Example
 
-Why threads help an I/O-bound program (Python, where the GIL prevents CPU parallelism but I/O releases it):
+Why threads help an I/O-bound program: fetch 20 URLs with 10 threads.
 
-```python
-import concurrent.futures, urllib.request, time
+```java
+HttpClient client = HttpClient.newHttpClient();
+List<URI> urls = IntStream.range(0, 20)
+        .mapToObj(i -> URI.create("https://example.com/?q=" + i))
+        .toList();
 
-urls = [f"https://example.com/?q={i}" for i in range(20)]
-
-def fetch(u):
-    with urllib.request.urlopen(u, timeout=10) as r:
-        return len(r.read())
-
-t = time.time()
-with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
-    sizes = list(ex.map(fetch, urls))
-print(f"{time.time() - t:.1f}s")   # ~2 round trips of wall time instead of 20
+long start = System.nanoTime();
+try (ExecutorService pool = Executors.newFixedThreadPool(10)) {    // close() waits for the tasks
+    List<Future<Integer>> sizes = new ArrayList<>();
+    for (URI u : urls) {
+        sizes.add(pool.submit(() -> client.send(HttpRequest.newBuilder(u).build(),
+                HttpResponse.BodyHandlers.ofByteArray()).body().length));
+    }
+    for (Future<Integer> f : sizes) f.get();
+}
+System.out.printf("%.1fs%n", (System.nanoTime() - start) / 1e9);  // ~2 round trips instead of 20
 ```
 
-Each thread spends most of its time **blocked** on the network; while blocked, others run. For CPU-bound Python work you'd use processes (or a free-threaded Python build).
+Each thread spends most of its time **blocked** on the network; while blocked, others run. With `Executors.newVirtualThreadPerTaskExecutor()` instead, all 20 requests (or 20,000) wait at once, without 20,000 kernel threads. For CPU-bound work, threads beyond the number of cores add nothing.
 
 ## Visualization
 
@@ -228,6 +244,14 @@ Its registers (including program counter and stack pointer), its stack, thread-l
 
 Kernel threads are created and scheduled by the OS: they run in parallel on multiple cores and one blocking doesn't block the others, but creation and switching require the kernel. User-level threads are managed by a runtime in user space: very cheap to create and switch, but the kernel doesn't know about them, so a blocking syscall can block all threads on that kernel thread unless the runtime handles it, and they need to be multiplexed onto multiple kernel threads to use multiple cores. Modern M:N runtimes (Go, Java virtual threads) combine both.
 
+### [L2 · why] A thread dump shows 180 of 200 request threads as RUNNABLE inside `socketRead`, yet CPU usage is 5%. How can that be?
+
+Java's `RUNNABLE` state covers everything from "running on a core" to "inside a native call". A thread reading a socket entered native code; the kernel then put it to sleep on the socket's wait queue, but the JVM has no way to know that, so it still reports `RUNNABLE`. These 180 threads are actually blocked waiting for a slow downstream service or database. The fix is on that dependency (timeouts, capacity, a circuit breaker), not on CPU. Only `BLOCKED`, `WAITING` and `TIMED_WAITING` mean the JVM itself knows the thread is waiting.
+
+### [L2 · compare] Asynchronous vs deferred thread cancellation — which does Java use, and why?
+
+Asynchronous cancellation terminates the target thread immediately, at any instruction, so it may die holding a lock or with a shared data structure half-updated. Deferred cancellation only requests termination, and the thread checks for the request at safe points and cleans up before exiting. Java uses deferred cancellation: `interrupt()` sets a flag, and blocking methods throw `InterruptedException`, so the thread can release resources in `finally` blocks. `Thread.stop()`, the asynchronous version, was deprecated because it released all monitors with objects in inconsistent states, and since JDK 20 it no longer works at all.
+
 ### [L2 · why] Why is creating a thread cheaper than creating a process?
 
 A thread reuses the process's existing address space, page tables, file table and signal handlers; the kernel only allocates a task structure, a kernel stack and a user stack. A process needs a new address space (page-table copy with COW), a copied file table and more kernel bookkeeping.
@@ -264,6 +288,52 @@ Each thread has its own stack.
 
 All user threads share one kernel thread; if it blocks in the kernel, none of them can run.
 
+### [mcq] In a `jstack` thread dump, a request thread is blocked reading from a database socket. Which state does it show?
+
+- [ ] BLOCKED
+- [ ] WAITING
+- [x] RUNNABLE
+- [ ] TIMED_WAITING
+
+`BLOCKED` only means "waiting to enter a `synchronized` block". A thread inside a native socket read is `RUNNABLE` to the JVM, even though the kernel has put it to sleep.
+
+### [numeric 2000 unit=MB] A Java server runs 2,000 platform threads with the default 1 MB thread stack size (`-Xss1m`). How much virtual address space is reserved for their stacks?
+
+:::answer
+2,000 × 1 MB = **2000** MB, about 2 GB of address space. Physical memory is used only for stack pages actually touched, typically tens of KB per thread, so resident usage is far lower. Kernel structures and scheduler load per thread still add up, which is why tens of thousands of platform threads become a problem.
+:::
+
+### [numeric 400 unit=ms] A program fetches 20 URLs. Each fetch spends 200 ms waiting on the network and almost no CPU time. With a pool of 10 threads, roughly how long does it take?
+
+:::answer
+Ten fetches wait at the same time, so 20 fetches take two rounds: 2 × 200 ms = **400** ms. With one thread it would take 20 × 200 = 4,000 ms. With 20 threads (or virtual threads) it would take about 200 ms. Threads help here because waiting threads are blocked and use no CPU.
+:::
+
+### [exercise] Write a Java worker thread that takes jobs from a `BlockingQueue` and can be stopped cleanly by another thread, without losing a job halfway through. Explain why you don't use `Thread.stop()`.
+
+:::solution
+```java
+BlockingQueue<Runnable> queue = new LinkedBlockingQueue<>();
+
+Thread worker = Thread.ofPlatform().name("worker").start(() -> {
+    while (!Thread.currentThread().isInterrupted()) {
+        try {
+            Runnable job = queue.take();     // throws InterruptedException if interrupted while waiting
+            job.run();                       // a running job is allowed to finish
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();   // keep the flag set so the loop exits
+        }
+    }
+});
+
+// From another thread, at shutdown:
+worker.interrupt();   // a request, not a kill
+worker.join();        // wait until the worker has really stopped
+```
+
+This is deferred cancellation: the worker stops only between jobs or while waiting for one, so no job is cut in half and no lock is left held. `Thread.stop()` was asynchronous: it could kill the thread anywhere, such as halfway through `job.run()` while holding a monitor, leaving shared objects corrupted. It no longer works since JDK 20. Compare what a thread switch skips in the [context switch visualization](viz:context-switch).
+:::
+
 ## Quick Revision
 
 - Thread = flow of execution inside a process. **Private**: registers, PC, stack, TLS. **Shared**: heap, globals, code, fds, signal handlers.
@@ -271,4 +341,6 @@ All user threads share one kernel thread; if it blocks in the kernel, none of th
 - Models: many-to-one (no parallelism), one-to-one (Linux/Java platform threads), **M:N** (Go, Java virtual threads).
 - Linux: threads are tasks from `clone()` sharing VM/files/signals; PID = TGID.
 - Thread-local storage + thread pools → clear it or leak data between requests.
+- Java `RUNNABLE` includes threads asleep in a socket read; `BLOCKED` = waiting for a `synchronized` monitor.
+- Cancellation: asynchronous (kill anywhere) vs deferred (stop at safe points). Java's `interrupt()` is deferred; `Thread.stop()` is gone.
 - Any thread crashing kills the process.

@@ -20,6 +20,13 @@ Every system is a network of **queues in front of resources**: CPU run queues, d
 
 At low load, queues are empty and latency ≈ service time. As a resource approaches 100% busy, queues grow **non-linearly** — the last 20% of utilization can multiply latency many times over. Most performance work is: *find the resource whose queue is growing, and either make it faster, give it less work, or add more of it.*
 
+```mermaid
+flowchart TD
+    A["arrivals<br/>λ per second"] --> Q["queue:<br/>time waiting"]
+    Q --> R["resource:<br/>service time S"]
+    R --> D["done:<br/>latency = wait + S"]
+```
+
 ## Definition
 
 - **Latency**: time to complete one operation (report percentiles, not just averages).
@@ -62,7 +69,7 @@ It's a checklist that quickly rules resources in or out.
 
 The intuition: if 2,000 people arrive per second and each stays 50 ms, then at any instant about 100 of them are inside. That's all the law says — and it's enough to size pools and catch impossible numbers. `L = λ × W` holds for any stable system regardless of distribution:
 
-- A service handles **λ = 2,000 req/s** with average latency **W = 50 ms** → on average **L = 100** requests in flight → you need at least 100 concurrent workers (threads, connections, async slots).
+- A service handles **λ = 2,000 req/s** with average latency **W = 50 ms**. On average **L = 100** requests are in flight, so you need at least 100 concurrent workers (threads, connections or async slots).
 - A DB connection pool of 20 with average query time 10 ms supports at most **λ = L/W = 20 / 0.01 = 2,000 queries/s**. Beyond that, requests queue for connections.
 - If latency doubles (slow downstream) at the same arrival rate, in-flight requests double — pools exhaust, memory grows.
 
@@ -112,7 +119,7 @@ Load average alone is ambiguous; always pair it with CPU utilization and `vmstat
 :::depth{level=advanced}
 ### Coordinated omission
 
-Load generators that send the next request only after the previous completes **stop sending while the system is stalled**, so the stall is represented by one slow sample instead of the hundreds of requests that real users would have queued. Result: dramatically understated tail latencies. Use constant-rate (open-loop) load generators (wrk2, k6 arrival-rate executors, Gatling) and HDR histograms to measure what users experience.
+Some load generators send the next request only after the previous one completes, so they **stop sending while the system is stalled**. The stall then shows up as one slow sample instead of the hundreds of requests that real users would have queued. Result: dramatically understated tail latencies. Use constant-rate (open-loop) load generators (wrk2, k6 arrival-rate executors, Gatling) and HDR histograms to measure what users experience.
 :::
 
 ## Example
@@ -218,6 +225,36 @@ L = λW = 500 × 0.08 = **40**.
 
 That's why disk or NFS stalls raise load average with idle CPUs.
 
+### [numeric 50 unit=ms] A single-server resource has a service time of 10 ms and runs at 80% utilization (M/M/1). What is the average time a request spends there, waiting plus service?
+
+:::answer
+W = S / (1 − ρ) = 10 / (1 − 0.8) = 10 / 0.2 = **50** ms. Four fifths of that is waiting in the queue, not being served.
+:::
+
+### [numeric 1333 ±1] A HikariCP pool has 20 connections and each request holds a connection for 15 ms on average. What is the maximum request rate the pool can sustain?
+
+:::answer
+λ_max = L / W = 20 / 0.015 ≈ **1333** requests per second. Above that, requests queue for a connection (HikariCP's "threads awaiting connection" metric rises) and latency climbs without bound.
+:::
+
+### [mcq] A Java service's CPU is at 40%, but p99 latency is high. Which signal most directly shows that its JDBC connection pool is saturated?
+
+- [ ] JVM heap usage
+- [ ] The number of active HTTP connections
+- [x] Threads waiting for a connection (HikariCP `pending`) and connection acquisition time rising
+- [ ] The number of classes loaded
+
+Saturation is queued work. For a pool, that's the number of threads waiting to borrow a connection and how long they wait. Utilization (active connections = pool size) shows it's busy; the wait queue shows it's the bottleneck.
+
+### [exercise] A Spring Boot service runs on Tomcat (`maxThreads` = 200) with HikariCP (`maximumPoolSize` = 10). At peak it receives 800 requests per second. Each request takes 60 ms in total, of which 20 ms holds a database connection. Use Little's Law to check both pools and say what will happen at peak.
+
+:::solution
+- **DB pool**: busy connections = λ × W = 800 × 0.020 = 16 needed on average, but only 10 exist. The pool is saturated: requests queue for connections, the queue grows, and latency climbs until timeouts.
+- **Tomcat threads**: if nothing queued, 800 × 0.060 = 48 threads would be busy, well under 200. But each thread waiting for a DB connection is still occupied. As the DB wait grows, W grows, so busy threads = 800 × W grows too. It can reach 200, after which Tomcat queues new connections as well.
+
+The first bottleneck is the 10-connection pool. Raise it above the need with headroom (about 20) **if the database can handle 20 concurrent queries**, or cut the time each request holds a connection (faster queries, no remote calls inside a transaction). Then re-check: at 20 connections, utilization = 16 / 20 = 80%, which already means noticeable queueing at peak, so 24 or a shorter hold time is safer.
+:::
+
 ## Quick Revision
 
 - Latency (percentiles!), throughput, utilization, saturation, errors.
@@ -226,3 +263,4 @@ That's why disk or NFS stalls raise load average with idle CPUs.
 - Queueing: `W ≈ S/(1−ρ)` → hockey stick; target 60–75% for latency-sensitive resources.
 - Load average = runnable + D-state tasks (not CPU%).
 - Optimize the bottleneck; beware coordinated omission in load tests.
+- Pools: needed = λ × hold time; max rate = pool size / hold time (HikariCP 20 conns × 15 ms → ~1,333/s).

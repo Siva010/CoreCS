@@ -12,7 +12,7 @@ stage: 2
 prerequisites: [os-scheduling-basics]
 related: [os-mlfq-real-schedulers, os-context-switch]
 visualizations: [cpu-scheduler]
-tags: [fcfs, sjf, srtf, round robin, priority scheduling, starvation, aging, gantt chart, exponential averaging]
+tags: [fcfs, sjf, srtf, round robin, priority scheduling, starvation, aging, gantt chart, exponential averaging, hrrn, response ratio]
 ---
 
 ## Mental Model
@@ -48,6 +48,15 @@ Real schedulers ([next lesson](lesson:os-mlfq-real-schedulers)) combine these id
 3. **SRTF** fixes that by allowing preemption. Flaw: long jobs can starve, and both SJF and SRTF need to know the future.
 4. **Round Robin** gives up on predicting and just takes turns. Flaw: worse average waiting, more switches — but nobody waits long for a first response.
 5. **Priority** lets humans say what matters. Flaw: starvation again — fixed by **aging**.
+
+```mermaid
+flowchart TD
+    F["FCFS<br/>serve in arrival order"] -->|"short jobs stuck<br/>behind long ones"| S["SJF<br/>shortest job first"]
+    S -->|"can't interrupt a long<br/>job already running"| SR["SRTF<br/>preempt for a shorter job"]
+    SR -->|"needs burst lengths;<br/>long jobs starve"| RR["Round Robin<br/>take turns, quantum q"]
+    RR -->|"treats every<br/>job alike"| P["Priority<br/>most important first"]
+    P -->|"low priority<br/>may never run"| A["Priority + aging"]
+```
 
 Studying them separately exposes the trade-offs cleanly, and interviews test them with numericals because the computation reveals whether you understand preemption and waiting.
 
@@ -116,7 +125,7 @@ Queue discipline: on the same tick, newly arrived processes enter the queue **be
 0     4     8     12    16    20    24 25 26
 ```
 
-Completion: P1 20, P2 8, P3 26, P4 25. WT: P1 20−0−8 = 12, P2 8−1−4 = 3, P3 26−2−9 = 15, P4 25−3−5 = 17 → **average 11.75**. Worse average waiting than SJF — but look at **response time**: every process got the CPU within 12 time units (P4 first ran at 12), and none waited behind a long job for its first slice.
+Completion: P1 20, P2 8, P3 26, P4 25. WT: P1 20−0−8 = 12, P2 8−1−4 = 3, P3 26−2−9 = 15, P4 25−3−5 = 17 → **average 11.75**. Worse average waiting than SJF, but look at **response time**. Every process got the CPU within 12 time units (P4 first ran at 12), and none waited behind a long job for its first slice.
 
 ### Priority (non-preemptive, lower number = higher priority)
 
@@ -129,6 +138,26 @@ t=0 only P1 → runs to 8. Then P2 (1), P4 (2), P3 (4).
 
 Same schedule as SJF here by coincidence: WT average **7.75**. Preemptive priority would preempt P1 at t=1 for P2.
 
+### Highest Response Ratio Next (HRRN)
+
+HRRN is a non-preemptive compromise between SJF and fairness. When the CPU frees up, it computes for every waiting job:
+
+**response ratio = (waiting time + burst time) / burst time**
+
+A short job starts with a high ratio, so short jobs are still preferred. But a job's ratio grows the longer it waits, so a long job can't be passed over forever. Aging is built into the formula.
+
+On this workload HRRN happens to pick the same order as SJF. A workload where they differ, as (arrival, burst): A (0, 3), B (2, 6), C (4, 4), D (6, 5), E (8, 2).
+
+```text
+t = 0   only A has arrived                              → A runs 0–3
+t = 3   only B is waiting                               → B runs 3–9
+t = 9   C: (5 + 4) / 4 = 2.25   D: (3 + 5) / 5 = 1.6   E: (1 + 2) / 2 = 1.5   → C runs 9–13
+t = 13  D: (7 + 5) / 5 = 2.4    E: (5 + 2) / 2 = 3.5                          → E runs 13–15
+t = 15  D runs 15–20
+```
+
+Waiting times are A 0, B 1, C 5, D 9, E 5, an average of **4**. SJF would run E at t = 9 (it is shortest) for an average of 3.6, but HRRN let C go first because C had already waited longer. HRRN trades a little average waiting time for protection against starvation.
+
 ### Summary for this workload
 
 | Algorithm | Avg WT | Preemptive? | Starvation possible? |
@@ -138,6 +167,7 @@ Same schedule as SJF here by coincidence: WT average **7.75**. Preemptive priori
 | SRTF | **6.5** | Yes | Yes (long jobs) |
 | RR (q=4) | 11.75 | Yes | No |
 | Priority (non-preemptive) | 7.75 | No | Yes (low priority) |
+| HRRN | 7.75 | No | No (ratios grow while waiting) |
 
 ::viz{id=cpu-scheduler}
 
@@ -145,7 +175,7 @@ Same schedule as SJF here by coincidence: WT average **7.75**. Preemptive priori
 
 ### SJF is optimal — for average waiting time
 
-Proof sketch (exchange argument): if a longer job runs immediately before a shorter one, swapping them reduces the short job's wait by the long job's burst and increases the long job's wait by the short job's burst — a net decrease. Repeating until sorted gives SJF. SRTF is optimal among preemptive policies for average waiting time.
+Proof sketch (exchange argument): suppose a longer job runs immediately before a shorter one. Swapping them cuts the short job's wait by the long job's burst and adds only the short job's burst to the long job's wait, a net decrease. Repeating until sorted gives SJF. SRTF is optimal among preemptive policies for average waiting time.
 
 ### The catch: nobody knows burst lengths
 
@@ -164,7 +194,7 @@ Any rule that always favours one kind of job ("short", "important") has a dark s
 :::depth{level=advanced}
 ### Round Robin quantum math
 
-With `n` ready processes and quantum `q`, each gets 1/n of the CPU in chunks of at most `q`, and no process waits more than `(n − 1) × q` before its next slice — a bounded response time that no other classic algorithm guarantees. Adding context-switch cost `s`, the worst-case wait becomes `(n − 1)(q + s)`, and useful CPU fraction is `q / (q + s)`.
+With `n` ready processes and quantum `q`, each gets 1/n of the CPU in chunks of at most `q`. No process waits more than `(n − 1) × q` before its next slice, a bounded response time that no other classic algorithm guarantees. Adding context-switch cost `s`, the worst-case wait becomes `(n − 1)(q + s)`, and useful CPU fraction is `q / (q + s)`.
 :::
 
 ## Example
@@ -199,6 +229,7 @@ Why web servers don't use FCFS for requests: a single 30-second report request a
 
 - No general-purpose OS uses pure versions of these; Linux's EEVDF/CFS is a weighted fair scheduler with latency-oriented tweaks, and Windows uses priority classes with dynamic boosts ([Real Schedulers](lesson:os-mlfq-real-schedulers)).
 - The ideas are alive in **application-level** scheduling: request queues (FIFO), shortest-job-first for query admission, weighted fair queuing in load balancers and Kubernetes' API priority and fairness, and priority queues in job systems (with aging to avoid starvation).
+- In Java, a `ThreadPoolExecutor` built with a `PriorityBlockingQueue` is priority scheduling for tasks. It has the same flaw: under steady load, low-priority tasks may never run unless their priority grows with age.
 
 ## Deeper Connections
 
@@ -233,6 +264,10 @@ By predicting the next CPU burst from history using exponential averaging: τ(n+
 
 Starvation: a ready process waits indefinitely because others are always preferred (lower priority, longer burst). Aging increases a process's priority the longer it waits, so eventually it becomes the highest priority and runs.
 
+### [L2 · how] What is Highest Response Ratio Next scheduling and what problem does it solve?
+
+HRRN is non-preemptive. Whenever the CPU frees up, it picks the waiting job with the highest response ratio, (waiting time + burst time) / burst time. Short jobs start with high ratios, so it behaves much like SJF, but every waiting job's ratio rises steadily, so a long job eventually beats newly arriving short jobs. It removes SJF's starvation without a separate aging mechanism, at the cost of a slightly higher average waiting time than SJF, and it still needs burst estimates.
+
 ### [L3 · numerical] With 5 ready processes, Round Robin quantum 20 ms and 1 ms context-switch cost, what is the maximum time a process waits before getting its next turn?
 
 At most (n − 1)(q + s) = 4 × 21 = **84 ms**.
@@ -265,6 +300,42 @@ SJF order: P3, P2, P1 → completion times 1, 4, 9. Since all arrive at 0, TAT =
 τ₁ = 0.5·6 + 0.5·10 = 8. τ₂ = 0.5·2 + 0.5·8 = 1 + 4 = **5**.
 :::
 
+### [numeric 3.33 ±0.01] P1 (AT 0, BT 5), P2 (AT 1, BT 3) and P3 (AT 2, BT 1) run under Round Robin with quantum 2. Newly arrived processes join the queue before a preempted one. What is the average waiting time?
+
+:::answer
+```text
+| P1 | P2 |P3| P1 |P2|P1|
+0    2    4  5    7  8  9
+```
+
+At t = 2 the queue is P2, P3, P1. P2 runs 2–4 (1 left), P3 runs 4–5 and finishes, P1 runs 5–7 (1 left), P2 finishes at 8, P1 at 9. Waiting = completion − arrival − burst: P1 = 9 − 0 − 5 = 4, P2 = 8 − 1 − 3 = 4, P3 = 5 − 2 − 1 = 2. Average = 10 / 3 ≈ **3.33**. Check it in the [CPU scheduling lab](lab:cpu-scheduler) with quantum 2.
+:::
+
+### [numeric 2.25 ±0.01] Under HRRN, job C arrived at time 4 with a burst of 4. The CPU frees up at time 9. What is C's response ratio?
+
+:::answer
+C has waited 9 − 4 = 5. Ratio = (waiting + burst) / burst = (5 + 4) / 4 = **2.25**.
+:::
+
+### [mcq] A Java service gives its `ThreadPoolExecutor` a `PriorityBlockingQueue` so that paid users' tasks run before free users' tasks. Under steady heavy load, some free-tier tasks never complete. What is happening, and what is the textbook fix?
+
+- [ ] Deadlock; fix by adding more threads
+- [x] Starvation of low-priority tasks; fix with aging (raise a task's priority as it waits) or a fair-share split between classes
+- [ ] The queue is unbounded, so it loses tasks; fix by bounding it
+- [ ] Priority inversion; fix with priority inheritance
+
+Strict priority always serves a waiting high-priority task first, so a steady stream of paid tasks keeps free tasks waiting forever. Aging (or a guaranteed share for each class, like weighted fair queuing) makes every task run eventually.
+
+### [exercise] Schedule A (0, 3), B (2, 6), C (4, 4), D (6, 5), E (8, 2) with non-preemptive SJF and with HRRN. Give each Gantt chart and average waiting time, and explain the one decision where they differ.
+
+:::solution
+**SJF**: A 0–3, B 3–9 (the only job waiting at t = 3), then at t = 9 the shortest waiting job is E (2): E 9–11, C 11–15, D 15–20. Waiting: A 0, B 1, C 7, D 9, E 1 → average 18 / 5 = **3.6**.
+
+**HRRN**: A 0–3, B 3–9; at t = 9 the ratios are C 2.25, D 1.6, E 1.5, so C 9–13; at t = 13 they are D 2.4, E 3.5, so E 13–15, D 15–20. Waiting: A 0, B 1, C 5, D 9, E 5 → average 20 / 5 = **4**.
+
+They differ at t = 9. SJF looks only at burst length and picks E, which arrived just 1 unit earlier. HRRN also counts how long each job has waited: C has waited 5 units, which outweighs its longer burst. HRRN accepts a slightly higher average so that waiting jobs gain ground, which is why it can't starve anyone.
+:::
+
 ## Quick Revision
 
 - **FCFS**: arrival order; convoy effect.
@@ -273,4 +344,5 @@ SJF order: P3, P2, P1 → completion times 1, 4, 9. Since all arrive at 0, TAT =
 - **RR**: quantum q; bounded response `(n−1)(q+s)`; fair; worse turnaround.
 - **Priority**: starvation → **aging**; priority inversion with locks.
 - Prediction: `τ(n+1) = α·t(n) + (1−α)·τ(n)`.
+- **HRRN**: pick max (waiting + burst) / burst — SJF-like, but waiting raises the ratio, so no starvation.
 - In interviews, draw the Gantt chart and state tie-breaking/queue conventions.

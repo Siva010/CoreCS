@@ -83,6 +83,17 @@ When free memory falls below watermarks, **kswapd** reclaims in the background; 
 
 `vm.swappiness` (0–200) biases between reclaiming file pages and swapping anonymous ones.
 
+```mermaid
+flowchart TD
+    A["free memory falls<br/>below a watermark"] --> K["kswapd reclaims<br/>in the background"]
+    K --> D{"still short when a<br/>task allocates?"}
+    D -->|no| OK["allocation succeeds"]
+    D -->|yes| R["direct reclaim by that task:<br/>drop clean file pages, write back<br/>dirty ones, swap anonymous pages"]
+    R --> F{"freed enough?"}
+    F -->|yes| OK
+    F -->|no| O["OOM killer: SIGKILL the<br/>highest oom_score process"]
+```
+
 ### The OOM killer
 
 Because memory was promised lazily (overcommit), the kernel can end up unable to keep a promise it already made. At that point there's no polite option left. If reclaim fails, the kernel must free memory by force. It computes an **oom_score** per process (proportional to memory usage, adjusted by `oom_score_adj` from −1000 to 1000) and sends **SIGKILL** to the highest. Kernel log:
@@ -91,7 +102,7 @@ Because memory was promised lazily (overcommit), the kernel can end up unable to
 Out of memory: Killed process 23714 (java) total-vm:9123456kB, anon-rss:7800123kB, ...
 ```
 
-In containers, hitting the cgroup's `memory.max` triggers a **cgroup OOM kill** of a process in that container, even if the host has free memory — Kubernetes reports `OOMKilled` (exit code 137 = 128 + SIGKILL 9).
+In containers, hitting the cgroup's `memory.max` triggers a **cgroup OOM kill** of a process in that container, even if the host has free memory. Kubernetes reports `OOMKilled` (exit code 137 = 128 + SIGKILL 9).
 
 ## Internal Mechanism
 
@@ -191,6 +202,10 @@ The system is thrashing: active pages are being swapped out and back in. Immedia
 
 The `oom_score` of each process, mostly proportional to its memory footprint (RSS + swap + page tables), adjusted by `oom_score_adj` (−1000 exempts, +1000 prefers). The highest score is killed with SIGKILL. In cgroup-limited environments, the victim is chosen within the cgroup that exceeded its limit.
 
+### [L2 · compare] What is the difference between `java.lang.OutOfMemoryError` and a container being `OOMKilled`?
+
+`OutOfMemoryError` is thrown by the JVM, inside the process, when a Java-level limit is hit: the heap is full even after GC (`Java heap space`), metaspace is full, a direct buffer can't be allocated, or a thread can't be created. The process keeps running and the error can be logged or handled (though it usually can't recover). `OOMKilled` comes from the kernel, from outside: the whole process's memory (heap plus everything else) exceeded the cgroup's `memory.max`, and the OOM killer sent SIGKILL. Nothing runs afterwards, so there's no stack trace, no heap dump and no shutdown hook, just exit code 137. The first points to a leak or an undersized heap; the second to a container limit that doesn't leave room for non-heap memory.
+
 ### [L4 · incident] Pods of a Java service are repeatedly OOMKilled (exit 137) with -Xmx equal to the container limit. Explain and fix.
 
 The Java heap is only part of the process's memory: metaspace, thread stacks, code cache, GC structures, direct buffers and native allocations add hundreds of MB or more. With Xmx equal to the limit, total RSS exceeds `memory.max` and the cgroup OOM killer strikes. Fix: size the heap to ~60–75% of the limit (`-XX:MaxRAMPercentage`), measure with Native Memory Tracking, cap direct memory and thread counts, and set limits from observed peak RSS plus headroom.
@@ -215,6 +230,37 @@ Pages continuously moving in and out of swap while CPU waits on I/O.
 
 Exit codes above 128 mean "terminated by signal N−128"; 9 is SIGKILL.
 
+### [numeric 5] A process makes these page references, one per time unit: 2, 6, 1, 5, 7, 7, 7, 7, 5, 1. With a working-set window Δ = 10, how many pages are in its working set right after the 10th reference?
+
+:::answer
+The window covers all 10 references. The distinct pages are {1, 2, 5, 6, 7}: **5** pages. The process needs 5 frames to run without faulting on this stretch.
+:::
+
+### [numeric 80] Three processes have working sets of 120, 200 and 260 frames, and 500 frames are available. By how many frames does demand exceed memory?
+
+:::answer
+Total demand D = 120 + 200 + 260 = 580 frames, and 580 − 500 = **80**. Since D exceeds the available frames, the working-set model suspends a process (the smallest that resolves it is the 120-frame one) instead of letting all three thrash.
+:::
+
+### [mcq] A Java pod restarts with exit code 137 and reason `OOMKilled`. The application logs show no `OutOfMemoryError`. What does that tell you?
+
+- [ ] The Java heap was full
+- [x] The whole process exceeded the container's memory limit and the kernel killed it, so the JVM never got the chance to throw anything
+- [ ] The JVM crashed with a segmentation fault
+- [ ] The liveness probe killed the pod
+
+The kernel's cgroup OOM killer uses SIGKILL, which can't be caught. A full heap would produce `java.lang.OutOfMemoryError: Java heap space` in the logs first. Compare total RSS with the limit, and leave room for non-heap memory.
+
+### [exercise] A process's references are 1, 2, 1, 3, 2, 1, 7, 8, 9, 7, 8, 9, one per time unit. With Δ = 4, compute its working set after references 6, 8 and 12, and explain what the sizes say about locality. Replay similar strings in the [page replacement visualization](viz:page-replacement).
+
+:::solution
+- **After reference 6** (window = references 3–6: 1, 3, 2, 1): WS = {1, 2, 3}, 3 pages.
+- **After reference 8** (window = 5–8: 2, 1, 7, 8): WS = {1, 2, 7, 8}, 4 pages.
+- **After reference 12** (window = 9–12: 9, 7, 8, 9): WS = {7, 8, 9}, 3 pages.
+
+The program works in one locality ({1, 2, 3}), then moves to another ({7, 8, 9}). During the move, the window contains pages from both, so the working set is briefly larger. An OS that sizes memory by the working set must allow for these transition peaks. A Δ too small (say 1) would count only the current page; a Δ too large (say 12) would still count the old locality long after the program left it.
+:::
+
 ## Quick Revision
 
 - **Working set** = pages used in the last Δ; if Σ working sets > RAM → **thrashing**.
@@ -223,3 +269,4 @@ Exit codes above 128 mean "terminated by signal N−128"; 9 is SIGKILL.
 - Linux reclaim: drop clean file pages, write back dirty, swap anonymous; kswapd vs direct reclaim; `swappiness`.
 - **OOM killer**: highest `oom_score` gets SIGKILL; cgroup limits → container OOMKilled (exit 137).
 - Measure with **PSI**, `vmstat` (si/so/wa/b), major faults — not "free" memory.
+- Java: `OutOfMemoryError` = JVM limit, thrown inside; `OOMKilled` (137) = kernel cgroup kill from outside, no trace.

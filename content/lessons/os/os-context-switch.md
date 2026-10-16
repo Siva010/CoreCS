@@ -12,7 +12,7 @@ stage: 1
 prerequisites: [os-processes, os-hardware-model]
 related: [os-threads, os-scheduling-basics, os-tlb, os-cpu-caches-contention, os-syscalls-interrupts]
 visualizations: [context-switch]
-tags: [context switch, mode switch, pcb, tlb flush, cache pollution, voluntary, involuntary, cs]
+tags: [context switch, mode switch, pcb, tlb flush, cache pollution, voluntary, involuntary, cs, dispatcher, cpu efficiency, virtual threads]
 ---
 
 ## Mental Model
@@ -57,6 +57,20 @@ Save this task's registers, load that task's registers. The switch itself is che
 7. Return from interrupt to user mode — B continues exactly where it was paused, unaware that anything happened.
 ::::
 
+The one branch that separates a thread switch from a process switch:
+
+```mermaid
+flowchart TD
+    I["timer interrupt or blocking call<br/>enters the kernel"] --> S["save A's registers<br/>in its task structure"]
+    S --> P{"scheduler:<br/>switch to B?"}
+    P -->|no| R1["return to A"]
+    P -->|yes| Q{"B in another<br/>process?"}
+    Q -->|yes| C["load B's page-table root<br/>(TLB entries may be flushed)"]
+    Q -->|"no: same process"| L["restore B's registers"]
+    C --> L
+    L --> R2["return to user mode in B"]
+```
+
 ::viz{id=context-switch}
 
 ## Internal Mechanism
@@ -73,6 +87,21 @@ Why a "cheap" operation can be expensive: the switch only moves registers, but t
 | **Pipeline/branch predictor state** | Smaller but real | Predictors trained on A |
 
 So a switch can "cost" 1–3 µs in isolation but slow down the next stretch of execution much more. That's why systems with **hundreds of thousands of switches per second** show high CPU usage without doing more work.
+
+### How much CPU do switches waste?
+
+The kernel code that performs the switch is called the **dispatcher**, and the time it takes is the **dispatch latency**. If every task runs for a time slice *q* and each switch costs *s*, the fraction of CPU time spent on real work is:
+
+**CPU efficiency = q / (q + s)**
+
+```text
+textbook numbers:  q = 4 ms,   s = 1 ms    →  4 / 5      = 80% useful, 20% wasted
+realistic numbers: q = 3 ms,   s = 30 µs   →  3 / 3.03   ≈ 99% useful
+storm:             100,000 switches/s on one core, 5 µs each (direct + cache warm-up)
+                   →  0.5 s of every second = 50% of the core lost to switching
+```
+
+A sensible time slice is far larger than the switch cost, so efficiency stays near 100%. Trouble starts when tasks switch far more often than their slice, because they block and wake constantly or because too many threads compete for a core.
 
 ### Thread switch vs process switch
 
@@ -105,6 +134,18 @@ A thread pool with 400 threads on an 8-core machine serving CPU-bound requests:
 - Each switch pollutes caches; throughput *drops* compared to a pool of ~8–16 threads, and tail latency rises because each request's work is time-sliced among many others.
 
 Shrinking the pool to roughly the core count (for CPU-bound work) or moving I/O waits to async I/O reduces switches and improves both throughput and P99. See [Thread Pools](lesson:os-thread-pools).
+
+In Java, the fix is usually a one-line change in how the executor is created:
+
+```java
+// CPU-bound work: about one platform (kernel) thread per core
+int cores = Runtime.getRuntime().availableProcessors();   // respects container CPU limits
+ExecutorService cpuPool = Executors.newFixedThreadPool(cores);
+
+// Blocking I/O work (Java 21+): one virtual thread per task. When a virtual thread blocks,
+// the JVM unmounts it from its carrier thread in user space; no kernel context switch is needed.
+ExecutorService ioPool = Executors.newVirtualThreadPerTaskExecutor();
+```
 
 ## Complexity & Performance
 
@@ -160,6 +201,10 @@ Threads share an address space, so the kernel doesn't change the page-table root
 
 A mode switch is a CPU privilege change (user ↔ kernel) during a syscall, interrupt or exception; the same task continues. A context switch replaces the running task with another. A syscall always involves mode switches; it causes a context switch only if the task blocks or the scheduler decides to preempt it.
 
+### [L2 · compare] How does switching between Java virtual threads differ from a kernel context switch?
+
+A virtual thread runs on a carrier, which is an ordinary platform (kernel) thread. When the virtual thread blocks on I/O or a `java.util.concurrent` lock, the JVM copies its small stack to the heap and **unmounts** it; the carrier picks up another ready virtual thread. This all happens in user space, so there is no system call, no kernel scheduler decision and no address-space change. It costs on the order of a few hundred nanoseconds, versus microseconds plus cache effects for a kernel switch. The kernel only sees a handful of busy carrier threads, about one per core. Two cases defeat it: CPU-bound work (virtual threads aren't time-sliced, so they don't help there) and **pinning**, where the virtual thread can't unmount. Pinning happens inside native frames and, before JDK 24, while holding a `synchronized` monitor; the carrier is then blocked too.
+
 ### [L3 · debugging] vmstat shows 400,000 context switches per second on a 16-core API server and throughput is lower than expected. How do you investigate?
 
 Determine voluntary vs involuntary with `pidstat -w 1`. Mostly involuntary → too many runnable threads for the cores (oversized pools, CPU throttling by cgroup quotas): check run-queue length (`vmstat r` column, load average), thread counts, and cgroup throttling stats. Mostly voluntary → threads blocking and waking frequently: lock contention (`perf lock`, futex syscalls in `strace -c`), tiny blocking I/O operations, or wake-up storms (condition variable broadcast). Fixes: right-size pools, reduce lock granularity, batch I/O, move to async I/O.
@@ -192,6 +237,37 @@ Same process → same address space → no page-table switch and no TLB flush.
 
 Involuntary switches happen when a runnable task is preempted — typically more runnable tasks than CPUs, or cgroup throttling.
 
+### [numeric 80 unit=%] Every process runs for a time quantum of 4 ms, and each context switch takes 1 ms. All processes are CPU-bound. What percentage of CPU time does useful work?
+
+:::answer
+Efficiency = q / (q + s) = 4 / (4 + 1) = **80**%. One fifth of the CPU goes to switching, which is why real time slices are milliseconds while switches are microseconds.
+:::
+
+### [numeric 50 unit=%] A core performs 100,000 context switches per second, and each costs 5 µs once cache and TLB warm-up are included. What percentage of that core is lost to switching?
+
+:::answer
+100,000 × 5 µs = 500,000 µs = 0.5 s in every second, so **50**% of the core. This is how an oversized thread pool raises CPU usage while throughput falls.
+:::
+
+### [mcq] A Java 21 virtual thread blocks reading from a socket. What happens to the platform (carrier) thread it was running on?
+
+- [ ] It blocks in the kernel until the data arrives
+- [x] The JVM unmounts the virtual thread and the carrier runs another virtual thread; no kernel context switch is needed
+- [ ] The kernel performs a context switch to a new platform thread
+- [ ] The carrier thread is destroyed and a new one is created later
+
+The virtual thread's stack is saved to the heap, and the socket is registered with the JVM's poller (epoll on Linux). When data arrives, the virtual thread is mounted again on any free carrier. The exception is a *pinned* virtual thread, for example one blocked inside native code, which holds its carrier.
+
+### [exercise] A Java service resizes images (pure CPU work) using `Executors.newFixedThreadPool(400)` on an 8-core machine. Throughput is lower than on a staging box with a 16-thread pool, and p99 latency is much worse. Explain what is happening at the OS level, propose the fix, and say how you'd confirm it. Watch what a single switch involves in the [context switch visualization](viz:context-switch).
+
+:::solution
+400 runnable threads compete for 8 cores, so each core time-slices about 50 threads. Every slice ends with an involuntary context switch, and each switch evicts the previous thread's working set (image buffers) from the caches. CPU time goes into switching and cache misses instead of resizing. Each request's work is also spread across many slices, which inflates latency.
+
+Fix: size the pool to the cores, `Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors())`, and queue the excess requests (or reject them under overload) instead of running them all at once.
+
+Confirm with `pidstat -w -p <pid> 1`. Before the fix, `nvcswch/s` (involuntary switches) is in the tens of thousands per second; after, it drops sharply, and throughput rises at the same CPU usage. `vmstat 1` should show the run queue (`r` column) fall to about the core count.
+:::
+
 ## Quick Revision
 
 - Context switch = save task A's registers/state, (switch address space if different process), restore task B.
@@ -200,4 +276,6 @@ Involuntary switches happen when a runnable task is preempted — typically more
 - Thread switch < process switch because no page-table/TLB change.
 - Mode switch (syscall) ≠ context switch.
 - Diagnose with `vmstat` (cs), `pidstat -w`, `/proc/<pid>/status`.
+- CPU efficiency = q / (q + s): quantum 4 ms, switch 1 ms → 80%.
+- Java: CPU-bound → fixed pool ≈ cores; blocking I/O → virtual threads (unmount in user space, no kernel switch).
 - Fix storms: right-size thread pools, reduce lock contention, async I/O, pinning for latency-critical work.

@@ -12,7 +12,7 @@ stage: 1
 prerequisites: [os-processes]
 related: [os-signals, os-cow-mmap, os-program-execution, os-ipc]
 visualizations: [process-lifecycle]
-tags: [fork, exec, wait, zombie, orphan, copy-on-write, init, reaping, exit status, vfork, posix_spawn]
+tags: [fork, exec, wait, zombie, orphan, copy-on-write, init, reaping, exit status, vfork, posix_spawn, ProcessBuilder, cascading termination]
 ---
 
 ## Mental Model
@@ -34,6 +34,7 @@ At the end of life, a process doesn't vanish immediately. It becomes a **zombie*
 - **`exit(status)`**: terminates the calling process; the status is delivered to the parent.
 - **Zombie (defunct) process**: a terminated process whose exit status has not yet been collected by its parent.
 - **Orphan process**: a running process whose parent has terminated; it is re-parented to PID 1 (or a designated "subreaper").
+- **Cascading termination**: some systems kill all of a process's children when it exits. Unix does not; it re-parents them instead.
 
 ## Why It Exists
 
@@ -55,30 +56,40 @@ At the end of life, a process doesn't vanish immediately. It becomes a **zombie*
 
 ## How It Works
 
-### A shell running `ls -l > out.txt`
+### Running `ls -l > out.txt` from Java
 
-```c
-pid_t pid = fork();
-if (pid < 0) {
-    perror("fork");                     // e.g. EAGAIN: process limit reached
-} else if (pid == 0) {                  // ---- child ----
-    int fd = open("out.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    dup2(fd, STDOUT_FILENO);            // stdout now points to out.txt
-    close(fd);
-    execlp("ls", "ls", "-l", (char *)NULL);
-    perror("exec");                     // only reached if exec failed
-    _exit(127);
-} else {                                // ---- parent ----
-    int status;
-    waitpid(pid, &status, 0);           // reap the child
-    if (WIFEXITED(status))
-        printf("exit code %d\n", WEXITSTATUS(status));
+A shell, or a Java program, runs `ls -l > out.txt` in three moves: create a child, point the child's stdout at the file, then replace the child's program with `ls`.
+
+```java
+import java.io.File;
+import java.io.IOException;
+
+public class RunLs {
+    public static void main(String[] args) throws IOException, InterruptedException {
+        ProcessBuilder pb = new ProcessBuilder("ls", "-l")
+                .redirectOutput(new File("out.txt"));  // the child's stdout goes to out.txt
+        Process child = pb.start();                    // create the child and exec ls
+        int code = child.waitFor();                    // wait for it to exit and collect its status
+        System.out.println("exit code " + code);
+    }
 }
 ```
 
-Note `_exit` (not `exit`) in the child after a failed exec: it avoids flushing stdio buffers that were copied from the parent (which would print the parent's pending output twice).
+`ProcessBuilder` hides the system calls, but they are the classic ones. Running the program under `strace -f` on Linux shows them (simplified):
+
+```text
+[java]    clone(CLONE_VM|CLONE_VFORK)       posix_spawn: a child that borrows the JVM's memory, no page-table copy
+[child]   execve("jspawnhelper")            a tiny JDK helper program replaces the borrowed memory
+[child]   dup2(5, 1)                        fd 5 is out.txt; fd 1 (stdout) now points to it
+[child]   execve("/usr/bin/ls", ["ls","-l"]) the helper becomes ls, keeping its PID and its open files
+[reaper]  wait4(child, ...)                 the JDK's "process reaper" thread collects the exit status
+```
+
+The setup happens in the child, between creating it and `exec`. That gap is exactly what `fork` + `exec` was designed for. Java uses `posix_spawn` (via `clone` with `CLONE_VFORK`) instead of a plain `fork` for two reasons. Copying the page tables of a JVM with a large heap is slow, and `fork` in a multithreaded process is unsafe (see the warning below).
 
 ### How many processes does this create?
+
+Java has no `fork`, but this C puzzle is a classic exam question about what `fork` does:
 
 ```c
 fork();
@@ -137,25 +148,23 @@ Ways a parent can reap:
 
 ## Example
 
-Create a zombie and an orphan on purpose:
+Create a zombie and an orphan on purpose, from a shell:
 
 ```bash
-# Zombie: the child exits, the parent (sleep-ing python) never waits
-$ python3 -c 'import os,time
-pid=os.fork()
-if pid==0: os._exit(0)
-time.sleep(60)' &
-$ ps -o pid,ppid,stat,comm --ppid $!
+# Zombie: the subshell starts `sleep 1`, then becomes `sleep 60` (exec), which never waits for it
+$ (sleep 1 & exec sleep 60) &
+$ sleep 2; ps -o pid,ppid,stat,comm --ppid $!
   PID  PPID STAT COMMAND
- 5122  5121 Z    python3 <defunct>
+ 5122  5121 Z    sleep <defunct>
 
-# Orphan: the parent exits immediately, the child lives on
-$ python3 -c 'import os,time
-if os.fork()==0: time.sleep(60)' ; sleep 1
-$ ps -o pid,ppid,comm -C python3
+# Orphan: the subshell exits at once; its background child lives on
+$ (sleep 60 &) ; sleep 1
+$ ps -o pid,ppid,comm -C sleep
   PID  PPID COMMAND
- 5210     1 python3        <- adopted by PID 1 (or a subreaper like systemd --user)
+ 5210     1 sleep          <- adopted by PID 1 (or a subreaper like systemd --user)
 ```
+
+A Java parent can't leave zombies this way. The JDK's process-reaper thread calls `waitpid` for every `Process` it starts, even if you never call `waitFor()`. The trap is different: a JVM that runs as **PID 1 in a container** is not an init. Grandchildren orphaned by its children are re-parented to the JVM, which never waits for them, so they pile up as zombies.
 
 ## Visualization
 
@@ -236,6 +245,10 @@ The service spawns children but never reaps them, so each exited child stays a z
 
 Only the forking thread exists in the child, but all memory — including locks — is copied. A mutex held by another thread at fork time (malloc arena lock, logging lock) stays locked forever in the child, so the child deadlocks when it tries to take it. Other threads' in-progress work is silently lost. Safe practice: exec immediately, use only async-signal-safe calls before exec, use `pthread_atfork` handlers, or use `posix_spawn`.
 
+### [L2 · how] What happens in the operating system when Java code calls `new ProcessBuilder("ls").start()`?
+
+On Linux (JDK 12 and later) the JVM calls `posix_spawn`. glibc implements it with `clone(CLONE_VM | CLONE_VFORK)`, so the child borrows the JVM's memory instead of copying its page tables. The child immediately execs `jspawnhelper`, a small JDK program. The helper moves the right file descriptors onto 0, 1 and 2 with `dup2` (pipes back to the JVM, or files from `redirectOutput`), sets the working directory and environment, closes everything else, and execs `ls`. In the parent, a "process reaper" thread blocks in `waitpid` for the child and completes the `Process` object's exit status. The design avoids `fork`: copying the page tables of a multi-gigabyte heap is slow, and forking a multithreaded program can deadlock the child.
+
 ### [L4 · incident] Redis memory usage doubles during background saves and the kernel OOM-kills it. Explain and propose fixes.
 
 `BGSAVE` forks a child to write the snapshot. Parent and child share pages copy-on-write. Under a write-heavy workload, the parent modifies many pages during the save, each triggering a private copy; in the worst case every page is copied, doubling resident memory. Transparent huge pages make it worse (a one-byte write copies 2 MB). Fixes: leave headroom (maxmemory well below RAM), disable THP, set `vm.overcommit_memory=1` as Redis recommends so fork isn't refused, schedule saves at low-write times, use replicas for persistence, or use AOF with less frequent rewrites.
@@ -255,7 +268,30 @@ After 3 forks there are 2³ = 8 processes in total, so **7** are new.
 - [ ] They are re-parented to init
 - [ ] The parent is killed
 
-POSIX specifies that explicitly ignoring SIGCHLD causes terminated children to be discarded immediately.
+POSIX specifies that explicitly ignoring SIGCHLD causes terminated children to be discarded immediately. Step a process through every state, including Zombie, in the [process lifecycle lab](lab:process-lifecycle).
+
+### [numeric 15] A C program runs `for (int i = 0; i < 4; i++) fork();` with no other process creation. How many new processes are created?
+
+:::answer
+Every process alive at the start of an iteration forks once, so the count doubles each time: 1 → 2 → 4 → 8 → 16 processes. Excluding the original, **15** are new (2⁴ − 1).
+:::
+
+### [mcq] A Java program starts a report generator with `ProcessBuilder("report").start()` and then calls `waitFor()` without reading the child's output. With a small report it works; with a large one it hangs forever. Why?
+
+- [ ] `waitFor()` cannot be called before the child has written its output
+- [x] The child blocks writing to the full stdout pipe, while the parent waits for the child to exit, so neither makes progress
+- [ ] The JVM's process reaper thread has crashed
+- [ ] The child became a zombie because the parent never called `exec`
+
+By default the child's stdout is a pipe back to the JVM, and a Linux pipe holds 64 KiB. Once it is full, the child's `write` blocks until someone reads. The parent is stuck in `waitFor()`, which is a deadlock between two processes. Read the output on another thread, or use `redirectOutput(file)` or `inheritIO()`.
+
+### [exercise] A Spring Boot service runs as PID 1 in a Docker container and calls ImageMagick's `convert` with `ProcessBuilder`. `convert` starts its own helper processes. After a week, `ps` inside the container shows hundreds of `<defunct>` entries and new processes fail to start. Explain the cause and fix it.
+
+:::solution
+When `convert` exits before one of its helpers, the helper is orphaned and re-parented to PID 1 — here the JVM. When the helper exits, it becomes a zombie that only its new parent can reap. The JVM's reaper thread only waits for the PIDs it started itself, so it never reaps these, and each zombie holds a PID until the container's `pids.max` (or the system limit) is reached. Then `fork` and `posix_spawn` fail with `EAGAIN`.
+
+Fix: run a real init as PID 1 that reaps every orphan and forwards signals, with `docker run --init` or `ENTRYPOINT ["tini", "--", "java", "-jar", "app.jar"]`. The JVM then runs as a normal child.
+:::
 
 ### [exercise] Write the sequence of system calls a shell uses to run `cat file.txt | wc -l`.
 
@@ -271,6 +307,7 @@ The easily forgotten step is closing unused pipe ends — a common source of han
 ## Quick Revision
 
 - `fork()`: duplicate; returns child PID to parent, 0 to child. `exec()`: replace program, same PID. `wait()`: reap.
+- Java's `ProcessBuilder.start()` = `posix_spawn` (clone with `CLONE_VFORK`) + `dup2` + `execve`; a reaper thread does the `waitpid`. Drain the child's output or it can block on a full pipe.
 - `n` sequential forks → `2ⁿ` processes (`2ⁿ − 1` new).
 - **COW**: copy page tables, share pages read-only, copy a page on first write.
 - **Zombie** = exited, not reaped (holds a PID). **Orphan** = parent gone, adopted by PID 1.

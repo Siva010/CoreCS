@@ -11,7 +11,7 @@ relevance: high
 stage: 3
 prerequisites: [os-filesystem-internals, os-page-replacement]
 related: [os-journaling, os-cow-mmap, db-buffer-pool, x-caching-everywhere, x-durability-chain]
-tags: [page cache, buffer cache, writeback, dirty pages, read-ahead, o_direct, double buffering, sendfile, drop_caches, dirty_ratio, memavailable]
+tags: [page cache, buffer cache, writeback, dirty pages, read-ahead, o_direct, double buffering, sendfile, drop_caches, dirty_ratio, memavailable, transferTo, ExtendedOpenOption.DIRECT]
 ---
 
 ## Mental Model
@@ -79,12 +79,25 @@ Page-cache pages are reclaimed under memory pressure using the kernel's LRU appr
 
 `mmap` maps page-cache pages directly into the process ([Copy-on-Write & mmap](lesson:os-cow-mmap)); `read()` copies from them; `sendfile()` sends them to a socket without a user-space copy. All three see one coherent cache, so a `write()` by one process is immediately visible to another process that has the file mmap'd.
 
+In Java, `FileChannel.transferTo` uses `sendfile` on Linux when the target is a socket, so file bytes go from the page cache to the network without passing through the Java heap. Kafka serves consumers this way:
+
+```java
+try (FileChannel segment = FileChannel.open(Path.of("00000000000000000000.log"), StandardOpenOption.READ)) {
+    long position = 0, size = segment.size();
+    while (position < size) {
+        position += segment.transferTo(position, size - position, socketChannel);   // sendfile(2)
+    }
+}
+```
+
 ### Double buffering and O_DIRECT
 
-A conflict between two caches that each make sense alone. A database with its own buffer pool that reads through the page cache ends up with the same page cached **twice**: once in the DB's buffer pool and once in the page cache — wasting RAM and adding a memory copy. Options:
+A conflict between two caches that each make sense alone. A database with its own buffer pool that reads through the page cache ends up with the same page cached **twice**: once in its buffer pool and once in the page cache. That wastes RAM and adds a memory copy. Options:
 
 - **O_DIRECT** (InnoDB `innodb_flush_method=O_DIRECT`, most commercial databases): bypass the page cache; the DB's buffer pool is the only cache and gets most of the RAM. Requires aligned buffers and makes the DB responsible for read-ahead and write batching.
 - **Buffered I/O** (PostgreSQL's traditional approach): a modest `shared_buffers` (often ~25% of RAM) plus the OS page cache as a second-level cache. Simpler, relies on the kernel's read-ahead and writeback; costs double buffering. (PostgreSQL has been adding asynchronous and direct I/O support in recent releases.)
+
+Java can open a file with `O_DIRECT` too, since JDK 10: `FileChannel.open(path, StandardOpenOption.READ, ExtendedOpenOption.DIRECT)`. As in C, the buffer address, file position and transfer size must be multiples of the device's block size (`Files.getFileStore(path).getBlockSize()`), so in practice it's for engines that run their own cache.
 
 :::depth{level=advanced}
 ### Writeback stalls and latency
@@ -166,6 +179,10 @@ The kernel copies the data into page-cache pages, marks them dirty, updates the 
 
 To avoid double buffering (the same pages cached in both the DB's buffer pool and the OS page cache), to give the buffer pool most of the RAM, and to control I/O timing, ordering and read-ahead itself — at the cost of implementing caching and prefetching in the database and requiring aligned I/O.
 
+### [L2 · how] How does Kafka, a JVM application, serve hundreds of MB/s to consumers without a huge heap?
+
+It lets the kernel do the work. Producers' writes go into the page cache through ordinary buffered file writes (Kafka doesn't fsync each message; it relies on replication for durability). Consumers usually read recent data, which is still in the page cache. To send it, Kafka calls `FileChannel.transferTo`, which uses `sendfile` on Linux: the kernel moves bytes from page-cache pages to the socket, never copying them into the JVM. The heap stays small, GC has little to do, and the cache is whatever RAM the OS has free. (With TLS, the data must be encrypted in user space, so that zero-copy path is lost.)
+
 ### [L3 · debugging] free shows 500 MB free on a 64 GB server and the team wants to add RAM. What do you check?
 
 The `available` column/MemAvailable (page cache counts as reclaimable), PSI memory pressure, major page faults, swap activity, and cgroup OOM events. If available memory is high and there's no pressure, the "used" memory is mostly cache doing its job — no RAM needed. Add RAM only if the working set doesn't fit (sustained major faults, pressure, OOMs).
@@ -194,6 +211,39 @@ MemAvailable estimates reclaimable cache plus free memory.
 
 The page cache is the single coherent copy.
 
+### [numeric 12.8 unit=GB] A server has 64 GB of available memory and `vm.dirty_ratio` = 20. Roughly how much dirty data can accumulate before processes calling `write()` start being throttled?
+
+:::answer
+20% × 64 GB = **12.8** GB. On big-memory machines that is a lot of unwritten data: at 500 MB/s it takes about 26 seconds to flush, which is why such hosts often set smaller absolute limits (`vm.dirty_bytes`).
+:::
+
+### [numeric 26 ±1 unit=s] The disk behind that server writes at 500 MB/s. About how long does it take to flush 12.8 GB of dirty pages?
+
+:::answer
+12.8 GB / 0.5 GB/s = 25.6 ≈ **26** seconds. Any thread that writes during that time may be throttled, and an `fsync` issued then may have to wait behind the backlog.
+:::
+
+### [mcq] A Java file server sends large files with `FileChannel.transferTo(position, count, socketChannel)`. What does this avoid compared with reading into a `byte[]` and writing it to the socket?
+
+- [ ] It avoids the page cache entirely
+- [x] Copying the data into the Java heap and back out: on Linux the kernel moves it from the page cache to the socket with `sendfile`
+- [ ] It avoids TCP's congestion control
+- [ ] It makes the transfer durable
+
+With a `byte[]` the data crosses the kernel boundary twice: page cache → heap on `read`, heap → socket buffer on `write`. `transferTo` keeps it in the kernel, saving CPU and memory bandwidth and creating no garbage.
+
+### [exercise] A colleague benchmarks a Java log parser on a 4 GB file: the first run takes 9.8 s, the next three take about 0.6 s, and they report "0.6 s". What is wrong with the measurement, and how would you measure properly?
+
+:::solution
+After the first run, the whole file is in the page cache, so later runs never touch the disk: 0.6 s is the parser's speed on RAM-resident data, while 9.8 s includes reading 4 GB from the device. In production the file may or may not be cached, so neither number alone is "the" answer.
+
+Measure both, deliberately:
+- **Cold**: on a test machine, flush the cache between runs (`sync; echo 3 > /proc/sys/vm/drop_caches`), or use a fresh file larger than RAM. Check with `fincore file.log` that it isn't cached.
+- **Warm**: run once to load the cache, then measure several runs (and use JMH-style warm-up for the JIT as well).
+
+Report both numbers. If production files are usually fresh, the cold number is the one that matters, and the parser is I/O-bound: making the parsing code faster would barely help.
+:::
+
 ## Quick Revision
 
 - Page cache = file pages in RAM (unified with the old buffer cache); uses free memory; reclaimable.
@@ -202,3 +252,4 @@ The page cache is the single coherent copy.
 - `MemAvailable`, not `MemFree`.
 - DBs: buffered I/O (double buffering) vs **O_DIRECT** (own cache).
 - Pollution from big scans → `fadvise DONTNEED`/O_DIRECT; writeback stalls → tune dirty bytes.
+- Java: `FileChannel.transferTo` = sendfile (Kafka's zero-copy path); `ExtendedOpenOption.DIRECT` = O_DIRECT (aligned I/O).

@@ -655,11 +655,18 @@ export async function renderLesson(id: string): Promise<RenderedLesson | null> {
   const rec = getLessonRecord(id);
   if (!rec) return null;
   const r = renderer();
-  // Database lessons get hover definitions for jargon on its first use (content/glossary.ts).
+  // Database and OS lessons get hover definitions for jargon on its first use (content/glossary.ts).
+  // A term applies only within its own subject: "page" means different things in the two tracks.
   const prose = rec.sections.filter((s) => s.key !== "interview-questions" && s.key !== "practice");
+  const lessons = load().lessonsById;
   const marked =
-    rec.meta.subject === "db"
-      ? applyGlossary([rec.intro, ...prose.map((s) => s.nodes)], id, (lessonId) => load().lessonsById.get(lessonId)?.meta.href)
+    rec.meta.subject === "db" || rec.meta.subject === "os"
+      ? applyGlossary(
+          [rec.intro, ...prose.map((s) => s.nodes)],
+          id,
+          (lessonId) => lessons.get(lessonId)?.meta.href,
+          (entry) => lessons.get(entry.lesson)?.meta.subject === rec.meta.subject,
+        )
       : [rec.intro, ...prose.map((s) => s.nodes)];
   const sections: RenderedSection[] = [];
   for (const s of rec.sections) {

@@ -1,8 +1,9 @@
-// Plain-language definitions for database jargon. In database lessons, the
-// first plain-text use of each term (outside code, links and headings) gets a
-// dotted underline with this definition on hover or tap, linking to the lesson
-// that explains it. A lesson that defines the term itself (its `lesson`, or any
-// lesson where the term appears in bold) is left alone.
+// Plain-language definitions for database and operating-system jargon. In
+// database and OS lessons, the first plain-text use of each term (outside code,
+// links and headings) gets a dotted underline with this definition on hover or
+// tap, linking to the lesson that explains it. A term applies only to lessons of
+// its own subject (the subject of its `lesson`). A lesson that defines the term
+// itself (its `lesson`, or any lesson where the term appears in bold) is left alone.
 //
 // Keep definitions short (≤ ~30 words) and free of other jargon where possible.
 // Acronyms (all capitals) match case-sensitively; everything else ignores case.
@@ -139,4 +140,137 @@ export const GLOSSARY: GlossaryEntry[] = [
   { term: "fact table", def: "A warehouse table with one row per measured event (a sale, a click), holding the numbers and keys to its dimensions.", lesson: "db-data-warehousing" },
   { term: "dimension table", def: "A warehouse table of descriptive attributes (product, customer, date) used to filter and group the facts.", lesson: "db-data-warehousing" },
   { term: "CDC", aliases: ["change data capture"], def: "Change data capture: streaming every insert, update and delete out of a database, usually by reading its log.", lesson: "db-data-warehousing" },
+
+  // ══════════════════ Operating systems ══════════════════
+
+  // ── Foundations ──
+  { term: "kernel", def: "The core of the OS, running with full hardware privilege: it schedules programs, manages memory and talks to devices for them.", lesson: "os-what-an-os-does" },
+  { term: "user mode", aliases: ["user space"], def: "The CPU's restricted mode where applications run: no privileged instructions, and memory limited to the process's own pages.", lesson: "os-what-an-os-does" },
+  { term: "kernel mode", def: "The CPU's privileged mode, used only by kernel code: every instruction and all of memory are allowed.", lesson: "os-what-an-os-does" },
+  { term: "system call", aliases: ["syscall"], def: "A request from a program to the kernel (read a file, open a socket), made with a special instruction that switches the CPU into kernel mode.", lesson: "os-syscalls-interrupts" },
+  { term: "interrupt", def: "A hardware signal from a device or the timer that makes the CPU pause what it's doing and run a kernel handler.", lesson: "os-syscalls-interrupts", exclude: ["os-signals", "os-threads", "os-atomic-instructions"] },
+  { term: "vDSO", def: "A tiny library the kernel maps into every process, so calls like clock_gettime run without entering the kernel.", lesson: "os-syscalls-interrupts" },
+  { term: "DMA", def: "Direct memory access: a device copies data to or from RAM by itself and interrupts the CPU only when the transfer is done.", lesson: "os-hardware-model" },
+  { term: "cache line", def: "The 64-byte chunk in which data moves between RAM and the CPU caches. Reading one byte loads its whole line.", lesson: "os-hardware-model" },
+  { term: "locality", def: "Programs tend to reuse recently used data (temporal) and data next to it (spatial). It's why caches work.", lesson: "os-hardware-model" },
+  { term: "ELF", def: "The Linux executable file format: its headers tell the loader which parts to map as code and data and where to start.", lesson: "os-program-execution" },
+  { term: "dynamic linking", def: "Loading shared libraries such as libc when a program starts, instead of copying them into every executable.", lesson: "os-program-execution" },
+  { term: "JIT compiler", aliases: ["JIT"], def: "The part of the JVM that compiles frequently run bytecode into machine code while the program runs.", lesson: "os-program-execution" },
+
+  // ── Processes ──
+  { term: "process", def: "A running program: its own address space, open files and at least one thread, tracked by the kernel.", lesson: "os-processes", exclude: ["os-concurrency-vs-parallelism", "os-hugepages-numa"] },
+  { term: "PCB", aliases: ["process control block"], def: "The kernel's record for a process: state, saved registers, memory map, open files, scheduling data and credentials.", lesson: "os-processes" },
+  { term: "PID", def: "Process ID: the number the kernel uses to identify a process.", lesson: "os-processes" },
+  { term: "fork", def: "The Unix call that creates a child process as a near-copy of its parent; both continue from the same point.", lesson: "os-process-creation", exclude: ["os-classic-sync-problems"] },
+  { term: "zombie", def: "A process that has exited but whose parent hasn't collected its exit status; it still holds a PID.", lesson: "os-process-creation" },
+  { term: "orphan", def: "A process whose parent exited first. The kernel re-parents it to PID 1, which will clean it up.", lesson: "os-process-creation" },
+  { term: "signal", def: "A small numbered notification the kernel delivers to a process (Ctrl+C, a child exited, please stop); it can be handled, ignored, or kill the process.", lesson: "os-signals", only: ["os-process-creation", "os-processes", "os-ipc", "os-what-an-os-does", "os-virtualization-containers", "os-program-execution"] },
+  { term: "SIGTERM", def: "The polite termination signal: the process may catch it, clean up and exit. Orchestrators send it first.", lesson: "os-signals" },
+  { term: "SIGKILL", def: "The signal that can't be caught or ignored: the kernel ends the process at once, with no cleanup.", lesson: "os-signals" },
+  { term: "context switch", def: "The kernel saving one thread's CPU state and restoring another's, so a different thread runs on that core.", lesson: "os-context-switch" },
+  { term: "IPC", def: "Inter-process communication: ways for separate processes to exchange data, such as pipes, sockets and shared memory.", lesson: "os-ipc", exclude: ["os-hardware-model", "os-cpu-caches-contention"] },
+  { term: "pipe", def: "A one-way kernel buffer between processes: one writes bytes in, the other reads them out.", lesson: "os-ipc", exclude: ["os-what-an-os-does"] },
+  { term: "shared memory", def: "Physical memory mapped into several processes at once, so they exchange data without copying it through the kernel.", lesson: "os-ipc", exclude: ["os-hugepages-numa"] },
+
+  // ── Threads and synchronization ──
+  { term: "thread", def: "One flow of execution inside a process: its own registers and stack, sharing the process's memory and files.", lesson: "os-threads" },
+  { term: "virtual thread", def: "A Java thread scheduled by the JVM rather than the kernel. Many share a few kernel threads, and blocking parks one cheaply.", lesson: "os-threads" },
+  { term: "thread pool", def: "A fixed set of reusable worker threads taking tasks from a queue, which bounds concurrency and avoids creating threads per task.", lesson: "os-thread-pools" },
+  { term: "backpressure", def: "Slowing a producer down when the consumer can't keep up, instead of buffering without limit.", lesson: "os-thread-pools" },
+  { term: "race condition", def: "A bug where the result depends on thread timing you don't control, such as two threads updating one counter at once.", lesson: "os-race-conditions" },
+  { term: "data race", def: "Two threads accessing the same memory at once, at least one writing, with nothing ordering them.", lesson: "os-race-conditions" },
+  { term: "happens-before", def: "The memory-model rule that guarantees one thread sees another's writes, such as an unlock before a later lock of the same lock.", lesson: "os-race-conditions" },
+  { term: "memory barrier", def: "An instruction that stops the CPU and compiler from moving memory reads and writes across it.", lesson: "os-race-conditions" },
+  { term: "critical section", def: "Code that touches shared data and must not run in two threads at the same time.", lesson: "os-critical-section-problem" },
+  { term: "busy waiting", aliases: ["busy-waiting"], def: "Waiting by looping and re-checking a condition, which keeps a CPU busy instead of sleeping.", lesson: "os-critical-section-problem" },
+  { term: "mutex", def: "A lock with an owner: one thread holds it at a time, and the others wait until it is released.", lesson: "os-sync-primitives" },
+  { term: "spinlock", def: "A lock whose waiters keep checking it in a loop instead of sleeping. Good only when it's held very briefly.", lesson: "os-sync-primitives" },
+  { term: "condition variable", def: "A place where a thread sleeps, holding no lock, until another thread signals that shared data may have changed. Always used with a lock.", lesson: "os-sync-primitives" },
+  { term: "futex", def: "The Linux primitive under most locks: an uncontended lock or unlock is one atomic instruction, and the kernel is called only to sleep or wake.", lesson: "os-sync-primitives" },
+  { term: "priority inversion", def: "A high-priority task waits for a lock held by a low-priority task, which is itself held up by medium-priority work.", lesson: "os-sync-primitives" },
+  { term: "semaphore", def: "A counter threads can wait on: acquiring takes a permit (waiting at zero), releasing returns one.", lesson: "os-semaphores-monitors" },
+  { term: "monitor", def: "An object whose methods run one thread at a time, with condition variables for waiting, as in Java's synchronized with wait and notify.", lesson: "os-semaphores-monitors", only: ["os-sync-primitives", "os-classic-sync-problems", "os-race-conditions", "os-critical-section-problem", "os-atomic-instructions", "os-deadlocks", "os-threads"] },
+  { term: "atomic instruction", aliases: ["atomic operation"], def: "A CPU instruction that reads and writes memory as one indivisible step, such as compare-and-swap or fetch-and-add.", lesson: "os-atomic-instructions" },
+  { term: "compare-and-swap", aliases: ["CAS"], def: "An atomic instruction: change a value from A to B only if it still holds A; otherwise report failure. The basis of lock-free code.", lesson: "os-atomic-instructions" },
+  { term: "deadlock", def: "Threads each holding something and waiting for something another one holds, in a cycle, so none can ever continue.", lesson: "os-deadlocks" },
+  { term: "livelock", def: "Threads keep acting, such as retrying and backing off, but never make progress.", lesson: "os-deadlocks" },
+  { term: "Coffman conditions", def: "The four conditions a deadlock needs at once: mutual exclusion, hold and wait, no preemption, and circular wait.", lesson: "os-deadlocks" },
+  { term: "safe state", def: "A state in which some order exists that lets every process get its maximum needs and finish, so deadlock can still be avoided.", lesson: "os-deadlock-handling" },
+  { term: "Banker's algorithm", def: "Deadlock avoidance that grants a request only if the system stays in a safe state afterwards.", lesson: "os-deadlock-handling" },
+
+  // ── Scheduling ──
+  { term: "scheduler", def: "The kernel code that decides which ready thread runs next on each CPU, and for how long.", lesson: "os-scheduling-basics", exclude: ["os-what-an-os-does", "os-storage-devices", "os-cpu-caches-contention"] },
+  { term: "preemption", aliases: ["preemptive"], def: "Taking the CPU away from a running thread, usually when its time slice ends or a more urgent thread wakes up.", lesson: "os-scheduling-basics" },
+  { term: "time slice", aliases: ["quantum"], def: "How long a thread may run before the scheduler can switch to another, typically a few milliseconds.", lesson: "os-scheduling-basics" },
+  { term: "turnaround time", def: "Completion time minus arrival time: how long a job spends in the system in total.", lesson: "os-scheduling-basics" },
+  { term: "convoy effect", def: "Short jobs stuck behind one long job, as happens with first-come-first-served scheduling.", lesson: "os-scheduling-basics" },
+  { term: "starvation", def: "A process waits indefinitely because others are always chosen ahead of it.", lesson: "os-scheduling-algorithms" },
+  { term: "aging", def: "Raising a job's priority the longer it waits, so it can't starve.", lesson: "os-scheduling-algorithms" },
+  { term: "MLFQ", def: "Multilevel feedback queue: new jobs start at top priority and drop a level each time they use a full time slice.", lesson: "os-mlfq-real-schedulers" },
+  { term: "CFS", aliases: ["EEVDF"], def: "Linux's fair scheduler: it runs the task that has had the least CPU time relative to its weight.", lesson: "os-mlfq-real-schedulers" },
+  { term: "load average", def: "Linux's moving average of tasks that are runnable or in uninterruptible sleep. It is not CPU usage.", lesson: "os-performance-method" },
+
+  // ── Memory ──
+  { term: "virtual memory", def: "Each process gets its own private address space, translated by hardware to physical RAM, so processes are isolated and can map more than fits.", lesson: "os-address-spaces" },
+  { term: "address space", def: "The range of memory addresses a process can use. Each process has its own.", lesson: "os-address-spaces" },
+  { term: "ASLR", def: "Address space layout randomization: placing the stack, heap and libraries at random addresses each run, to make exploits harder.", lesson: "os-address-spaces" },
+  { term: "internal fragmentation", def: "Space wasted inside allocated blocks, because requests are rounded up to a block or size class.", lesson: "os-dynamic-allocation" },
+  { term: "external fragmentation", def: "Free memory split into holes that are each too small for a request, though together they would be enough.", lesson: "os-dynamic-allocation" },
+  { term: "garbage collector", aliases: ["garbage collection", "GC"], def: "The runtime part that finds objects nothing refers to any more and reclaims their memory automatically.", lesson: "os-dynamic-allocation", exclude: ["os-hardware-model", "os-storage-devices"] },
+  { term: "MMU", def: "The CPU unit that translates each virtual address to a physical one using the page tables, checking permissions as it goes.", lesson: "os-paging" },
+  { term: "page", def: "A fixed-size block of virtual memory, usually 4 KB: the unit the OS maps, loads and evicts.", lesson: "os-paging", exclude: ["os-storage-devices", "os-sync-primitives", "os-atomic-instructions", "os-filesystem-internals", "os-hugepages-numa", "os-profiling-observability", "os-performance-method"] },
+  { term: "frame", def: "A page-sized block of physical RAM that holds one page.", lesson: "os-paging", only: ["os-tlb", "os-page-faults", "os-page-replacement", "os-thrashing-working-set", "os-segmentation", "os-hugepages-numa", "os-cow-mmap", "os-dynamic-allocation"] },
+  { term: "page table", def: "The per-process map the MMU uses to translate virtual pages to physical frames, with permission bits for each page.", lesson: "os-paging" },
+  { term: "TLB", def: "Translation lookaside buffer: a small CPU cache of recent virtual-to-physical page translations.", lesson: "os-tlb" },
+  { term: "page fault", def: "The CPU trapping into the kernel because a page isn't mapped or doesn't allow the access. Usually the kernel just loads or maps it.", lesson: "os-page-faults" },
+  { term: "demand paging", def: "Loading a page into RAM only when the program first touches it, rather than loading everything up front.", lesson: "os-page-faults" },
+  { term: "working set", def: "The pages a process has used recently: an estimate of how much memory it needs right now.", lesson: "os-thrashing-working-set", exclude: ["os-hardware-model"] },
+  { term: "thrashing", def: "So much paging that the machine spends its time moving pages to and from disk instead of doing work.", lesson: "os-thrashing-working-set", exclude: ["os-mlfq-real-schedulers"] },
+  { term: "swap", aliases: ["swapping"], def: "Disk space where the kernel puts memory pages it needs to free. Reading them back is slow.", lesson: "os-thrashing-working-set", exclude: ["os-journaling", "os-scheduling-algorithms", "os-atomic-instructions", "os-critical-section-problem", "os-process-creation", "os-race-conditions", "os-sync-primitives", "os-dynamic-allocation", "os-java-memory-model"] },
+  { term: "OOM killer", def: "The kernel mechanism that kills a process, chosen mostly by memory size, when memory can't be freed any other way.", lesson: "os-thrashing-working-set" },
+  { term: "copy-on-write", aliases: ["COW"], def: "Sharing pages read-only and copying a page only when someone writes to it. It makes fork and snapshots cheap.", lesson: "os-cow-mmap", exclude: ["os-java-memory-model"] },
+  { term: "mmap", def: "The call that maps a file (or anonymous memory) into a process's address space, so it can be used like ordinary memory.", lesson: "os-cow-mmap" },
+  { term: "huge page", def: "A 2 MB or 1 GB page instead of 4 KB, so one TLB entry covers far more memory.", lesson: "os-hugepages-numa" },
+  { term: "NUMA", def: "A multi-socket design where each CPU socket has its own RAM; memory attached to another socket is slower to reach.", lesson: "os-hugepages-numa" },
+
+  // ── Storage and files ──
+  { term: "SSD", def: "A solid-state drive: flash memory with no moving parts. Fast random reads, but flash must be erased before it is rewritten.", lesson: "os-storage-devices" },
+  { term: "NVMe", def: "The interface for SSDs attached over PCIe, with many deep command queues for parallel I/O.", lesson: "os-storage-devices" },
+  { term: "IOPS", def: "I/O operations per second: how many separate reads or writes a storage device completes each second.", lesson: "os-storage-devices" },
+  { term: "FTL", def: "Flash translation layer: SSD firmware that maps logical blocks to flash pages, spreads wear and collects garbage.", lesson: "os-storage-devices" },
+  { term: "write amplification", def: "A device writing more data to flash than the host asked for, because garbage collection moves still-valid data.", lesson: "os-storage-devices" },
+  { term: "seek time", def: "How long a hard disk's arm takes to move to the right track: milliseconds for every random access.", lesson: "os-storage-devices" },
+  { term: "file descriptor", aliases: ["fd"], def: "A small integer a process uses to refer to an open file, socket or pipe: an index into its table of open files.", lesson: "os-file-descriptors" },
+  { term: "inode", def: "The on-disk record describing a file (owner, permissions, size, where its blocks are): everything except its name.", lesson: "os-filesystem-internals" },
+  { term: "hard link", def: "A second directory entry for the same inode: another name for the same file.", lesson: "os-filesystem-internals" },
+  { term: "symbolic link", aliases: ["symlink"], def: "A small file containing the path of another file. It breaks if the target is moved or deleted.", lesson: "os-filesystem-internals" },
+  { term: "fsync", def: "The call that makes a file's written data durable: it returns only once the data has reached stable storage.", lesson: "os-journaling" },
+  { term: "journaling", def: "Recording a change in a log before applying it to the real structures, so a crash can be recovered quickly.", lesson: "os-journaling" },
+  { term: "page cache", def: "Kernel memory holding recently used file contents, so reads can skip the disk and writes can be batched.", lesson: "os-page-cache" },
+  { term: "dirty page", def: "A cached page that was changed in memory but not yet written back to disk.", lesson: "os-page-cache" },
+  { term: "writeback", def: "The kernel flushing dirty pages to disk in the background.", lesson: "os-page-cache" },
+  { term: "read-ahead", def: "The kernel reading the next parts of a file before they're requested, when access looks sequential.", lesson: "os-page-cache" },
+  { term: "RAID", def: "Combining several disks into one for speed (striping), safety (mirroring or parity), or both.", lesson: "os-raid" },
+
+  // ── I/O, performance and isolation ──
+  { term: "non-blocking I/O", def: "I/O calls that return at once if they can't proceed, so one thread can serve many connections.", lesson: "os-io-models" },
+  { term: "io_uring", def: "Linux's asynchronous I/O interface: requests and results pass through rings shared with the kernel, with few system calls.", lesson: "os-io-models" },
+  { term: "epoll", def: "Linux's scalable way to wait on many sockets at once: it returns only the ones that are ready.", lesson: "os-epoll-event-loops" },
+  { term: "event loop", def: "One thread that repeatedly waits for ready connections and runs a short handler for each. It must never block.", lesson: "os-epoll-event-loops" },
+  { term: "Little's Law", def: "Items in a system = arrival rate × time each spends there (L = λW). Used to size pools and concurrency.", lesson: "os-performance-method" },
+  { term: "false sharing", def: "Threads writing different variables that sit on the same cache line, so the line bounces between cores.", lesson: "os-cpu-caches-contention" },
+  { term: "flame graph", def: "A picture of profiler samples: each box is a function, and its width shows how often it was on the stack.", lesson: "os-profiling-observability" },
+  { term: "eBPF", def: "A way to run small, verified programs inside the Linux kernel to trace and measure events cheaply.", lesson: "os-profiling-observability" },
+  { term: "cgroup", def: "A Linux control group: it limits and accounts the CPU, memory and I/O a group of processes may use. Containers are built on cgroups.", lesson: "os-virtualization-containers" },
+  { term: "namespace", def: "A Linux feature giving processes their own view of something global, such as process IDs, network interfaces or mounts.", lesson: "os-virtualization-containers" },
+  { term: "container", def: "A process isolated with namespaces and limited with cgroups, sharing the host's kernel.", lesson: "os-virtualization-containers", exclude: ["os-program-execution"] },
+  { term: "hypervisor", def: "Software that runs virtual machines, giving each its own virtual CPUs, memory and devices.", lesson: "os-virtualization-containers" },
+
+  // ── The JVM and security ──
+  { term: "safepoint", def: "A moment when every Java thread is stopped at a known point, so the JVM can safely do work such as some garbage-collection phases.", lesson: "os-jvm-on-linux" },
+  { term: "RSS", aliases: ["resident set size"], def: "The part of a process's memory actually in RAM right now. Container memory limits and the OOM killer act on it.", lesson: "os-jvm-on-linux", exclude: ["os-syscalls-interrupts", "os-hardware-model"] },
+  { term: "setuid", def: "A permission bit that makes a program run with its file owner's user ID (often root), whoever starts it.", lesson: "os-protection-security" },
+  { term: "ACL", aliases: ["access control list"], def: "A list stored with an object saying which users or groups may do what to it.", lesson: "os-protection-security" },
+  { term: "seccomp", def: "A Linux filter limiting which system calls a process may make; containers use it to block risky ones.", lesson: "os-protection-security" },
+  { term: "least privilege", aliases: ["principle of least privilege"], def: "Giving each program only the rights it needs, for only as long as it needs them.", lesson: "os-protection-security" },
 ];

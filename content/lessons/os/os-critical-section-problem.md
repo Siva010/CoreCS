@@ -12,7 +12,7 @@ stage: 2
 prerequisites: [os-race-conditions]
 related: [os-atomic-instructions, os-semaphores-monitors, os-sync-primitives]
 visualizations: [race-condition]
-tags: [critical section, mutual exclusion, progress, bounded waiting, peterson's algorithm, dekker, busy waiting, entry section, exit section]
+tags: [critical section, mutual exclusion, progress, bounded waiting, peterson's algorithm, dekker, busy waiting, entry section, exit section, ticket lock, volatile]
 ---
 
 ## Mental Model
@@ -60,14 +60,16 @@ A lock has to do three things: keep a second thread out, let someone in when it'
 
 ## How It Works
 
+The attempts below are in Java, and every shared variable is `volatile` (or an `AtomicIntegerArray`, whose `get` and `set` behave like volatile accesses). That removes visibility and reordering problems, so the only bugs left are logic bugs.
+
 ### Attempt 1: a shared turn variable
 
-```c
-int turn = 0;                 // whose turn: 0 or 1
-// process i (other is j = 1 - i)
-while (turn != i) ;           // entry: wait for my turn
+```java
+volatile int turn = 0;              // whose turn: 0 or 1
+// thread i (the other is j = 1 - i)
+while (turn != i) { }               // entry: wait for my turn
 /* critical section */
-turn = j;                     // exit: give turn away
+turn = j;                           // exit: give the turn away
 ```
 
 - Mutual exclusion ✔ — only the process whose turn it is may enter.
@@ -75,13 +77,13 @@ turn = j;                     // exit: give turn away
 
 ### Attempt 2: interest flags
 
-```c
-bool flag[2] = {false, false};
-// process i
-flag[i] = true;               // I want in
-while (flag[j]) ;             // wait while the other wants in
+```java
+AtomicIntegerArray flag = new AtomicIntegerArray(2);   // both start at 0
+// thread i
+flag.set(i, 1);                     // I want in
+while (flag.get(j) == 1) { }        // wait while the other wants in
 /* critical section */
-flag[i] = false;
+flag.set(i, 0);
 ```
 
 - Mutual exclusion ✔.
@@ -93,19 +95,44 @@ flag[i] = false;
 
 Combine both ideas: express interest, then **politely give the turn to the other**.
 
-```c
-bool flag[2] = {false, false};
-int  turn;
-// process i, other j = 1 - i
-flag[i] = true;               // I'm interested
-turn = j;                     // but you go first if you want
-while (flag[j] && turn == j)  // wait only if you want in AND it's your turn
-    ;
-/* critical section */
-flag[i] = false;              // I'm done
+```java
+class PetersonLock {
+    private final AtomicIntegerArray flag = new AtomicIntegerArray(2);
+    private volatile int turn;
+
+    void lock(int i) {                          // i is 0 or 1
+        int j = 1 - i;
+        flag.set(i, 1);                         // I'm interested
+        turn = j;                               // but you go first if you want
+        while (flag.get(j) == 1 && turn == j) { // wait only if you want in AND it's your turn
+            Thread.onSpinWait();                // hint to the CPU that this is a spin loop
+        }
+    }
+
+    void unlock(int i) {
+        flag.set(i, 0);                         // I'm done
+    }
+}
 ```
 
-**Mutual exclusion**: suppose both are in the critical section. Then each saw either `flag[other] == false` or `turn == self`. Both flags are true (each set its own before the loop), so each must have seen `turn == self` — but `turn` has one value; whoever wrote `turn` last gave it to the other, so that process could not have seen `turn == self`. Contradiction.
+When both threads want in at the same moment, whoever writes `turn` last waits:
+
+```mermaid
+sequenceDiagram
+    participant P0
+    participant M as flag[] and turn
+    participant P1
+    P0->>M: flag[0] = 1
+    P1->>M: flag[1] = 1
+    P0->>M: turn = 1
+    P1->>M: turn = 0 (written last)
+    Note over P0: turn is 0, so enter
+    Note over P1: turn is 0, so wait
+    P0->>M: unlock: flag[0] = 0
+    Note over P1: flag[0] is 0, so enter
+```
+
+**Mutual exclusion**: suppose both are in the critical section. Then each saw either `flag[other] == false` or `turn == self`. Both flags are true, because each set its own before the loop, so each must have seen `turn == self`. But `turn` holds one value. Whoever wrote `turn` last gave it to the other, so that process could not have seen `turn == self`. Contradiction.
 
 **Progress**: if only P0 wants in, `flag[1]` is false and P0 enters immediately. If both want in, `turn` holds one value, so exactly one of them exits its loop.
 
@@ -115,9 +142,11 @@ flag[i] = false;              // I'm done
 
 ### Why Peterson's algorithm fails on modern hardware
 
-A correct proof can still fail in practice if it assumes something the hardware doesn't promise. Peterson's proof assumes **sequential consistency**: every process sees reads and writes in program order, interleaved. Real CPUs don't provide that by default ([Race Conditions](lesson:os-race-conditions)). On x86, a core's store to `flag[i]` can sit in its **store buffer** while its subsequent load of `flag[j]` reads memory — both processes can read the other's flag as `false` and both enter the critical section. Compilers may also reorder or cache the loads.
+A correct proof can still fail in practice if it assumes something the hardware doesn't promise. Peterson's proof assumes **sequential consistency**: every process sees reads and writes in program order, interleaved. Real CPUs don't provide that by default ([Race Conditions](lesson:os-race-conditions)). On x86, a core's store to `flag[i]` can sit in its **store buffer** while its next load, of `flag[j]`, reads memory. Both processes can then read the other's flag as `false`, and both enter the critical section. Compilers may also reorder or cache the loads.
 
 Fix: insert a full **memory barrier** (`atomic_thread_fence(memory_order_seq_cst)`) after the writes, or declare the variables as sequentially-consistent atomics. At that point you're relying on hardware support anyway — so practical locks use atomic read-modify-write instructions directly ([Atomic Instructions](lesson:os-atomic-instructions)).
+
+That's why the Java version above works and a version with plain `int` and `boolean` fields doesn't. The Java memory model puts all volatile reads and writes into one global order that respects each thread's program order, so the JIT inserts the barriers Peterson's proof needs. Remove `volatile`, and the store-buffer interleaving above lets both threads in.
 
 Peterson also only works for **two** processes (generalizations like the filter lock and Lamport's bakery algorithm exist for N) and **busy-waits**.
 
@@ -138,15 +167,27 @@ The lesson of Peterson and Bakery: doing this with plain reads and writes is pos
 
 Checking a proposed lock against the requirements is a classic interview exercise:
 
-```c
-// Proposed: lock = 0 means free
-while (lock == 1) ;   // wait
-lock = 1;             // take it
+```java
+// Proposed: false means free
+volatile boolean locked = false;
+
+while (locked) { }      // wait
+locked = true;          // take it
 /* critical section */
-lock = 0;
+locked = false;
 ```
 
-Fails mutual exclusion: both threads can read `lock == 0` before either writes 1 (check-then-act). The fix is to make "test and set" a single atomic instruction.
+Fails mutual exclusion: both threads can read `locked == false` before either writes `true` (check-then-act). `volatile` doesn't help, because the check and the write are still two steps. The fix is to make "test and set" a single atomic instruction:
+
+```java
+AtomicBoolean locked = new AtomicBoolean(false);
+
+while (!locked.compareAndSet(false, true)) {   // test and set in one atomic step
+    Thread.onSpinWait();
+}
+/* critical section */
+locked.set(false);
+```
 
 ## Visualization
 
@@ -240,6 +281,40 @@ A process not interested in entering can block the other from entering twice in 
 
 Each waits for the other to lower its flag.
 
+### [mcq] Peterson's algorithm is written in Java with plain `int turn` and `boolean[] flag` fields, with no `volatile` and no atomics. What can happen on a multicore machine?
+
+- [ ] Nothing; the algorithm is proven correct
+- [x] Both threads can enter the critical section, because each thread's write can be reordered after its read of the other's flag
+- [ ] It can only deadlock, never let both in
+- [ ] It fails to compile
+
+Peterson's proof assumes sequential consistency. Without `volatile`, the JIT and the CPU's store buffer may let each thread read the other's flag as false. Making `turn` volatile and the flags volatile (an `AtomicIntegerArray`) restores the guarantee. Explore check-then-act interleavings in the [race condition lab](lab:race-condition).
+
+### [numeric 1] In Peterson's algorithm, P0 is waiting to enter. How many times at most can P1 enter its critical section before P0 gets in?
+
+:::answer
+At most **1**. If P1 leaves and immediately tries again, it sets `turn = 0` on the way in, giving priority to P0, and then waits. That is Peterson's bounded-waiting guarantee.
+:::
+
+### [numeric 5] A ticket lock holds `nextTicket = 17` and `nowServing = 12`. A new thread takes a ticket. How many lock holders must finish before it can enter?
+
+:::answer
+It gets ticket 17. The holders of tickets 12, 13, 14, 15 and 16 go first: 17 − 12 = **5**. Tickets are served strictly in order, which is how a ticket lock guarantees bounded waiting.
+:::
+
+### [exercise] A student "simplifies" Peterson's algorithm by swapping the first two lines of `lock()`: `turn = j; flag.set(i, 1); while (flag.get(j) == 1 && turn == j) { }`. Which requirement breaks? Give an interleaving that shows it.
+
+:::solution
+Mutual exclusion breaks. One interleaving, starting with both flags 0:
+
+1. P0: `turn = 1`
+2. P1: `turn = 0`
+3. P1: `flag[1] = 1`, then checks `flag[0] == 1`: it is 0, so P1 **enters**.
+4. P0: `flag[0] = 1`, then checks `flag[1] == 1 && turn == 1`: `turn` is 0, so P0 **enters** too.
+
+Both are inside. In the correct order, a thread announces interest *before* giving away the turn. Then whoever writes `turn` last has already made its flag visible to the other. Swapping the lines lets a thread give away the turn and still be invisible when the other checks.
+:::
+
 ## Quick Revision
 
 - Structure: entry → critical section → exit → remainder.
@@ -248,3 +323,4 @@ Each waits for the other to lower its flag.
 - **Peterson**: `flag[i]=true; turn=j; while(flag[j] && turn==j);` — correct for 2 processes under sequential consistency.
 - Modern CPUs reorder → needs memory fences → practical locks use atomic RMW instructions.
 - Test-and-set lock: no bounded waiting; ticket/queue locks: FIFO.
+- Java: Peterson works only if `turn` and the flags are `volatile` (or atomics); `AtomicBoolean.compareAndSet` is a test-and-set lock.

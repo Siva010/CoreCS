@@ -61,9 +61,16 @@ export interface TermNodeData {
  * plain-text occurrence of each applicable glossary term wrapped in an
  * `x-term` element carrying its definition.
  */
-export function applyGlossary(lists: RootContent[][], lessonId: string, hrefFor: (lessonId: string) => string | undefined): RootContent[][] {
+export function applyGlossary(
+  lists: RootContent[][],
+  lessonId: string,
+  hrefFor: (lessonId: string) => string | undefined,
+  applies: (entry: GlossaryEntry) => boolean = () => true,
+): RootContent[][] {
   const bold = boldTerms(lists.flat());
-  const pending = MATCHERS.filter((m) => !excluded(m.entry, lessonId) && !m.names.some((n) => bold.has(n.toLowerCase()) || bold.has(`${n.toLowerCase()}s`)));
+  const pending = MATCHERS.filter(
+    (m) => applies(m.entry) && !excluded(m.entry, lessonId) && !m.names.some((n) => bold.has(n.toLowerCase()) || bold.has(`${n.toLowerCase()}s`)),
+  );
   if (!pending.length) return lists;
 
   const termNode = (m: Matcher, text: string): RootContent =>

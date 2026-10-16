@@ -11,7 +11,7 @@ relevance: high
 stage: 2
 prerequisites: [os-process-creation]
 related: [os-filesystem-internals, os-io-models, cn-sockets, os-ipc, x-connection-management]
-tags: [file descriptor, open file table, inode table, everything is a file, dup, dup2, o_cloexec, ulimit, emfile, file offset, stdin stdout stderr]
+tags: [file descriptor, open file table, inode table, everything is a file, dup, dup2, o_cloexec, ulimit, emfile, file offset, stdin stdout stderr, try-with-resources, CLOSE_WAIT]
 ---
 
 ## Mental Model
@@ -30,7 +30,7 @@ Three kernel data structures sit behind it:
 
 ## Why It Exists
 
-**The problem.** A program needs to refer to things that live in the kernel — an open file, a socket, a pipe — but it must not hold a pointer into kernel memory (it could forge or corrupt it).
+**The problem.** A program needs to refer to things that live in the kernel: an open file, a socket, a pipe. But it must not hold a pointer into kernel memory, because it could forge or corrupt it.
 
 **The idea.** Give the program a meaningless small number and keep the real object on the kernel's side of the counter. The number is only valid in *that* process's table, so it can't be forged into access to someone else's file. And because every kind of object is reached the same way, one set of calls works for all of them. A uniform handle means:
 
@@ -46,31 +46,45 @@ An fd is an index into a per-process array of pointers to kernel objects. `read(
 
 ## How It Works
 
-```text
-Process A fd table            Open file table                Inode table
-┌────┬──────────┐             ┌──────────────────────┐       ┌───────────────────┐
-│ 0  │ ───────────────────────▶│ /dev/pts/0, off 0     │──────▶│ tty inode          │
-│ 1  │ ──────┘                 └──────────────────────┘       └───────────────────┘
-│ 3  │ ───────────────────────▶│ log.txt, off 4096, W   │──────▶│ inode 1824 (log)   │
-│ 4  │ ───────────────────────▶│ log.txt, off 0,    R   │──────┘ (same file)
-└────┴──────────┘             └──────────────────────┘
+```mermaid
+flowchart LR
+    subgraph t["process A: fd table"]
+        F3["fd 3"]
+        F4["fd 4"]
+        F5["fd 5 = dup(3)"]
+    end
+    F3 --> O1["open file description<br/>log.txt, offset 4096, write"]
+    F5 --> O1
+    F4 --> O2["open file description<br/>log.txt, offset 0, read"]
+    O1 --> I["inode 1824<br/>(the file itself)"]
+    O2 --> I
 ```
 
 - `open()` creates a **new open file description** (new offset) every time — fds 3 and 4 above are two independent opens of the same file with separate offsets.
 - `dup(fd)` / `dup2(old, new)` create another fd pointing to the **same** open file description — they share the offset and flags.
-- `fork()` copies the fd table, so parent and child fds point to the **same** descriptions (shared offsets — which is why a parent and child writing to the same inherited log fd don't overwrite each other's output).
+- `fork()` copies the fd table, so parent and child fds point to the **same** descriptions and share their offsets. That's why a parent and child writing to the same inherited log fd don't overwrite each other's output.
 - `close(fd)` removes the table entry and decrements the description's refcount; the file is actually released when the last reference goes away.
 
 ### Redirection is just dup2
 
-`cmd > out.txt 2>&1` in the shell's child process:
+`cmd > out.txt 2>&1` from Java:
 
-```c
-int fd = open("out.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);   // say fd = 3
-dup2(fd, 1);   // stdout → out.txt
-dup2(1, 2);    // stderr → same description as stdout (shared offset!)
-close(fd);
-execvp("cmd", argv);
+```java
+Process p = new ProcessBuilder("cmd")
+        .redirectOutput(new File("out.txt"))    // stdout → out.txt
+        .redirectErrorStream(true)              // stderr → wherever stdout goes (2>&1)
+        .start();
+p.waitFor();
+```
+
+In the child, before running `cmd`, the JDK makes the same system calls a shell does:
+
+```text
+openat("out.txt", O_WRONLY|O_CREAT|O_TRUNC) = 3
+dup2(3, 1)       fd 1 (stdout) → out.txt
+dup2(1, 2)       fd 2 (stderr) → the same open file description, so the same offset
+close(3)
+execve("cmd", ...)
 ```
 
 Order matters: `2>&1 > out.txt` would point stderr at the *old* stdout (the terminal) first.
@@ -129,7 +143,13 @@ Max open files            65536                65536                files
 
 ## Failure Modes
 
-- **fd leaks**: forgetting to close files/sockets (especially on error paths) → slowly hitting `EMFILE`, then `accept()` fails and the server stops accepting connections.
+- **fd leaks**: forgetting to close files/sockets (especially on error paths) → slowly hitting `EMFILE`, then `accept()` fails and the server stops accepting connections. In Java, every `FileInputStream`, `Socket`, `FileChannel`, and the streams from `Files.lines`, `Files.list` and `Files.walk` hold an fd until closed. Use try-with-resources:
+
+  ```java
+  try (Stream<String> lines = Files.lines(Path.of("access.log"))) {   // holds an open fd
+      long errors = lines.filter(l -> l.contains(" 500 ")).count();
+  }   // closed here, even if an exception was thrown
+  ```
 - **Double close** closing an unrelated resource that reused the number.
 - **Inherited fds** keeping ports bound or files open in child processes.
 - **Deleted-but-open files** consuming disk space.
@@ -170,6 +190,10 @@ In the child before exec: open the file (getting some fd), `dup2(fd, 1)` so stdo
 
 Check the process's fd count against its limit (`ls /proc/<pid>/fd | wc -l`, `/proc/<pid>/limits`). If it grows steadily, it's a leak: inspect what the fds are (`lsof -p`) — sockets in CLOSE_WAIT indicate the app isn't closing connections after the peer closes; many file handles indicate files opened without closing on error paths. Fix the leak (try-with-resources/defer/with), add timeouts for idle connections, and raise limits only as a capacity measure, not a fix.
 
+### [L2 · how] How would you find a file-descriptor leak in a Java service?
+
+Watch the count first: `ls /proc/<pid>/fd | wc -l` against `/proc/<pid>/limits`, or from inside the JVM, `((com.sun.management.UnixOperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean()).getOpenFileDescriptorCount()`, which most metrics libraries export. If it climbs steadily, classify the fds with `lsof -p <pid>`. Many `socket` entries in `CLOSE_WAIT` mean the peer closed but the code never closed its side (often an HTTP response body or JDBC result that wasn't closed). Many regular files point to streams opened without try-with-resources, such as `Files.lines`. A heap dump then shows which objects own the leaked `FileDescriptor`s.
+
 ### [L3 · incident] df says the disk is 100% full but du on the directory shows only 30% used. What happened?
 
 Files were deleted while processes still hold them open (typically rotated or manually deleted log files). Their inodes and blocks remain allocated until the last fd closes. Find them with `lsof +L1`, then restart or signal the process to reopen logs (or truncate via `/proc/<pid>/fd/N`). Use proper log rotation (copytruncate or reopen on SIGHUP).
@@ -194,6 +218,45 @@ The kernel returns the lowest unused descriptor number.
 
 The fd table is copied, but entries point to the same open file descriptions.
 
+### [numeric 4] A process has fds 0, 1 and 2 open. It opens files a, b and c, closes the fd for b, then opens file d. Which fd does d get?
+
+:::answer
+a, b and c get 3, 4 and 5. Closing b frees 4, and the kernel always hands out the lowest free number, so d gets **4**.
+:::
+
+### [numeric 32718] A proxy has a limit of 65,536 open fds. About 100 are used by files, logs, listening sockets and epoll. Each proxied request needs two sockets, one to the client and one upstream. How many requests can be in flight at most?
+
+:::answer
+(65,536 − 100) / 2 = 65,436 / 2 = **32718** requests. Past that, `accept()` or `connect()` fails with `EMFILE`, so a proxy's fd limit must be set from its target concurrency.
+:::
+
+### [mcq] Which Java code leaks a file descriptor every time it runs?
+
+- [ ] `try (var in = Files.newInputStream(p)) { return in.readAllBytes(); }`
+- [x] `return Files.lines(p).filter(l -> l.startsWith("ERROR")).count();`
+- [ ] `return Files.readAllLines(p).size();`
+- [ ] `return Files.readString(p).length();`
+
+`Files.lines` returns a lazy `Stream` backed by an open file, and terminal operations like `count()` don't close it. Without try-with-resources, the fd stays open until the garbage collector happens to clean it up. `readAllLines` and `readString` open and close the file themselves.
+
+### [exercise] A Java service calls a REST API thousands of times per minute. After a few hours, `lsof` shows thousands of sockets in `CLOSE_WAIT`, and then requests fail with "Too many open files". The code is `HttpResponse<InputStream> r = client.send(req, BodyHandlers.ofInputStream()); if (r.statusCode() != 200) return null; return parse(r.body());`. Explain and fix.
+
+:::solution
+`CLOSE_WAIT` means the server closed its side of the connection, but this process hasn't closed its socket. On the non-200 path, the code returns without reading or closing the response body stream. That stream holds the connection, so the socket (an fd) is never released. Each failed call leaks one fd until the limit is reached.
+
+Fix: always close the body, on every path:
+
+```java
+HttpResponse<InputStream> r = client.send(req, HttpResponse.BodyHandlers.ofInputStream());
+try (InputStream body = r.body()) {          // closed on every path, including errors
+    if (r.statusCode() != 200) return null;
+    return parse(body);
+}
+```
+
+Or use a body handler that reads and closes for you (`ofString()`, `ofByteArray()`) when responses are small. Then watch the open-fd metric to confirm it stays flat.
+:::
+
 ## Quick Revision
 
 - fd = index into per-process table → open file description (offset, mode, flags) → inode.
@@ -203,3 +266,4 @@ The fd table is copied, but entries point to the same open file descriptions.
 - `O_CLOEXEC` to avoid leaking fds into exec'd children; `O_APPEND` for atomic appends.
 - Limits: `ulimit -n` → `EMFILE`. Every socket is an fd.
 - Deleted-but-open files keep their space (`lsof +L1`).
+- Java: every stream, socket and channel is an fd → try-with-resources (including `Files.lines`/`list`/`walk`); `CLOSE_WAIT` piles = unclosed sockets.

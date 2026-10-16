@@ -12,7 +12,7 @@ stage: 2
 prerequisites: [os-threads]
 related: [os-sync-primitives, os-critical-section-problem, os-atomic-instructions, os-cpu-caches-contention, db-anomalies]
 visualizations: [race-condition]
-tags: [race condition, data race, critical section, atomicity, visibility, ordering, memory model, happens-before, volatile, check-then-act]
+tags: [race condition, data race, critical section, atomicity, visibility, ordering, memory model, happens-before, volatile, check-then-act, AtomicLong, LongAdder]
 ---
 
 ## Mental Model
@@ -55,22 +55,30 @@ A race is two threads touching the same data with nothing saying who goes first.
 
 ### Atomicity: counter++ is three instructions
 
-```c
-int counter = 0;              // shared
-void *work(void *_) {
-    for (int i = 0; i < 1000000; i++) counter++;
-    return NULL;
+```java
+public class LostUpdates {
+    static int counter = 0;                                   // shared by both threads
+
+    public static void main(String[] args) throws InterruptedException {
+        Runnable work = () -> { for (int i = 0; i < 1_000_000; i++) counter++; };
+        Thread a = new Thread(work), b = new Thread(work);
+        a.start(); b.start();
+        a.join();  b.join();
+        System.out.println(counter);   // expected 2,000,000; usually prints less, e.g. 1,294,712
+    }
 }
-// two threads run work(); expected 2,000,000 — typically prints something like 1,294,712
 ```
 
-`counter++` compiles to roughly:
+`counter++` compiles to three bytecode steps, and the JIT turns them into a machine-code load, add and store:
 
 ```text
-mov  eax, [counter]    ; LOAD
-add  eax, 1            ; ADD
-mov  [counter], eax    ; STORE
+getstatic  counter    ; LOAD the current value
+iconst_1
+iadd                  ; ADD 1 in a register
+putstatic  counter    ; STORE it back
 ```
+
+The exact output varies from run to run. The JIT may even keep `counter` in a register for the whole loop, which loses updates in bigger chunks.
 
 A lost update happens with this interleaving:
 
@@ -115,13 +123,31 @@ The JIT is allowed to hoist the read of `running` out of the loop (it never chan
 
 ### Ordering: publication without happens-before
 
-```c
+```java
+int data = 0;
+boolean ready = false;              // NOT volatile
+
 // Thread 1                          // Thread 2
-data = 42;                           while (!ready) ;
-ready = 1;                           print(data);   // may print 0!
+data = 42;                           while (!ready) { }
+ready = true;                        System.out.println(data);   // may print 0!
 ```
 
-Without synchronization, the compiler or CPU may make `ready = 1` visible before `data = 42` (store reordering, or the reader's loads reordered). Thread 2 then sees `ready` but stale `data`. Making `ready` an atomic with **release** semantics on the write and **acquire** on the read establishes a **happens-before** edge: everything Thread 1 wrote before the release is visible to Thread 2 after its acquire.
+Without synchronization, the compiler or CPU may make `ready = true` visible before `data = 42` (store reordering, or the reader's loads reordered). Thread 2 then sees `ready` but stale `data`. Declaring `ready` as `volatile` gives the write **release** semantics and the read **acquire** semantics (in C++, `std::atomic` does the same). That establishes a **happens-before** edge: everything Thread 1 wrote before the release is visible to Thread 2 after its acquire.
+
+```mermaid
+flowchart TD
+    subgraph t1["Thread 1"]
+        direction LR
+        W1["data = 42"] --> W2["ready = true<br/>(volatile write)"]
+    end
+    subgraph t2["Thread 2"]
+        direction LR
+        R1["reads ready == true<br/>(volatile read)"] --> R2["reads data:<br/>guaranteed 42"]
+    end
+    W2 -->|"happens-before"| R1
+```
+
+Program order inside each thread, plus the edge from the volatile write to the read that sees it, chains `data = 42` before the read of `data`.
 
 ## Internal Mechanism
 
@@ -154,15 +180,18 @@ Atomics and locks are implemented with **fences/barriers** — instructions that
 
 Three fixes for the counter, with different costs:
 
-```c
-// 1) Mutex — general, slower under contention
-pthread_mutex_lock(&m);  counter++;  pthread_mutex_unlock(&m);
+```java
+// 1) A lock — general, slower under contention
+synchronized (lock) { counter++; }
 
-// 2) Atomic read-modify-write — one hardware instruction (lock xadd on x86)
-atomic_fetch_add(&counter, 1);
+// 2) An atomic read-modify-write — one hardware instruction (lock xadd on x86)
+AtomicLong counter = new AtomicLong();
+counter.incrementAndGet();
 
-// 3) No sharing — each thread counts locally, combine at the end (fastest)
-long local = 0;  for (...) local++;  atomic_fetch_add(&counter, local);
+// 3) No sharing — each thread counts locally, then adds its total once (fastest)
+long local = 0;
+for (int i = 0; i < 1_000_000; i++) local++;
+counter.addAndGet(local);
 ```
 
 The third is a general principle: **the best synchronization is no sharing.** Partition work, use thread-local accumulation, and merge.
@@ -227,6 +256,10 @@ Atomicity: an operation executes as an indivisible unit — no other thread can 
 
 2 (if one completes its load-add-store before the other loads) or 1 (if both load 0 before either stores). It can't be 0 because both stores write at least 1.
 
+### [L2 · why] Does declaring a counter `volatile` make `count++` thread-safe in Java?
+
+No. `volatile` makes each read and each write visible to other threads and orders them, but `count++` is still a read, an add and a write. Two threads can both read 7, both compute 8 and both write 8, losing an increment; `volatile` only guarantees they each read a fresh value. Use `AtomicInteger.incrementAndGet()` (a single atomic read-modify-write), `LongAdder` for hot counters, or a lock around the compound operation.
+
 ### [L3 · why] Why is double-checked locking broken in Java without volatile?
 
 `instance = new Singleton()` involves allocating memory, running the constructor, and publishing the reference. Without `volatile`, the reference write can become visible to another thread before the constructor's field writes. A second thread passes the unsynchronized `if (instance == null)` check, sees a non-null reference and uses a partially constructed object. `volatile` makes the publication a release/acquire pair, ordering the constructor writes before the reference.
@@ -263,6 +296,55 @@ Avoid a single contended cache line. Use striped/sharded counters: each thread (
 
 Each call is thread-safe individually, but the pair isn't atomic.
 
+### [numeric 3] On a shared `x = 1`, thread A runs `x = x + 1` and thread B runs `x = x * 2`. Each is a separate load, compute and store. How many different final values of x are possible?
+
+:::answer
+- A finishes before B loads: (1 + 1) × 2 = 4.
+- B finishes before A loads: 1 × 2 + 1 = 3.
+- Both load 1 before either stores: A computes 2 and B computes 2, so whichever store lands last, x = 2.
+
+That is **3** possible results: 2, 3 or 4. Try the interleavings in the [race condition lab](lab:race-condition).
+:::
+
+### [mcq] A field is declared `volatile int count`. Four threads each run `count++` 1,000 times. What is the final value?
+
+- [ ] Always exactly 4,000, because `volatile` makes the field thread-safe
+- [x] At most 4,000, and often less, because `count++` is still a separate read and write
+- [ ] Always less than 4,000
+- [ ] It doesn't compile: `++` is not allowed on volatile fields
+
+`volatile` gives visibility and ordering, not atomicity for read-modify-write. Lost updates still happen when two threads read the same value. Some runs may happen to reach 4,000.
+
+### [mcq] 64 threads update a request counter millions of times per second; a metrics thread reads it once a minute. Which Java class fits best?
+
+- [ ] `Integer` with `synchronized` getters and setters
+- [ ] `AtomicLong`
+- [x] `LongAdder`
+- [ ] A `volatile long`
+
+`AtomicLong` is correct, but every update fights for one cache line, so the threads serialize. `LongAdder` spreads updates over several cells and adds them up only when read, which suits frequent writes and rare reads. A `volatile long` would lose updates.
+
+### [exercise] Rewrite this stock check so two threads can never both sell the last item, using `java.util.concurrent.atomic` and no locks: `if (stock > 0) { stock--; return true; } return false;`
+
+:::solution
+```java
+private final AtomicInteger stock = new AtomicInteger(1);
+
+boolean reserve() {
+    while (true) {
+        int current = stock.get();
+        if (current == 0) return false;                      // sold out
+        if (stock.compareAndSet(current, current - 1)) {
+            return true;                                     // our decrement won
+        }
+        // another thread changed stock between get() and compareAndSet(): try again
+    }
+}
+```
+
+`compareAndSet` changes the value only if it is still the value we read, as one atomic CPU instruction. The check and the decrement therefore become one step. A shorter form is `stock.getAndUpdate(s -> s > 0 ? s - 1 : s) > 0`. This only protects one JVM: across several service instances, do the check-and-decrement atomically in the database (`UPDATE … SET stock = stock - 1 WHERE stock > 0`).
+:::
+
 ### [exercise] Two threads each run `for (i=0;i<3;i++) x++;` on a shared x starting at 0, where x++ is load/add/store. What is the minimum possible final value?
 
 :::solution
@@ -277,3 +359,4 @@ Each call is thread-safe individually, but the pair isn't atomic.
 - Fixes: mutex (all three), atomics (single variable), `volatile` (visibility/ordering only), immutability, confinement.
 - **Check-then-act** races survive thread-safe collections; make the compound operation atomic.
 - Same pattern in DBs: lost update, write skew.
+- Java: `volatile` ≠ atomic `++`; use `AtomicInteger`/`AtomicLong` (CAS), `LongAdder` for hot counters, `synchronized` for compound invariants.

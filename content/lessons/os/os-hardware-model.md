@@ -11,7 +11,7 @@ relevance: high
 stage: 1
 prerequisites: [os-what-an-os-does]
 related: [os-program-execution, os-cpu-caches-contention, os-storage-devices, os-syscalls-interrupts]
-tags: [cpu, registers, cache, ram, memory hierarchy, latency numbers, interrupts, dma, bus]
+tags: [cpu, registers, cache, ram, memory hierarchy, latency numbers, interrupts, dma, bus, average memory access time, hit ratio, programmed I/O]
 ---
 
 ## Mental Model
@@ -24,7 +24,7 @@ A computer is a **very fast worker with a tiny desk, a nearby filing cabinet, an
 - **SSD / disk** is the warehouse across town — enormous and persistent, but a trip costs thousands to millions of times more than the desk.
 - **Devices** (network cards, disks) are couriers that work independently and ring a bell (**interrupt**) when they finish.
 
-Almost every design decision in operating systems and databases — caching, prefetching, batching, B-trees, buffer pools, async I/O — is an attempt to **avoid trips to slower levels**, or to keep the worker busy while waiting for them.
+Almost every design decision in operating systems and databases is an attempt to **avoid trips to slower levels**, or to keep the worker busy while waiting for them. Caching, prefetching, batching, B-trees, buffer pools and async I/O all do one or the other.
 
 ## Definition
 
@@ -94,6 +94,24 @@ Key registers:
 
 Why chunks instead of single bytes: tracking every byte separately would cost more bookkeeping than the data itself, and spatial locality says the neighbours will be wanted next anyway. Caches move data in fixed chunks called **cache lines** (typically 64 bytes). Reading one byte loads its whole line; the next 63 bytes are then almost free. That is why iterating an array sequentially is dramatically faster than chasing linked-list pointers scattered across memory.
 
+### Average memory access time
+
+How fast memory *feels* depends on how often the cache hits. The textbook formula:
+
+**Average access time = hit time + miss rate × miss penalty**
+
+Worked example: an L1 hit takes 1 ns, 95% of accesses hit, and a miss costs another 100 ns to fetch from DRAM.
+
+```text
+average = 1 ns + 0.05 × 100 ns = 1 + 5 = 6 ns
+```
+
+Only 5% of accesses miss, yet memory feels six times slower than L1. A 99% hit rate gives 1 + 0.01 × 100 = 2 ns. Small changes in hit rate matter a lot, which is why cache-friendly code wins.
+
+Exam questions sometimes state the hit ratio *h*, cache time *c* and memory time *m* instead. If a miss checks the cache first and then goes to memory, the average is h × c + (1 − h) × (c + m). If both are searched in parallel, a miss costs only m. Read which one the question assumes.
+
+### Cache coherence
+
 A new problem appears with several cores: each has its *own* copy of a line, so if core A writes and core B keeps reading its old copy, B sees a stale value. On multicore machines each core has private caches, and a **cache-coherence protocol** (e.g., MESI) keeps them consistent: when one core writes a line, other cores' copies are invalidated. This invisible traffic is behind **false sharing** and much of the cost of contended locks — see [CPU Caches & Contention](lesson:os-cpu-caches-contention).
 
 ### Devices, interrupts and DMA
@@ -129,7 +147,7 @@ Without DMA the CPU would copy every byte itself (**programmed I/O**), wasting c
 
 ### Persistent storage is block-oriented
 
-Disks and SSDs read and write **blocks** (512 B–4 KB), not bytes — addressing and error-correcting every byte individually would waste most of the device on bookkeeping, and the expensive part of a disk access (seek, command overhead) is the same whether you want 1 byte or 4 KB. SSDs internally read in pages (~4–16 KB) and erase in much larger blocks, which leads to write amplification and garbage collection. That block orientation is why filesystems and databases think in **pages**. See [Storage Devices](lesson:os-storage-devices).
+Disks and SSDs read and write **blocks** (512 B–4 KB), not bytes. Addressing and error-correcting every byte individually would waste most of the device on bookkeeping. And the expensive part of a disk access (seek, command overhead) is the same whether you want 1 byte or 4 KB. SSDs internally read in pages (~4–16 KB) and erase in much larger blocks, which leads to write amplification and garbage collection. That block orientation is why filesystems and databases think in **pages**. See [Storage Devices](lesson:os-storage-devices).
 
 :::depth{level=advanced}
 ### Endianness and word size
@@ -141,15 +159,21 @@ Multi-byte integers are stored in memory either **little-endian** (least signifi
 
 Measure the memory hierarchy yourself — summing an array sequentially vs in a random order:
 
-```c
-// Sequential: ~1 ns/element (hardware prefetcher streams cache lines)
-for (size_t i = 0; i < N; i++) sum += a[i];
+```java
+long[] a = new long[128 * 1024 * 1024];   // 1 GB of longs
+int[] idx = shuffledIndexes(a.length);     // 0..n-1 in random order
+long sum = 0;
 
-// Random order over a 1 GB array: ~80–100 ns/element (a DRAM miss almost every time)
-for (size_t i = 0; i < N; i++) sum += a[idx[i]];
+// Sequential: ~1 ns per element (the hardware prefetcher streams cache lines)
+for (int i = 0; i < a.length; i++) sum += a[i];
+
+// Random order: ~80–100 ns per element (a DRAM miss almost every time)
+for (int i = 0; i < idx.length; i++) sum += a[idx[i]];
 ```
 
-Same instruction count, **~50–100× difference** in runtime, purely from where the data lives.
+Same instruction count, **~50–100× difference** in runtime, purely from where the data lives. (Measure with JMH, not a hand-written timer, so JIT warm-up doesn't distort the numbers.)
+
+The same effect explains a classic Java surprise. A `long[]` stores the numbers themselves, side by side. An `ArrayList<Long>` stores *references* to `Long` objects that live elsewhere on the heap, so every element costs an extra dependent load that may miss the cache. A `LinkedList` is worse: each node is a separate object reached through the previous one.
 
 ## Complexity & Performance
 
@@ -203,6 +227,10 @@ Arrays are contiguous: each 64-byte cache line brings several elements, and the 
 
 Direct Memory Access lets a device transfer data directly between itself and RAM without the CPU copying each byte. The driver tells the device where in memory to read/write; the device performs the transfer and interrupts when done. Without DMA, high-bandwidth devices (NVMe, 100 Gb NICs) would consume the CPU entirely just moving bytes.
 
+### [L2 · why] Why is `ArrayList` usually faster than `LinkedList` in Java, even for inserting into the middle?
+
+Both are O(n) to insert in the middle, but the constant factors differ by orders of magnitude. `ArrayList` shifts the tail with `System.arraycopy`, a sequential memory move that the CPU and prefetcher handle at memory bandwidth. `LinkedList` must first walk to the position node by node; each node is a separate heap object, so each hop is a dependent load that is likely a cache miss (~100 ns). Iteration shows the same gap. `LinkedList` wins only when you already hold an iterator at the insertion point and insert there repeatedly, and even then the per-node objects cost memory and GC work.
+
 ### [L3 · numerical] A request handler does 5 sequential DRAM-missing pointer lookups, 2 SSD random reads and one same-datacenter network round trip. Estimate its latency and identify the dominant cost.
 
 DRAM: 5 × ~100 ns = 0.5 µs. SSD: 2 × ~100 µs = 200 µs. Network: ~250 µs. Total ≈ 450 µs. The CPU/memory work is negligible (~0.1%); I/O and network dominate. Optimizations should target removing a round trip or an SSD read (caching, batching), not micro-optimizing code.
@@ -232,11 +260,42 @@ Whether the working set fits in the page cache (50 GB of 64 GB leaves little hea
 2 × 100 µs + 50 µs = **250 µs**. Round trips dominate; the instructions executed are noise in comparison.
 :::
 
+### [numeric 6 unit=ns] An L1 cache hit takes 1 ns and 95% of accesses hit. A miss costs an extra 100 ns to fetch the line from DRAM. What is the average memory access time?
+
+:::answer
+Average = hit time + miss rate × miss penalty = 1 + 0.05 × 100 = **6** ns. Five percent of misses make memory feel six times slower than L1.
+:::
+
+### [numeric 20 unit=ns] A cache has a hit ratio of 0.9 and an access time of 10 ns; main memory takes 100 ns. On a miss the cache is checked first, then memory. What is the effective access time?
+
+:::answer
+Hits cost 10 ns; misses cost 10 + 100 = 110 ns. Effective time = 0.9 × 10 + 0.1 × 110 = 9 + 11 = **20** ns. (If cache and memory were searched in parallel, a miss would cost 100 ns and the answer would be 0.9 × 10 + 0.1 × 100 = 19 ns.)
+:::
+
+### [mcq] Summing 10 million numbers, which Java version is usually fastest, and why?
+
+- [x] Summing a `long[]`, because the values are packed contiguously and every cache line brings eight of them
+- [ ] Summing an `ArrayList<Long>`, because `ArrayList` is backed by an array
+- [ ] Summing a `LinkedList<Long>`, because it avoids resizing
+- [ ] They are equally fast, because all three are O(n)
+
+An `ArrayList<Long>` is an array of references: each element needs a second load to reach its `Long` object somewhere on the heap. A `LinkedList` adds a pointer chase per node. All are O(n); the cache decides the constant.
+
+### [exercise] A disk controller delivers a 4 KB block. Compare how much CPU involvement each method needs: programmed I/O with polling, interrupt-driven I/O transferring one 8-byte word per interrupt, and DMA.
+
+:::solution
+- **Programmed I/O with polling**: the CPU checks the device's status register in a loop until data is ready, then copies each word itself: 4096 / 8 = 512 transfers, plus all the time spent polling. The CPU is busy for the whole transfer.
+- **Interrupt-driven I/O**: the CPU runs other work until the device interrupts, but it still copies the data: 512 interrupts, each paying the cost of entering and leaving a handler. Fine for slow devices like keyboards, wasteful for disks.
+- **DMA**: the CPU writes one command (where the data should go in RAM, how much) and the device copies all 4 KB on its own, then raises **one** interrupt. CPU work is one setup and one interrupt, no matter how large the block.
+:::
+
 ## Quick Revision
 
 - Hierarchy: registers → L1 (~1 ns) → L2 → L3 (~15 ns) → DRAM (~100 ns) → SSD (~10–100 µs) → network (~0.5 ms DC, ~80 ms cross-ocean).
 - **Locality** (temporal, spatial) is why caching works; **cache lines** are 64 bytes.
 - **Interrupts** notify; **DMA** moves data without the CPU; **polling** wins at extreme rates.
 - Context = PC, SP, registers, flags, page-table base.
+- Average access time = hit time + miss rate × miss penalty (1 ns, 5% misses, 100 ns penalty → 6 ns).
+- `long[]` beats `ArrayList<Long>` beats `LinkedList<Long>`: contiguous values vs pointer chasing.
 - Big-O hides a 10⁶ spread of constant factors — cache-friendly beats clever.
 - Storage is **block**-oriented → OS and DBs think in **pages**.

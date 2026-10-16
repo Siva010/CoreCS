@@ -18,7 +18,7 @@ tags: [hdd, ssd, nvme, seek time, rotational latency, iops, throughput, write am
 ## Mental Model
 
 - A **hard disk** is a record player: to read data, a mechanical arm must **seek** to the right track and wait for the platter to **rotate** the sector under the head. Moving the arm takes milliseconds — an eternity for a CPU. Reading many consecutive sectors after one seek is cheap; jumping around is catastrophically slow.
-- An **SSD** is a warehouse of flash chips with no moving parts: any location is reachable in microseconds, and many chips work in parallel. But flash has a quirk — you can write a page only once before erasing it, and you can only erase big blocks — so the SSD runs its own internal "operating system" (the FTL) that shuffles data around, with its own garbage collector.
+- An **SSD** is a warehouse of flash chips with no moving parts: any location is reachable in microseconds, and many chips work in parallel. But flash has a quirk: you can write a page only once before erasing it, and you can only erase big blocks. So the SSD runs its own internal "operating system", the FTL, which shuffles data around and has its own garbage collector.
 
 ## Definition
 
@@ -63,7 +63,7 @@ Sequential read: after one seek, stream at 150 MB/s → 1 GB in ~7 s. Random 4 K
 
 ### SSD internals
 
-Every piece of SSD firmware follows from one physical rule: *a flash page can be written once, then must be erased — and erasing works only on large blocks.* So updates can't happen in place; they must be redirected somewhere fresh, and someone has to clean up later.
+Every piece of SSD firmware follows from one physical rule: *a flash page can be written once, then must be erased — and erasing works only on large blocks.* So updates can't happen in place. They must be redirected somewhere fresh, and someone has to clean up later.
 
 - Flash is organized in **pages** (4–16 KB, the unit of read/write) grouped into **erase blocks** (hundreds of pages, several MB — the unit of erase).
 - Pages can't be overwritten in place: an update writes the new data to a fresh page and marks the old one **stale**. The FTL remaps the logical address.
@@ -98,6 +98,14 @@ On an HDD, the expensive part of a request is moving the arm, not reading the da
 | **LOOK** (like SCAN but turn at last request, moving up first) | 65, 67, 98, 122, 124, 183, 37, 14 | **299** (130 + 169) |
 | **C-LOOK** (moving up, jump to lowest request) | 65, 67, 98, 122, 124, 183, 14, 37 | **322** (130 + 169 + 23) |
 
+```mermaid
+flowchart LR
+    Q{"which request next?"} -->|"FCFS: in arrival order"| A["fair, but the arm<br/>zig-zags: 640"]
+    Q -->|"SSTF: the nearest one"| B["short moves: 236,<br/>far requests may starve"]
+    Q -->|"SCAN / LOOK: keep going<br/>one way, then reverse"| C["elevator: bounded wait"]
+    Q -->|"C-SCAN / C-LOOK: one way,<br/>then jump back"| D["most uniform wait"]
+```
+
 - **SSTF** minimizes movement greedily but can **starve** far requests.
 - **SCAN/C-SCAN** give bounded waiting; **C-SCAN** gives more uniform wait times (treats cylinders as a circle).
 - **LOOK/C-LOOK** avoid traveling to the disk's edge when no requests are there.
@@ -112,6 +120,23 @@ The block layer (blk-mq) offers `none`, `mq-deadline`, `bfq` and `kyber`. For NV
 ### Queue depth and Little's Law
 
 SSDs achieve high IOPS only with many requests in flight (parallelism across flash channels). Little's Law: `IOPS = queue depth / latency`. At QD=1 with 80 µs latency: 12,500 IOPS; at QD=32: up to ~400k if the device scales. That's why async I/O (io_uring, AIO) and multiple threads are needed to saturate NVMe — and why a single-threaded synchronous reader looks "slow" on a fast SSD.
+
+Java's file reads are blocking system calls (the JDK has no io_uring API), so in Java, queue depth means threads. Each thread keeps one request in flight:
+
+```java
+try (FileChannel ch = FileChannel.open(path, StandardOpenOption.READ);
+     ExecutorService pool = Executors.newFixedThreadPool(32)) {     // ≈ 32 requests in flight
+    for (long offset : randomOffsets) {
+        pool.submit(() -> {
+            ByteBuffer buf = ByteBuffer.allocate(4096);
+            ch.read(buf, offset);      // positional read (pread): threads can share one channel
+            return buf;
+        });
+    }
+}
+```
+
+Virtual threads also work, but blocking file I/O pins the carrier thread; the JDK compensates by temporarily adding carriers.
 :::
 
 ## Example
@@ -214,6 +239,37 @@ Order: 65, 67, 37, 14, 98, 122, 124, 183 → 12 + 2 + 30 + 23 + 84 + 24 + 2 + 59
 One revolution = 60/7200 s = 8.33 ms; average = half = **4.17 ms**.
 :::
 
+### [numeric 299] Same queue (98, 183, 37, 122, 14, 124, 65, 67), head at 53, using LOOK moving toward higher cylinders first. Total head movement?
+
+:::answer
+Up to the highest request, then reverse to the lowest: 53 → 183 = 130, then 183 → 14 = 169. Total = **299**. SCAN would continue to the edge first; LOOK turns at the last request.
+:::
+
+### [numeric 400000] An NVMe drive has 80 µs latency per random read. With 32 requests kept in flight, what is the maximum IOPS by Little's Law?
+
+:::answer
+IOPS = queue depth / latency = 32 / 0.00008 s = **400000**, if the drive's internal parallelism scales that far. With one request at a time it would be 12,500.
+:::
+
+### [mcq] A Java service reads random 4 KB blocks from a local NVMe drive using one thread and `FileChannel.read`. It gets about 12,000 IOPS, while `fio` shows the drive can do 600,000. What is the most likely limit?
+
+- [ ] The JVM's garbage collector
+- [x] Queue depth: one blocking thread keeps only one request in flight, so IOPS ≈ 1 / latency
+- [ ] The page cache is disabled
+- [ ] `FileChannel` can't read in parallel
+
+Each read blocks its thread until the device answers (~80 µs). To keep the drive busy, issue reads from many threads (positional reads on a shared `FileChannel` are safe) or many virtual threads.
+
+### [exercise] A disk has cylinders 0–199. The head is at 50, moving toward higher cylinders, and the queue is 82, 170, 43, 140, 24, 16, 190. Compute the total head movement under SSTF and under C-SCAN (counting the jump back to cylinder 0), then check both in the [disk scheduling lab](lab:disk-scheduling).
+
+:::solution
+**SSTF**: always the nearest request. 50 → 43 (7) → 24 (19) → 16 (8) → 82 (66) → 140 (58) → 170 (30) → 190 (20). Total = **208**.
+
+**C-SCAN**: up to the edge, jump to 0, continue up. 50 → 82 (32) → 140 (58) → 170 (30) → 190 (20) → 199 (9): 149. Jump 199 → 0: 199. Then 0 → 16 (16) → 24 (8) → 43 (19): 43. Total = 149 + 199 + 43 = **391**.
+
+C-SCAN moves the arm almost twice as far here, but no request can wait more than one sweep. SSTF served 43, 24 and 16 first only because they happened to be near the head; a steady stream of requests near the low end could have kept 170 and 190 waiting indefinitely.
+:::
+
 ## Quick Revision
 
 - HDD access = seek + rotational latency (half a revolution) + transfer → ~100–200 random IOPS.
@@ -222,3 +278,4 @@ One revolution = 60/7200 s = 8.33 ms; average = half = **4.17 ms**.
 - Disk scheduling (HDD): FCFS (fair, slow), SSTF (greedy, starves), SCAN/C-SCAN (elevator, bounded wait), LOOK/C-LOOK. Classic queue from 53: FCFS 640, SSTF 236.
 - Linux blk-mq schedulers: none (NVMe), mq-deadline, bfq, kyber.
 - Cloud volumes are network storage with IOPS caps.
+- Java: blocking file reads → queue depth = number of threads; `FileChannel.read(buf, position)` is a thread-safe pread.

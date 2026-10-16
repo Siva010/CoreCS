@@ -11,7 +11,7 @@ relevance: medium
 stage: 3
 prerequisites: [os-page-faults, os-process-creation]
 related: [os-page-cache, os-ipc, db-buffer-pool, db-mvcc, os-file-descriptors]
-tags: [copy-on-write, cow, mmap, memory mapped file, map_shared, map_private, msync, page cache, shared memory, redis bgsave, lmdb]
+tags: [copy-on-write, cow, mmap, memory mapped file, map_shared, map_private, msync, page cache, shared memory, redis bgsave, lmdb, MappedByteBuffer, FileChannel.map, MemorySegment]
 ---
 
 ## Mental Model
@@ -38,7 +38,7 @@ Both are the same trick: **manipulate page tables and let page faults do the wor
 **The idea.** Don't copy until you must — and let the MMU tell you when you must. Map the same physical pages in two places, mark them read-only, and let the first write fault into the kernel. Copy-on-write is that trick applied to `fork`; `mmap` is the same trick applied to files.
 
 - **COW** makes `fork` cheap, enables instant snapshots (Redis persistence, filesystem snapshots in Btrfs/ZFS), and lets `MAP_PRIVATE` mappings of executables share code pages while keeping writable data private.
-- **mmap** avoids copying file data between the page cache and user buffers (one copy, the page-cache page, is mapped directly), gives random access with pointer arithmetic, lets many processes share one copy of a file in memory, and loads programs and libraries lazily.
+- **mmap** avoids copying file data between the page cache and user buffers: the one page-cache copy is mapped directly. It also gives random access with pointer arithmetic, lets many processes share one copy of a file in memory, and loads programs and libraries lazily.
 
 :::callout[That's all it is]{type=insight}
 Point two page tables at the same RAM and mark it read-only; copy a page only when someone writes to it. `mmap` uses the same machinery to make a file's cached pages appear directly in your address space.
@@ -56,20 +56,51 @@ parent PT ─┬─> frame B (page 2) RO     parent PT ───> frame B (page 
 child PT  ─┘                           child PT  ───> frame C (copy of B) RW
 ```
 
-Steps on the write fault: check the VMA allows writes and the page is COW-shared (refcount > 1) → allocate frame C → copy 4 KB → map C writable in the child → decrement B's refcount (if the parent is now the only user, a later parent write just flips B to writable without copying).
+Steps on the write fault: check the VMA allows writes and the page is COW-shared (refcount > 1) → allocate frame C → copy 4 KB → map C writable in the child → decrement B's refcount. If the parent is now B's only user, a later parent write just flips B to writable, with no copy.
 
 ### mmap of a file
 
-```c
-int fd = open("data.bin", O_RDONLY);
-struct stat st; fstat(fd, &st);
-const uint8_t *p = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
-uint64_t sum = 0;
-for (off_t i = 0; i < st.st_size; i += 4096) sum += p[i];   // page faults load pages lazily
-munmap((void *)p, st.st_size);
+In Java, `FileChannel.map` is the `mmap` call:
+
+```java
+try (FileChannel ch = FileChannel.open(Path.of("data.bin"), StandardOpenOption.READ)) {
+    MappedByteBuffer p = ch.map(FileChannel.MapMode.READ_ONLY, 0, ch.size());   // mmap, read-only
+    long sum = 0;
+    for (int i = 0; i < p.limit(); i += 4096) {
+        sum += p.get(i);                          // one byte per page: page faults load pages lazily
+    }
+}
 ```
 
 Each first touch of a page is a page fault: minor if the page is in the page cache, major (disk read) if not. Read-ahead fetches following pages on sequential access.
+
+The Java map modes line up with the `mmap` flags: `READ_ONLY` and `READ_WRITE` are shared mappings (`MAP_SHARED`), `PRIVATE` is copy-on-write (`MAP_PRIVATE`), and `MappedByteBuffer.force()` is `msync`. A `MappedByteBuffer` is indexed by `int`, so one mapping covers at most 2 GB, and it is unmapped only when the garbage collector reclaims it. Since Java 22, mapping into a `MemorySegment` removes both limits:
+
+```java
+try (FileChannel ch = FileChannel.open(Path.of("data.bin"), StandardOpenOption.READ);
+     Arena arena = Arena.ofConfined()) {
+    MemorySegment data = ch.map(FileChannel.MapMode.READ_ONLY, 0, ch.size(), arena);  // any size
+    long sum = 0;
+    for (long off = 0; off < data.byteSize(); off += 4096) {
+        sum += data.get(ValueLayout.JAVA_BYTE, off);
+    }
+}   // closing the arena unmaps the file right away
+```
+
+```mermaid
+flowchart TD
+    subgraph r["read(): the bytes exist twice"]
+        direction LR
+        D1["disk"] --> PC1["page cache page"]
+        PC1 -->|"copy on every read()"| B1["your byte[] buffer"]
+    end
+    subgraph m["mmap: one copy, mapped into the process"]
+        direction LR
+        D2["disk"] --> PC2["page cache page"]
+        V["your virtual page"] -.->|"page table entry"| PC2
+    end
+    r ~~~ m
+```
 
 ### read() vs mmap
 
@@ -90,7 +121,7 @@ Each first touch of a page is a page fault: minor if the page is in the page cac
 
 ### Durability of mmap writes
 
-The convenience of mmap — "the kernel moves the data for you" — becomes a liability when *you* need to decide when data reaches disk. Writes to a `MAP_SHARED` mapping dirty page-cache pages; the kernel writes them back eventually (writeback thresholds, dirty expiry ~30 s by default). For durability you must call **`msync(MS_SYNC)`** (or `fsync` on the fd). Worse: you can't control *when* dirty pages are written — the kernel may flush a half-updated data structure before you're ready, which breaks crash-consistency protocols like WAL ordering ("the data page must not reach disk before its log record").
+The convenience of mmap — "the kernel moves the data for you" — becomes a liability when *you* need to decide when data reaches disk. Writes to a `MAP_SHARED` mapping dirty page-cache pages; the kernel writes them back eventually (writeback thresholds, dirty expiry ~30 s by default). For durability you must call **`msync(MS_SYNC)`** (or `fsync` on the fd). Worse, you can't control *when* dirty pages are written. The kernel may flush a half-updated data structure before you're ready. That breaks crash-consistency protocols such as WAL ordering, where the data page must not reach disk before its log record.
 
 :::depth{level=advanced}
 ### Why many databases avoid mmap for their data
@@ -161,6 +192,10 @@ MAP_SHARED maps the file's page-cache pages directly; writes modify those pages,
 
 For large files accessed randomly or repeatedly (indexes, lookup tables), when multiple processes should share one in-memory copy, or to avoid copying data between the page cache and user buffers. Prefer read() for streaming/sequential processing, when you need explicit error handling and I/O control, or for writes requiring careful durability ordering.
 
+### [L2 · how] How do you memory-map a file in Java, and what are the pitfalls?
+
+`FileChannel.map(mode, position, size)` calls `mmap` and returns a `MappedByteBuffer`. `READ_ONLY` and `READ_WRITE` are shared mappings (writes reach the page cache and eventually the file); `PRIVATE` is copy-on-write. Pitfalls: a buffer is `int`-indexed, so each mapping is at most 2 GB (large files need several mappings, or `MemorySegment` since Java 22); the mapping is released only when the buffer is garbage-collected, so files can stay mapped and undeletable on Windows (an `Arena`-based `MemorySegment` unmaps on close); writes are durable only after `force()` (msync); and I/O errors surface as an `InternalError` or a crash-like fault at the accessing instruction, not as an `IOException`. Lucene's `MMapDirectory` is the best-known user, which is why Elasticsearch needs `vm.max_map_count` raised.
+
 ### [L3 · why] Why do many databases avoid mmap for their data files?
 
 They lose control over when dirty pages are written (breaking write-ahead logging order), page faults block threads without async alternatives, I/O errors appear as SIGBUS, and kernel eviction/TLB shootdowns limit scalability on fast SSDs. A self-managed buffer pool lets the DB control eviction, prefetching, durability order and I/O scheduling.
@@ -189,6 +224,51 @@ Private mappings are copy-on-write; the file never sees the changes.
 
 There's no system call to return an error from — the fault is delivered as a signal.
 
+### [numeric 3 unit=GB] Redis holds a 10 GB dataset in 4 KB pages and forks for BGSAVE. While the child writes the snapshot, the parent modifies 30% of the pages. How much extra memory does copy-on-write use?
+
+:::answer
+Each modified page is copied once: 30% × 10 GB = **3** GB extra. Pages the parent doesn't touch stay shared. A workload that rewrote every page would approach 10 GB extra, doubling memory.
+:::
+
+### [numeric 2000 unit=MB] With transparent huge pages (2 MB), the Redis parent makes one small write into each of 1,000 different huge pages during a BGSAVE. How much memory gets copied?
+
+:::answer
+Copy-on-write copies a whole page: 1,000 × 2 MB = **2000** MB. With 4 KB pages the same 1,000 writes would copy only 1,000 × 4 KB ≈ 4 MB. That 500× amplification is why Redis tells you to disable THP.
+:::
+
+### [mcq] A Java program maps a file with `FileChannel.MapMode.PRIVATE` and writes into the buffer. What happens to the file?
+
+- [ ] It changes after `force()` is called
+- [ ] It changes when the channel is closed
+- [x] It never changes; the writes go to private copy-on-write pages that are discarded when unmapped
+- [ ] The write throws `ReadOnlyBufferException`
+
+`PRIVATE` is `MAP_PRIVATE`: the first write to each page copies it for this process only. Other processes and the file keep seeing the original data.
+
+### [exercise] A Java service must scan a 10 GB file of fixed-size 64-byte records and sum one 8-byte field from each record. Write it with memory mapping, explain why a single `MappedByteBuffer` won't do, and say what the OS does while your loop runs.
+
+:::solution
+A single `MappedByteBuffer` can't span 10 GB because its index is an `int` (2 GB maximum). Use a `MemorySegment` (Java 22+):
+
+```java
+static long sumField(Path file) throws IOException {
+    try (FileChannel ch = FileChannel.open(file, StandardOpenOption.READ);
+         Arena arena = Arena.ofConfined()) {
+        MemorySegment data = ch.map(FileChannel.MapMode.READ_ONLY, 0, ch.size(), arena);
+        long sum = 0;
+        for (long off = 0; off + 64 <= data.byteSize(); off += 64) {
+            sum += data.get(ValueLayout.JAVA_LONG_UNALIGNED, off + 8);   // the field at byte 8
+        }
+        return sum;
+    }
+}
+```
+
+(On older Java versions, map the file in 1 GB windows with several `MappedByteBuffer`s.)
+
+While the loop runs, the first access to each 4 KB page causes a page fault. If the page is in the page cache, it's a minor fault and the kernel just maps it; otherwise it's a major fault and the thread sleeps while the page is read. On this sequential pattern the kernel's read-ahead fetches the following pages in large chunks, so most faults are minor. No `read()` system calls happen and no bytes are copied into a Java buffer. Closing the arena unmaps the file at once.
+:::
+
 ## Quick Revision
 
 - **COW**: share pages read-only; copy a page on first write. Powers fork, snapshots, MAP_PRIVATE.
@@ -197,3 +277,4 @@ There's no system call to return an error from — the fault is delivered as a s
 - Durability needs `msync`/`fsync`; errors arrive as **SIGBUS**.
 - DBs often avoid mmap: no control over flush order/I/O, blocking faults, SIGBUS, eviction scalability.
 - Redis BGSAVE: COW growth under writes; disable THP.
+- Java: `FileChannel.map` = mmap (`PRIVATE` = MAP_PRIVATE, `force()` = msync); `MappedByteBuffer` ≤ 2 GB and GC-unmapped; `MemorySegment` + `Arena` (Java 22) has neither limit.

@@ -11,7 +11,7 @@ relevance: essential
 stage: 1
 prerequisites: []
 related: [os-hardware-model, os-program-execution, os-processes, os-syscalls-interrupts]
-tags: [kernel, user space, kernel mode, user mode, protection, abstraction, monolithic kernel, microkernel]
+tags: [kernel, user space, kernel mode, user mode, protection, abstraction, monolithic kernel, microkernel, types of operating systems, batch, multiprogramming, time-sharing, real-time]
 ---
 
 ## Mental Model
@@ -19,7 +19,7 @@ tags: [kernel, user space, kernel mode, user mode, protection, abstraction, mono
 Think of the operating system as three jobs held by one piece of software:
 
 1. **Referee** — many programs want the same CPU, memory, disk and network card at the same time. The OS decides who gets what, for how long, and stops anyone from cheating.
-2. **Illusionist** — it gives each program a simplified, private view of the machine: *its own* CPU (a process), *its own* huge contiguous memory (a virtual address space), *named, growable* storage (files), and *reliable pipes to other machines* (sockets). None of these exist in hardware.
+2. **Illusionist** — it gives each program a simplified, private view of the machine. Each program gets *its own* CPU (a process) and *its own* huge contiguous memory (a virtual address space). It also gets *named, growable* storage (files) and *reliable pipes to other machines* (sockets). None of these exist in hardware.
 3. **Glue** — it hides the mess of thousands of device models behind uniform interfaces, so `write()` works the same whether the bytes go to an SSD, a terminal or a network socket.
 
 The part of the OS that does this with full hardware privileges is the **kernel**. Everything else — your code, the shell, even most "system" tools — runs in **user space** with restricted privileges and must *ask* the kernel to do anything powerful. That request is a **system call**.
@@ -100,6 +100,21 @@ The kernel continuously makes decisions:
 - **I/O**: which disk request is serviced next, how much data to cache ([page cache](lesson:os-page-cache)).
 - **Limits**: how many files a process may open, how much memory a container may use (rlimits, cgroups).
 
+### Kinds of operating systems
+
+Textbooks classify operating systems by how they share the machine. Each kind added one idea to the one before:
+
+| Kind | The idea | Example |
+|---|---|---|
+| **Batch** | Run queued jobs one after another, with no user interaction | 1960s mainframes |
+| **Multiprogramming** | Keep several programs in memory; when one waits for I/O, run another | Keeps the CPU busy instead of idle |
+| **Time-sharing (multitasking)** | Also switch programs every few milliseconds on a timer, so each user feels in control | Linux, Windows, macOS |
+| **Real-time** | Guarantee deadlines. *Hard*: a missed deadline is a failure. *Soft*: late is merely worse | VxWorks, QNX, Linux with PREEMPT_RT |
+| **Distributed** | Make many machines cooperate as one system | Plan 9; cluster schedulers like Kubernetes play this role today |
+| **Embedded** | Small and single-purpose, often real-time | FreeRTOS, Zephyr |
+
+Multiprogramming switches only when a program blocks. Time-sharing adds the timer interrupt, so it also switches a program that never blocks. That timer is what makes an interactive system possible.
+
 ## Internal Mechanism
 
 ### What is "in the kernel"?
@@ -108,7 +123,7 @@ On Linux the kernel contains the scheduler, memory manager, virtual filesystem l
 
 ### Kernel architectures
 
-The question underneath this debate: *how much code should hold the master key?* Every line in kernel mode can crash or compromise the whole machine, so less is safer — but every boundary crossing between pieces costs time, so more is faster.
+The question underneath this debate: *how much code should hold the master key?* Every line in kernel mode can crash or compromise the whole machine, so less is safer. But every boundary crossing between pieces costs time, so more is faster.
 
 :::compare[Monolithic vs microkernel]
 | | Monolithic (Linux, traditional Unix, Windows NT core is "hybrid") | Microkernel (seL4, QNX, MINIX 3) |
@@ -146,12 +161,18 @@ Even `ls` makes ~58 system calls: mapping shared libraries (`mmap`), opening the
 
 ## Visualization
 
-A single `write(fd, buf, n)` from Python, traced through the layers:
+A single write from Java, traced through the layers:
+
+```java
+try (FileOutputStream out = new FileOutputStream("log.txt")) {
+    out.write("hi".getBytes(StandardCharsets.UTF_8));
+}
+```
 
 ```text
- your code        f.write("hi")              user mode
- language runtime  → buffered io → write(3, "hi", 2)
- libc              → places syscall number in rax, args in rdi/rsi/rdx
+ your code         out.write(bytes)                      user mode
+ JDK               FileOutputStream.write → native writeBytes (JNI)
+ libc              write(3, "hi", 2): syscall number in rax, args in rdi/rsi/rdx
  CPU               → `syscall` instruction: switch to kernel mode, jump to entry point
  ───────────────────────────────────────────────────── privilege boundary
  kernel            → sys_write: look up fd 3 in the process's file table
@@ -162,6 +183,8 @@ A single `write(fd, buf, n)` from Python, traced through the layers:
  CPU               → `sysret`: back to user mode       user mode
  (later)           writeback thread flushes dirty page to the SSD via the block layer + driver
 ```
+
+A plain `FileOutputStream` makes one system call per `write`. Wrapping it in a `BufferedOutputStream` (8 KiB buffer by default) collects many small writes into one system call.
 
 ## Complexity & Performance
 
@@ -212,6 +235,10 @@ Kernel mode is the CPU's privileged mode: all instructions and all memory are ac
 
 A controlled request from a user program to the kernel for a privileged service. The program places a syscall number and arguments in registers and executes a trap instruction (`syscall` on x86-64); the CPU switches to kernel mode and jumps to the kernel's syscall handler. Examples: `open`, `read`, `write`, `close`, `fork`, `execve`, `mmap`, `socket`, `connect`, `exit`.
 
+### [L1 · compare] What are the main types of operating systems?
+
+**Batch** systems run queued jobs one after another without interaction. **Multiprogramming** systems keep several programs in memory and switch to another when one waits for I/O, so the CPU isn't idle. **Time-sharing** (multitasking) systems also switch on a timer every few milliseconds, so interactive users all get quick responses. **Real-time** systems guarantee deadlines: hard real-time treats a missed deadline as failure (airbag controller), soft real-time tolerates occasional lateness (video playback). **Distributed** systems make several machines work as one, and **embedded** systems are small, single-purpose and often real-time. Linux, Windows and macOS are time-sharing systems; Linux can be made soft-real-time with PREEMPT_RT.
+
 ### [L2 · compare] Compare monolithic kernels and microkernels.
 
 A monolithic kernel runs most OS services — scheduler, memory manager, filesystems, drivers, networking — in one privileged address space: fast (direct function calls) but a bug anywhere can crash everything. A microkernel keeps only minimal mechanisms (IPC, scheduling, memory basics) in the kernel and runs drivers and filesystems as user-space servers: better isolation and verifiability, but more IPC and mode switches. Linux is monolithic with loadable modules; QNX and seL4 are microkernels; Windows NT and macOS XNU are hybrids.
@@ -252,6 +279,37 @@ Anything that touches devices, other processes, or the kernel's resource tables 
 
 An invalid memory access makes the MMU raise an exception, trapping into the kernel, which decides the access is illegal and delivers SIGSEGV.
 
+### [numeric 15 unit=%] A Java service logs 1,000,000 lines per second, and each line is written with its own `write` system call costing 150 ns of overhead. What percentage of one CPU core goes to that overhead alone?
+
+:::answer
+1,000,000 calls × 150 ns = 0.15 s of overhead in every second, which is **15**% of a core, before any actual work on the data.
+:::
+
+### [numeric 9766 ±1] The same service wraps its `FileOutputStream` in a `BufferedOutputStream` with the default 8,192-byte buffer. Lines average 80 bytes. Roughly how many `write` system calls does it now make per second?
+
+:::answer
+1,000,000 lines × 80 bytes = 80,000,000 bytes per second. Each system call now carries a full buffer: 80,000,000 / 8,192 ≈ **9766** calls per second, about 100 times fewer. The overhead drops from 15% of a core to about 0.15%.
+:::
+
+### [mcq] A Java thread calls `Thread.sleep(10)`. What brings it back 10 ms later?
+
+- [ ] The thread checks the clock in a loop until 10 ms have passed
+- [x] The thread blocks in a system call; a timer interrupt later lets the kernel mark it runnable again
+- [ ] A CPU exception raised when the sleep ends
+- [ ] The JVM's garbage collector wakes sleeping threads
+
+The sleep enters the kernel through a system call (on Linux, `nanosleep` or a timed `futex` wait), and the kernel takes the thread off the CPU. Hardware timer interrupts let the kernel notice the deadline and put the thread back on the run queue. No CPU time is used while it sleeps.
+
+### [exercise] For each event, say whether the CPU enters the kernel through a system call, an exception or an interrupt, and what the kernel then does: (a) Java reads a file with `Files.readAllBytes`; (b) JIT-compiled Java code dereferences `null`; (c) a network packet arrives; (d) a thread's time slice runs out; (e) a new 1 GB `byte[]` is touched for the first time.
+
+:::solution
+- **(a) System calls**: `openat`, `fstat`, `read` (often several), `close`. The kernel checks permissions and copies data from the page cache, reading from disk first if needed.
+- **(b) Exception.** HotSpot's compiled code doesn't test for `null`; it just loads from the address. Address 0 is unmapped, so the MMU raises a page fault. The kernel finds no valid mapping and sends `SIGSEGV`. The JVM's signal handler recognizes the faulting instruction as an implicit null check and throws `NullPointerException`, so the program doesn't crash.
+- **(c) Interrupt** from the network card. The kernel's driver queues the packet and the network stack processes it, waking any thread blocked reading that socket.
+- **(d) Interrupt** from the timer. The scheduler sees the time slice has expired and may switch to another thread (a context switch).
+- **(e) Exception.** Each first touch of a page causes a page fault. This one is legitimate: the kernel allocates a zeroed physical page, maps it and resumes the instruction. The program never notices.
+:::
+
 ## Quick Revision
 
 - OS = **referee** (sharing), **illusionist** (abstractions), **glue** (uniform device interfaces).
@@ -259,5 +317,6 @@ An invalid memory access makes the MMU raise an exception, trapping into the ker
 - Only three ways into the kernel: **system call**, **exception/fault**, **interrupt** — always to kernel-chosen entry points.
 - Core abstractions: **process/thread** (CPU), **virtual address space** (memory), **file** (storage), **socket** (network), **file descriptor** (uniform I/O).
 - Monolithic (Linux) = fast, less isolated; microkernel = isolated, more IPC.
+- Kinds of OS: batch → multiprogramming (switch on I/O wait) → time-sharing (switch on a timer) → real-time (deadlines), plus distributed and embedded.
 - Syscall ≈ 50–200 ns overhead vs ~1 ns function call → batch them.
 - Root ≠ kernel mode; containers share one kernel, VMs don't.

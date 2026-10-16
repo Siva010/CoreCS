@@ -12,7 +12,7 @@ stage: 2
 prerequisites: [os-address-spaces]
 related: [os-paging, os-page-faults, os-cow-mmap, os-thrashing-working-set]
 labs: [memory-allocator]
-tags: [malloc, free, brk, mmap, free list, first fit, best fit, worst fit, next fit, fragmentation, internal fragmentation, external fragmentation, slab allocator, buddy system, memory leak, garbage collection]
+tags: [malloc, free, brk, mmap, free list, first fit, best fit, worst fit, next fit, fragmentation, internal fragmentation, external fragmentation, slab allocator, buddy system, memory leak, garbage collection, fixed partitioning, variable partitioning, 50-percent rule, TLAB]
 ---
 
 ## Mental Model
@@ -33,7 +33,7 @@ The retailer's hardest problem is **fragmentation**: after many allocations and 
 
 **The problem.** Programs need memory whose size and lifetime are only known at runtime (a request body, a growing list, a cache).
 
-**Without it.** The stack can't hold data that outlives a function, and asking the kernel for every tiny object would cost a syscall and a whole page each — a 24-byte object would occupy 4,096 bytes and take ~1 µs to get.
+**Without it.** The stack can't hold data that outlives a function. Asking the kernel for every tiny object would cost a syscall and a whole page each: a 24-byte object would occupy 4,096 bytes and take ~1 µs to get.
 
 **The idea.** Buy in bulk, sell retail. A user-space allocator amortizes kernel calls and packs small objects densely. Everything inside `malloc` — headers, free lists, splitting, coalescing — is just the bookkeeping a shopkeeper needs to remember which pieces of the bulk purchase are sold and which are back on the shelf.
 
@@ -63,6 +63,25 @@ Either way, the kernel only reserves address space; physical pages arrive on fir
 
 On `free(p)`: read the header, mark the block free, **coalesce** with adjacent free neighbors (using boundary tags — a footer with the size — to find the previous block), and insert into a free list.
 
+```mermaid
+flowchart TD
+    M["malloc(n)"] --> R["round n up to a size class"]
+    R --> T{"free block in this<br/>thread's cache?"}
+    T -->|yes| F["return it: ~20 ns,<br/>no lock, no system call"]
+    T -->|no| A{"free block in<br/>the arena?"}
+    A -->|yes| S["split it if too big,<br/>return it"]
+    A -->|no| K["ask the kernel: brk or mmap<br/>(pages arrive on first touch)"]
+```
+
+### Contiguous allocation: fixed vs variable partitions
+
+Early operating systems faced the same problem for whole processes, and textbooks still ask about it:
+
+- **Fixed partitions**: memory is divided in advance into partitions of set sizes, and each process gets one. A 90 KB process in a 100 KB partition wastes 10 KB inside it: **internal** fragmentation.
+- **Variable partitions**: each process gets exactly what it asks for, carved from free memory. Nothing is wasted inside, but as processes come and go, the free space breaks into holes between them: **external** fragmentation.
+
+How bad does external fragmentation get? Knuth's **50-percent rule**: with first fit, if N blocks are allocated, about N/2 more blocks' worth of memory is lost in holes. That means about **one third** of memory can be unusable. Compaction (moving processes together) fixes it but requires execution-time address binding, so the processes can be moved.
+
 ### Placement policies
 
 When several holes are big enough, which one should you use? Using one changes which holes are left for future requests, so the choice decides how bad fragmentation gets. Free holes (in address order): **[100 KB] [500 KB] [200 KB] [300 KB] [600 KB]**. Requests arrive: 212 KB, 417 KB, 112 KB, 426 KB.
@@ -89,7 +108,7 @@ The textbook allocator has two real-world problems: searching lists is slow, and
 ### Kernel allocators
 
 - **Buddy system**: memory split into power-of-two blocks; a request is rounded up to a power of two, and a block of size 2ᵏ is split into two "buddies" of 2ᵏ⁻¹ as needed. On free, a block merges with its buddy if the buddy is free. Fast coalescing, but internal fragmentation up to ~50% (a 33 KB request takes 64 KB). Linux uses it for physical page allocation.
-- **Slab allocator** (SLUB in Linux): caches of pre-initialized objects of one type (inodes, task structs, socket buffers) carved out of pages — no fragmentation within a cache, fast allocation, and constructed state can be reused.
+- **Slab allocator** (SLUB in Linux): caches of pre-initialized objects of one type (inodes, task structs, socket buffers), carved out of pages. There's no fragmentation within a cache, allocation is fast, and constructed state can be reused.
 
 ## Internal Mechanism
 
@@ -100,6 +119,7 @@ The problem GC solves isn't speed — it's *people*. Manual `free` produces two 
 - **Reference counting** (Python's primary mechanism, Swift, `shared_ptr`): free when the count hits zero. Immediate reclamation; can't collect cycles alone (Python adds a cycle detector); counts are write-heavy and contended across threads.
 - **Tracing (mark-sweep, mark-compact, copying)**: from roots (stacks, globals, registers), mark everything reachable; everything else is garbage. **Compacting/copying** collectors move live objects together, **eliminating external fragmentation** and enabling bump-pointer allocation (just increment a pointer — as fast as a stack).
 - **Generational**: most objects die young, so collect the young generation often and cheaply (copying), the old generation rarely (JVM G1/ZGC, .NET, V8).
+- **Allocation in the JVM**: because the GC compacts, the free space in the young generation is one contiguous region. Each thread gets a private chunk of it, a **TLAB** (thread-local allocation buffer), and `new` just bumps a pointer inside it: no free list, no lock, a few instructions. That is why allocating short-lived objects in Java is so cheap.
 - **Pauses**: stop-the-world phases pause application threads; concurrent collectors (ZGC, Shenandoah, Go's collector) keep pauses to milliseconds or less at the cost of CPU and memory overhead.
 
 :::depth{level=advanced}
@@ -113,9 +133,35 @@ Freed memory usually returns to the allocator's free lists, not to the kernel. T
 Internal vs external fragmentation, concretely:
 
 - **Internal**: a slab allocator with 64-byte size class serving 40-byte requests wastes 24 bytes per object (37.5%).
-- **External**: allocate A(100 KB), B(50 KB), C(100 KB), D(50 KB), E(100 KB) contiguously, then free B and D. 100 KB is free in total, but in two 50 KB holes — a 60 KB request can't be satisfied without growing the heap.
+- **External**: allocate A(100 KB), B(50 KB), C(100 KB), D(50 KB), E(100 KB) contiguously, then free B and D. In total 100 KB is free, but in two 50 KB holes, so a 60 KB request can't be satisfied without growing the heap.
 
 Compaction (moving blocks together) would fix it, but C and E can't be moved in C/C++ because raw pointers to them exist — only GC'd runtimes with pointer tracking (or handle-based designs) can compact.
+
+A leak in a garbage-collected language looks like this: nothing is forgotten, but nothing ever becomes unreachable either.
+
+```java
+// One entry per request ID, kept forever: the map is static, so every value stays reachable
+static final Map<String, byte[]> RENDERED = new ConcurrentHashMap<>();
+
+byte[] render(String requestId) {
+    return RENDERED.computeIfAbsent(requestId, id -> expensiveRender(id));
+}
+```
+
+The heap grows with traffic until the GC runs constantly and then fails with `OutOfMemoryError`. Bound the cache so old entries become garbage:
+
+```java
+static final int MAX_ENTRIES = 1_000;
+static final Map<String, byte[]> RENDERED = Collections.synchronizedMap(
+        new LinkedHashMap<>(MAX_ENTRIES, 0.75f, true) {          // true = access order (LRU)
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, byte[]> eldest) {
+                return size() > MAX_ENTRIES;                      // evict the least recently used
+            }
+        });
+```
+
+(In production, a cache library such as Caffeine gives size and time limits without the global lock.)
 
 ## Complexity & Performance
 
@@ -217,6 +263,33 @@ The request is rounded up to 128 KB; 128 − 70 = **58 KB** wasted.
 
 Compaction moves live objects together, leaving one contiguous free region.
 
+### [numeric 80 unit=KB] Memory has fixed partitions of 100, 200 and 300 KB. Processes of 90, 180 and 250 KB are placed one per partition, in that order. What is the total internal fragmentation?
+
+:::answer
+Waste inside each partition: (100 − 90) + (200 − 180) + (300 − 250) = 10 + 20 + 50 = **80** KB. That memory is free but unusable, because each partition belongs to one process.
+:::
+
+### [numeric 8 unit=bytes] An allocator rounds every request up to a multiple of 16 bytes (16, 32, 48, …). How many bytes are wasted when a program asks for 40 bytes?
+
+:::answer
+40 rounds up to 48, so 48 − 40 = **8** bytes of internal fragmentation (17%). Smaller size-class steps waste less but need more free lists.
+:::
+
+### [numeric 33.3 ±0.5 unit=%] By Knuth's 50-percent rule, with first fit and N allocated blocks, about N/2 blocks' worth of memory is lost in holes. What fraction of memory is unusable?
+
+:::answer
+For every N blocks in use, N/2 are lost: unusable / total = 0.5N / (N + 0.5N) = 1/3 ≈ **33.3**%. Try first fit against best fit on your own request sequences in the [memory allocation lab](lab:memory-allocator).
+:::
+
+### [mcq] A Java service's heap grows steadily with traffic until it throws `OutOfMemoryError`. A heap dump shows millions of entries in a `static ConcurrentHashMap<String, Session>` keyed by request ID. What kind of problem is this?
+
+- [ ] The garbage collector has a bug and is not freeing unreachable objects
+- [x] A leak in a garbage-collected language: the static map keeps every entry reachable, so none of it is garbage
+- [ ] External fragmentation of the Java heap
+- [ ] The JVM's TLABs are too small
+
+The GC frees only unreachable objects. A static map is reachable from the class, and so is everything it holds. Bound the map (an LRU or time-based eviction), or remove entries when the request ends.
+
 ## Quick Revision
 
 - malloc = user-space retailer; kernel = wholesaler (`brk`, `mmap`); pages arrive on first touch.
@@ -226,3 +299,5 @@ Compaction moves live objects together, leaving one contiguous free region.
 - Modern: size classes + per-thread caches (tcmalloc/jemalloc). Kernel: **buddy** (powers of two) + **slab** (object caches).
 - GC: refcount (no cycles alone), tracing (mark/sweep/compact), generational; compaction kills external fragmentation.
 - `free` rarely returns memory to the OS; RSS growth ≠ necessarily a leak.
+- Fixed partitions → internal fragmentation; variable partitions → external. **50% rule**: ≈ ⅓ of memory lost to holes with first fit.
+- JVM: compacting GC → TLAB bump-pointer allocation. GC leaks = unbounded reachable collections (static maps, listeners).

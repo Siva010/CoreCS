@@ -11,7 +11,7 @@ relevance: medium
 stage: 2
 prerequisites: [os-paging]
 related: [os-address-spaces, os-dynamic-allocation, os-paging]
-tags: [segmentation, segment table, base, limit, segmentation fault, external fragmentation, segmented paging, x86 segments, gdt]
+tags: [segmentation, segment table, base, limit, segmentation fault, external fragmentation, segmented paging, x86 segments, gdt, compressed oops]
 ---
 
 ## Mental Model
@@ -34,7 +34,7 @@ Translation: if `offset < limit[s]`, physical address = `base[s] + offset`; othe
 
 **The idea.** A program isn't one blob — it's a few distinct pieces with different jobs and different rules. So translate *per piece*: each piece gets its own start address and length.
 
-**Why it matters today even though it lost.** Segmentation is the natural first answer to "how do I divide memory?", and seeing exactly why it fails (variable sizes → fragmentation) is what makes paging's "everything the same size" choice obvious.
+**Why it matters today even though it lost.** Segmentation is the natural first answer to "how do I divide memory?". Seeing exactly why it fails (variable sizes → fragmentation) makes paging's "everything the same size" choice obvious.
 
 :::callout[That's all it is]{type=insight}
 Segmentation = a few (base, length) pairs, one per logical part of the program. Check the offset against the length, add the base. Its only real flaw is that variable-sized pieces leave awkward gaps in RAM — which is the problem paging was invented to fix.
@@ -53,22 +53,19 @@ Segmentation = a few (base, length) pairs, one per logical part of the program. 
 - Logical (1, 852) → 852 ≥ 400 ✘ → **trap: segmentation violation**.
 - Logical (0, 500) with a write → permission violation (code is not writable).
 
-```text
-logical address (s, d)
-       │
-       ▼
-segment table[s] → (base, limit)
-       │ d < limit ? ─── no ──→ fault (SIGSEGV)
-       │ yes
-       ▼
-physical address = base + d
+```mermaid
+flowchart TD
+    L["logical address<br/>(segment 2, offset 53)"] --> T["segment table, entry 2:<br/>base 4300, limit 1100"]
+    T --> C{"offset < limit?<br/>53 < 1100"}
+    C -->|yes| P["physical address<br/>4300 + 53 = 4353"]
+    C -->|no| F["trap:<br/>segmentation fault"]
 ```
 
 ## Internal Mechanism
 
 ### Why pure segmentation lost
 
-Segments vary in size, so physical memory allocation is the dynamic storage-allocation problem ([Dynamic Allocation](lesson:os-dynamic-allocation)) — first/best fit, holes, **external fragmentation**, and occasional **compaction** (moving segments, which is possible because only base registers need updating, but costly). Growing a segment may require moving it. Swapping works only with whole segments.
+Segments vary in size, so physical memory allocation becomes the dynamic storage-allocation problem ([Dynamic Allocation](lesson:os-dynamic-allocation)): first/best fit, holes, **external fragmentation**, and occasional **compaction**. Compaction moves segments, which is possible because only base registers need updating, but costly. Growing a segment may require moving it. Swapping works only with whole segments.
 
 ### Segmentation with paging
 
@@ -79,6 +76,26 @@ logical (segment, offset) → linear address (segment base + offset) → page ta
 ```
 
 This is exactly the classic **IA-32 (x86 32-bit)** design: segment selectors (CS, DS, SS…) index a descriptor table (GDT/LDT) giving base and limit; the resulting **linear address** is then translated by paging.
+
+A worked translation with 4 KB pages: segment 1 has base `0x10000` in the linear space, and the program accesses offset `0x234`.
+
+```text
+linear  = 0x10000 + 0x234 = 0x10234       (after the limit check)
+page    = 0x10234 >> 12   = 0x10,  offset = 0x234
+page table: page 0x10 → frame 0x7
+physical = (0x7 << 12) | 0x234 = 0x7234
+```
+
+### Base + offset lives on in the JVM
+
+The JVM uses segmentation's core trick for its own references. On a 64-bit JVM, a full pointer takes 8 bytes. With **compressed oops** (on by default for heaps below about 32 GB), a reference is stored as a 32-bit *offset from the heap's base*, scaled by 8 because objects are 8-byte aligned:
+
+```text
+address = heap base + (compressed reference × 8)
+largest reachable heap = 2^32 × 8 bytes = 32 GB
+```
+
+Every reference field then takes 4 bytes instead of 8, which shrinks object-heavy heaps by a large fraction and fits more objects in the CPU caches. Set `-Xmx` above about 32 GB and the JVM falls back to full 8-byte pointers. A 33 GB heap can then hold *fewer* objects than a 31 GB one.
 
 :::depth{level=advanced}
 ### What x86-64 did with segmentation
@@ -142,6 +159,14 @@ Paging divides memory into fixed-size pages/frames invisible to the programmer; 
 
 (2, 53): 53 < 1100 → physical 4353. (2, 1200): 1200 ≥ 1100 → out of bounds → trap (segmentation violation).
 
+### [L2 · numerical] With segmentation and 4 KB paging, segment 1's base is `0x10000` and page `0x10` maps to frame `0x7`. What physical address does offset `0x234` in segment 1 reach?
+
+Linear address = `0x10000 + 0x234` = `0x10234`. Page number `0x10`, offset `0x234`. Frame `0x7` → physical = `0x7000 | 0x234` = **`0x7234`**. The segment step adds a base and checks a limit; the paging step replaces the page number with a frame number.
+
+### [L2 · why] Why does a JVM heap of 33 GB often hold fewer objects than one of 31 GB?
+
+Below about 32 GB, HotSpot uses compressed oops: each reference is a 32-bit offset from the heap base, scaled by the 8-byte object alignment, so 2³² × 8 = 32 GB is reachable with 4-byte references. Above that limit the JVM must use full 8-byte pointers, so every reference field and every object header's class pointer gets bigger. An application full of small objects and references can lose 20–40% of its usable heap to the larger pointers. The usual advice is to stay at 31 GB or jump well past it (e.g. 48 GB+).
+
 ### [L2 · why] Why was segmentation combined with paging?
 
 To keep segmentation's logical organization and per-segment protection while eliminating external fragmentation: each segment is paged, so physical memory is allocated in fixed-size frames that fit anywhere.
@@ -167,6 +192,36 @@ From segmented architectures, where accessing beyond a segment's limit or violat
 
 Variable-sized segments leave unusable holes between them.
 
+### [numeric 4199] Segment 3 has base 3200 and limit 1000. What physical address does logical (3, 999) map to?
+
+:::answer
+999 < 1000, so the access is legal (999 is the last valid offset): physical = 3200 + 999 = **4199**. Offset 1000 would trap.
+:::
+
+### [numeric 32 unit=GB] HotSpot's compressed references are 32-bit offsets from the heap base, multiplied by the 8-byte object alignment. What is the largest heap they can address?
+
+:::answer
+2³² distinct offsets × 8 bytes = 2³⁵ bytes = **32** GB. Raising object alignment to 16 bytes (`-XX:ObjectAlignmentInBytes=16`) would double the limit at the cost of more padding.
+:::
+
+### [mcq] A service's heap is raised from `-Xmx31g` to `-Xmx34g`, yet it hits `OutOfMemoryError` sooner. What is the most likely reason?
+
+- [ ] The kernel limits each process to 32 GB
+- [x] Above about 32 GB the JVM can't use compressed (4-byte) references, so every reference grows to 8 bytes and objects take more space
+- [ ] The garbage collector stops working above 32 GB
+- [ ] Larger heaps always fragment more
+
+It is the base + offset limit of compressed oops. Check with `java -Xmx34g -XX:+PrintFlagsFinal -version | grep UseCompressedOops`.
+
+### [exercise] With segmentation on top of 4 KB paging: segment 0 has base `0x4000` and limit `0x3000`; pages `0x4`, `0x5`, `0x6` map to frames `0x22`, `0x9`, `0x31`. Translate offsets `0x1A40` and `0x3010` in segment 0.
+
+:::solution
+- **Offset `0x1A40`**: `0x1A40` < limit `0x3000`, so it is legal. Linear = `0x4000 + 0x1A40` = `0x5A40`. Page `0x5`, offset `0xA40`. Frame `0x9` → physical **`0x9A40`**.
+- **Offset `0x3010`**: `0x3010` ≥ `0x3000`, so the segment check fails and the hardware traps before paging is consulted: a segmentation violation.
+
+The limit check comes first; only a legal offset ever reaches the page table.
+:::
+
 ## Quick Revision
 
 - Segmentation: logical address = (segment, offset); segment table = base + limit + permissions.
@@ -174,3 +229,4 @@ Variable-sized segments leave unusable holes between them.
 - Matches program structure; natural sharing/protection; suffers **external fragmentation** (needs compaction).
 - Segmentation + paging (IA-32): segment → linear address → paging.
 - x86-64: flat model; FS/GS kept for thread-local and per-CPU data.
+- JVM compressed oops = base + 32-bit offset × 8 → heaps up to 32 GB use 4-byte references; above that, 8-byte.

@@ -11,12 +11,35 @@ relevance: essential
 stage: 1
 prerequisites: [os-processes]
 related: [os-dynamic-allocation, os-paging, os-page-faults, os-threads]
-tags: [address space, virtual memory, physical memory, stack, heap, static memory, bss, data segment, stack frame, stack overflow, memory layout]
+tags: [address space, virtual memory, physical memory, stack, heap, static memory, bss, data segment, stack frame, stack overflow, memory layout, logical address, address binding, base and limit registers, relocation, JVM memory]
 ---
 
 ## Mental Model
 
-Every process gets a **private map of a huge imaginary city** — its virtual address space. On this map, the code district is always in the same place, the stack always starts near the top and grows down, the heap grows up from near the bottom. Two processes can both have a house at "42 Main Street" (the same virtual address) because each has its own map. The OS and the hardware's **MMU** secretly translate each map address to a real plot of land (a physical RAM frame) — or to "not built yet" (a page fault) — without the process ever seeing physical addresses.
+Every process gets a **private map of a huge imaginary city** — its virtual address space. On this map, the code district is always in the same place, the stack always starts near the top and grows down, the heap grows up from near the bottom. Two processes can both have a house at "42 Main Street" (the same virtual address) because each has its own map. The OS and the hardware's **MMU** secretly translate each map address to a real plot of land, a physical RAM frame. Sometimes the answer is "not built yet", which is a page fault. The process never sees a physical address.
+
+```mermaid
+flowchart LR
+    subgraph A["process A (virtual)"]
+        A1["0x400000: code"]
+        A2["0x7ffd0000: stack"]
+    end
+    subgraph B["process B (virtual)"]
+        B1["0x400000: code"]
+        B2["0x7ffd0000: stack"]
+    end
+    subgraph RAM["physical RAM"]
+        F1["frame 812"]
+        F2["frame 97"]
+        F3["frame 5120"]
+    end
+    A1 --> F1
+    B1 --> F1
+    A2 --> F2
+    B2 --> F3
+```
+
+Both processes use the same virtual addresses. Their read-only code maps to the same physical frame, while each stack gets a private frame.
 
 ## Definition
 
@@ -31,7 +54,7 @@ Every process gets a **private map of a huge imaginary city** — its virtual ad
 
 **The problem.** RAM is one shared array of bytes. If every program uses real RAM addresses, every program has to know where the others live.
 
-**Without it.** Before virtual memory, programs used physical addresses directly: they had to be loaded at specific locations, a bug could overwrite another program or the OS, and a program couldn't be larger than physical RAM. Virtual address spaces provide:
+**Without it.** Before virtual memory, programs used physical addresses directly. They had to be loaded at specific locations, a bug could overwrite another program or the OS, and a program couldn't be larger than physical RAM. Virtual address spaces provide:
 
 1. **Isolation** — a process can't even *name* another process's memory.
 2. **Simplicity** — every program sees the same clean layout, starting at fixed addresses; linkers and compilers can assume it.
@@ -44,6 +67,24 @@ Each process gets its own private numbering of memory, and the hardware looks up
 :::
 
 ## How It Works
+
+### Logical addresses and address binding (the textbook view)
+
+Textbooks call the address a program uses a **logical address** and the one sent to RAM a **physical address**. Turning one into the other is **address binding**, and it can happen at three times:
+
+- **Compile time**: the compiler writes absolute physical addresses. The program can only ever run at that spot in memory (old MS-DOS `.COM` files).
+- **Load time**: the loader adjusts the addresses when it places the program in memory. The program can't move once it is running.
+- **Execution time**: every address is translated by hardware on every access, so the OS can move the program at any time. All modern systems do this.
+
+The simplest execution-time hardware is a pair of registers. The **base** (relocation) register holds where the process starts in physical memory; the **limit** register holds its size:
+
+```text
+base = 14000, limit = 3000
+logical 346   → 346 < 3000, so physical = 14000 + 346 = 14346
+logical 3500  → 3500 ≥ 3000 → trap to the OS: addressing error
+```
+
+Paging, covered in the [Paging](lesson:os-paging) lesson, generalizes this: a base per page instead of one per process.
 
 ### The layout (Linux x86-64, simplified)
 
@@ -69,22 +110,32 @@ Addresses are randomized per run by **ASLR** (address space layout randomization
 
 ### Where does each thing live?
 
-```c
-int limit = 100;               // .data  (static lifetime)
-int counter;                   // .bss   (zero-initialized)
-const char *msg = "hello";     // msg in .data; the string bytes in .rodata
+In a Java program, the same question has JVM-shaped answers:
 
-void handle(int n) {           // code in .text
-    int local = n * 2;         // stack (this call's frame)
-    char buf[64];              // stack
-    int *p = malloc(4096);     // p itself on the stack; the 4096 bytes on the heap
-    static int calls = 0;      // .bss (static local: one copy for the whole program)
-    calls++;
-    free(p);
+```java
+public class Handler {
+    static int limit = 100;                 // static field: stored with the Class object, on the heap
+    static final String MSG = "hello";      // the String object lives on the heap (in the string pool)
+
+    void handle(int n) {                    // bytecode in metaspace; JIT-compiled code in the code cache
+        int local = n * 2;                  // this call's stack frame (or just a register)
+        byte[] buf = new byte[64];          // the reference is on the stack; the array is on the heap
+        StringBuilder sb = new StringBuilder();   // if it never escapes, the JIT may avoid allocating it at all
+        sb.append(local);
+    }
 }
 ```
 
-In Java/Python/Go: local primitive variables and references live on the stack (or in registers); **objects** live on the heap managed by a garbage collector (Go and the JVM may place objects on the stack if **escape analysis** proves they don't outlive the function).
+Local primitives and references live in the thread's stack frame or in registers. **Objects** always live on the garbage-collected heap, with one exception: if escape analysis proves an object never leaves the method, HotSpot can *scalar-replace* it, keeping its fields in registers so no heap allocation happens.
+
+From the OS's point of view, the JVM is an ordinary process, and its regions sit in the layout above:
+
+| JVM region | Where it is in the process's address space |
+|---|---|
+| Java heap (`-Xmx`) | One large `mmap` reservation, committed as it grows |
+| Metaspace, code cache, GC data | More `mmap` regions (native memory, outside the Java heap) |
+| Each thread's stack (`-Xss`, default 1 MB) | A separate `mmap` region with a guard page |
+| `libjvm.so`, `libc` | The mmap region, mapped from files |
 
 ### How the stack works
 
@@ -101,7 +152,7 @@ higher addresses
 lower addresses
 ```
 
-Every thread has its own stack; the stacks of all threads live in the same address space (so a pointer to a stack variable *can* be shared across threads — dangerous if the frame is gone).
+Every thread has its own stack, and the stacks of all threads live in the same address space. So in C a pointer to a stack variable *can* be passed to another thread, which is dangerous once the frame is gone.
 
 ## Internal Mechanism
 
@@ -132,18 +183,30 @@ The main thread's stack grows on demand: touching just below the current stack t
 
 ## Example
 
-Why this matters for a classic bug — returning a pointer to a local:
+Why the stack's size limit matters in Java: every call pushes a frame, and the thread's stack is a fixed-size region.
 
-```c
-char *greeting(void) {
-    char buf[32];
-    snprintf(buf, sizeof buf, "hello");
-    return buf;            // BUG: buf's frame is popped on return
+```java
+record Node(Node child) {}
+
+static int depth(Node n) {                  // each call pushes a frame on this thread's stack
+    return n == null ? 0 : 1 + depth(n.child());
 }
-// The caller gets a pointer into the stack region that the next call will overwrite.
+
+// A chain nested 100,000 levels deep (e.g. from hostile JSON input) throws StackOverflowError:
+// the frames no longer fit in the thread's stack (1 MB by default) and hit its guard page.
 ```
 
-The memory still *exists* (the stack region is mapped), so the bug often "works" until another call overwrites it — a nondeterministic corruption. Fix: allocate on the heap, use a static buffer (not thread-safe), or let the caller pass a buffer.
+The fix is to walk iteratively, keeping the "to do" list on the heap, or to cap the nesting depth when parsing input:
+
+```java
+static int depth(Node n) {
+    int d = 0;
+    for (Node cur = n; cur != null; cur = cur.child()) d++;   // constant stack usage
+    return d;
+}
+```
+
+C's classic stack bug is returning a pointer to a local variable whose frame has been popped. That can't happen in Java. A method can't hand out a reference to its stack frame, and objects live on the heap for as long as anything refers to them.
 
 ## Complexity & Performance
 
@@ -204,6 +267,10 @@ Text (code, read-only/executable), data (initialized globals/statics), BSS (zero
 
 Isolation (a process can't access another's memory because it can't even form its physical addresses), a uniform layout that simplifies compilers and linkers, and flexibility for the OS to place, share, lazily load, or swap pages transparently.
 
+### [L1 · compare] What is the difference between a logical and a physical address, and when can address binding happen?
+
+A logical (virtual) address is what the program uses; a physical address is the location sent to RAM. Binding maps one to the other at **compile time** (absolute code that must run at a fixed location), **load time** (the loader relocates addresses once, when placing the program) or **execution time** (hardware translates every access, so the OS can move the process at will). Modern systems bind at execution time with an MMU: a base and limit register in the simplest form, page tables in practice. The limit check also gives protection, since any logical address beyond the limit traps.
+
 ### [L2 · trace] What happens if a function returns a pointer to a local array?
 
 The function's frame is popped on return; the pointer refers to stack memory that is still mapped but logically free. The next function calls overwrite it, so the data changes unpredictably. It's undefined behavior in C/C++ — the program may appear to work, crash, or corrupt data.
@@ -240,6 +307,49 @@ Static locals live for the whole program; zero-initialized ones go to BSS.
 
 Leaving the first pages unmapped turns null dereferences into immediate SIGSEGVs rather than silent corruption.
 
+### [numeric 14346] A process's base register holds 14000 and its limit register 3000. What physical address does the logical address 346 map to?
+
+:::answer
+346 is below the limit (3000), so the access is allowed, and physical = base + logical = 14000 + 346 = **14346**.
+:::
+
+### [numeric 2999] With the same limit register of 3000, what is the largest logical address the process can use?
+
+:::answer
+Valid logical addresses are 0 to limit − 1, so the largest is **2999**. Address 3000 or above traps to the OS as an addressing error.
+:::
+
+### [mcq] Inside a Java method, `byte[] buf = new byte[64];` runs. Where are the reference and the array stored?
+
+- [ ] Both on the stack
+- [x] The reference in the method's stack frame (or a register); the array on the heap
+- [ ] Both on the heap
+- [ ] The reference in metaspace; the array on the stack
+
+Arrays are objects, and objects live on the garbage-collected heap. Only the local variable that refers to it is in the frame. (If the JIT proves the array never escapes, it may eliminate the allocation, but that is an optimization, not where the language puts it.)
+
+### [exercise] A Java service runs in a container with a 2 GB memory limit. It starts with `-Xmx1800m` and uses 250 threads. Under load the kernel OOM-kills it, although GC logs show the heap never went above 1.8 GB. Account for the memory and fix the configuration.
+
+:::solution
+The container limit counts the whole process's resident memory, not just the Java heap. Rough budget:
+
+- Java heap: up to 1800 MB.
+- Thread stacks: 250 threads × up to 1 MB = up to 250 MB (resident as deep as each stack has been used).
+- Metaspace (class metadata): commonly 100–200 MB for a framework-heavy app.
+- Code cache (JIT output): tens of MB, up to 240 MB by default.
+- GC bookkeeping, direct `ByteBuffer`s (Netty), `libc` arenas: tens to hundreds of MB.
+
+Together that exceeds 2 GB, so the cgroup OOM killer ends the process (exit code 137) before Java ever throws `OutOfMemoryError`.
+
+Fix: leave room for non-heap memory, for example `-XX:MaxRAMPercentage=70` instead of a hard-coded `-Xmx`, and cap the other regions (`-XX:MaxMetaspaceSize`, `-XX:MaxDirectMemorySize`, fewer threads or virtual threads). Measure with `-XX:NativeMemoryTracking=summary` and `jcmd <pid> VM.native_memory summary`.
+:::
+
+### [numeric 3] With 4 KB pages, which virtual page number holds the address `0x3A7F`? Try it in the [address translation lab](lab:address-translation), then check by hand.
+
+:::answer
+**3**. A 4 KB page needs a 12-bit offset, so the page number is the address shifted right by 12 bits: `0x3A7F >> 12 = 0x3`, with offset `0xA7F`. The program only ever sees `0x3A7F`. The MMU turns page 3 into whichever physical frame this process's page table names. That is why two processes can both use address `0x3A7F` without touching each other's memory.
+:::
+
 ## Quick Revision
 
 - Virtual address space = private map; MMU + page tables translate to physical frames.
@@ -249,3 +359,5 @@ Leaving the first pages unmapped turns null dereferences into immediate SIGSEGVs
 - Static: `.data` (initialized), `.bss` (zero).
 - Mappings ≠ RAM: VSZ ≫ RSS is normal; pages allocated on first touch.
 - Bugs: stack overflow, dangling pointers to frames, buffer overflows.
+- Binding: compile time, load time, execution time (MMU). Base/limit: physical = base + logical if logical < limit, else trap.
+- JVM: objects on the heap, references and primitives in frames; heap, metaspace, code cache and thread stacks are all `mmap` regions. A container limit counts all of them.

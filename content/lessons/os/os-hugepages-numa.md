@@ -11,12 +11,12 @@ relevance: medium
 stage: 4
 prerequisites: [os-tlb, os-thrashing-working-set]
 related: [os-paging, os-cpu-caches-contention, os-mlfq-real-schedulers, db-buffer-pool]
-tags: [huge pages, transparent huge pages, thp, hugetlbfs, numa, numa node, local memory, remote memory, first touch, numactl, interleave, khugepaged]
+tags: [huge pages, transparent huge pages, thp, hugetlbfs, numa, numa node, local memory, remote memory, first touch, numactl, interleave, khugepaged, UseNUMA, UseLargePages]
 ---
 
 ## Mental Model
 
-**Huge pages**: if a library catalog lists every page of every book, the catalog becomes enormous and slow to search. If it lists whole chapters instead, the catalog is 512× smaller and one entry covers far more text — but you lose the ability to lend out single pages, and a chapter must sit in one contiguous place on the shelf.
+**Huge pages**: if a library catalog lists every page of every book, the catalog becomes enormous and slow to search. If it lists whole chapters instead, the catalog is 512× smaller and one entry covers far more text. But you lose the ability to lend out single pages, and a chapter must sit in one contiguous place on the shelf.
 
 **NUMA**: a big server is really **two or more computers glued together**, each socket with its own memory controller and RAM. Every CPU can read every byte, but "your own" RAM is faster than the other socket's. Where your data lives relative to where your thread runs quietly decides a large chunk of performance.
 
@@ -64,15 +64,17 @@ Hence common advice: THP `madvise` mode (only regions that ask for it via `madvi
 
 ### NUMA
 
-```text
-   Node 0                              Node 1
-┌───────────────┐   interconnect   ┌───────────────┐
-│ cores 0–31     │ ◀─────────────▶ │ cores 32–63    │
-│ L3 cache       │  (UPI / Infinity│ L3 cache       │
-│ memory ctrl    │   Fabric)       │ memory ctrl    │
-│ 256 GB RAM     │                 │ 256 GB RAM     │
-└───────────────┘                  └───────────────┘
-local access ≈ 80–100 ns          remote access ≈ 1.3–2× slower, lower bandwidth
+```mermaid
+flowchart TD
+    subgraph n0["node 0: socket, L3 cache, memory controller"]
+        direction LR
+        C0["cores 0–31"] -->|"local ≈ 80–100 ns"| M0["256 GB RAM"]
+    end
+    subgraph n1["node 1: socket, L3 cache, memory controller"]
+        direction LR
+        C1["cores 32–63"] -->|"local ≈ 80–100 ns"| M1["256 GB RAM"]
+    end
+    C0 -.->|"remote over the interconnect<br/>(UPI / Infinity Fabric):<br/>1.3–2× slower, less bandwidth"| M1
 ```
 
 Since memory has a "home" node, the OS must decide where to put each page — and it can't know which thread will use it most. The simplest guess is "whoever touches it first". Linux's default policy is **first touch**: a page is allocated on the node of the CPU that first writes it. Consequences:
@@ -91,12 +93,27 @@ $ numastat -p <pid>                           # per-node memory of a process
 
 **Interleave** trades peak locality for even bandwidth and no hotspot — often best for a shared structure accessed by all cores (e.g., a large buffer pool). **Bind** is best for partitioned workloads (one process per socket).
 
+### The JVM on big servers
+
+A JVM is a single large process, so both topics apply directly:
+
+```bash
+# Huge pages for the heap: explicit, pre-reserved (needs vm.nr_hugepages set high enough)
+$ java -Xms64g -Xmx64g -XX:+UseLargePages -jar app.jar
+# ...or transparent huge pages in madvise mode: the JVM asks for them only for its heap
+$ java -Xmx64g -XX:+UseTransparentHugePages -jar app.jar
+# NUMA-aware heap: each thread allocates new objects on its own node (Parallel GC; G1 since JDK 14)
+$ java -Xmx64g -XX:+UseG1GC -XX:+UseNUMA -jar app.jar
+```
+
+`-XX:+UseNUMA` splits the young generation per node. A thread allocates from the part of the heap on the node it runs on, so short-lived objects stay local. Without it, a heap pre-touched by one startup thread can end up mostly on one node (first touch), and threads on the other socket pay remote latency for everything.
+
 ## Internal Mechanism
 
 :::depth{level=senior}
 ### Zone reclaim and the "swap insanity" story
 
-Early MySQL deployments on 2-socket boxes famously swapped with plenty of free RAM: a single mysqld process with a huge InnoDB buffer pool filled node 0 first (first touch from the initializing thread); when node 0 ran out, the kernel (with `zone_reclaim_mode` or strict node preference) reclaimed/swapped on node 0 instead of using node 1's free memory. Fixes were `numactl --interleave=all`, disabling zone reclaim (now the default), and later `innodb_numa_interleave`. The lesson generalizes: a single huge process spanning sockets should usually interleave its big shared structures.
+Early MySQL deployments on 2-socket boxes famously swapped with plenty of free RAM. A single mysqld process with a huge InnoDB buffer pool filled node 0 first, because its initializing thread touched the memory first. When node 0 ran out, the kernel (with `zone_reclaim_mode` or strict node preference) reclaimed and swapped on node 0 instead of using node 1's free memory. Fixes were `numactl --interleave=all`, disabling zone reclaim (now the default), and later `innodb_numa_interleave`. The lesson generalizes: a single huge process spanning sockets should usually interleave its big shared structures.
 
 ### NUMA and the scheduler
 
@@ -171,6 +188,14 @@ Explicit huge pages are reserved in advance (hugetlbfs) and mapped deliberately:
 
 On multi-socket systems each socket has local memory; accessing another socket's memory is slower. Linux allocates a page on the node of the CPU that first touches it. If initialization happens on one node and processing on another, the workload ends up doing remote accesses; placement of initialization threads matters.
 
+### [L2 · numerical] How much page-table memory is needed to map 64 GB with 4 KB pages versus 2 MB pages (8-byte entries, last level only)?
+
+4 KB pages: 64 GB / 4 KB = 16,777,216 entries × 8 B = **128 MB**. 2 MB pages: 64 GB / 2 MB = 32,768 entries × 8 B = **256 KB**. That's per process mapping the region, so a database with hundreds of backend processes each mapping the same shared memory multiplies the 4 KB figure by hundreds.
+
+### [L3 · how] How would you configure a 64 GB-heap JVM on a 2-socket server for memory performance?
+
+Make the heap fixed-size (`-Xms` = `-Xmx`) so it's allocated once. Back it with huge pages, either explicit (`-XX:+UseLargePages` with enough `vm.nr_hugepages` reserved) or THP in madvise mode (`-XX:+UseTransparentHugePages`), to cut TLB misses and page-table size. Enable NUMA awareness (`-XX:+UseNUMA` with G1 or Parallel GC) so new objects are allocated on the allocating thread's node. If the workload partitions naturally, running two JVMs, each bound to one node with `numactl --cpunodebind=N --membind=N`, avoids remote access entirely. Verify with `numastat -p <pid>` and `perf stat` TLB counters before and after.
+
 ### [L4 · debugging] A 2-socket server running one large in-memory cache process shows high latency and one NUMA node nearly out of memory while the other is half empty, with swapping. What happened and how do you fix it?
 
 The process allocated most memory on one node (first touch by an initializing thread, or strict binding), filling that node; the kernel reclaimed/swapped on that node rather than spilling (policy-dependent), while threads on the other node incur remote access. Fix: interleave the large shared structure across nodes (`numactl --interleave=all` or the application's NUMA option), ensure zone reclaim is off, or run one instance per node with CPU+memory binding (partition the cache).
@@ -192,6 +217,43 @@ The process allocated most memory on one node (first touch by an initializing th
 
 COW works at page granularity; bigger pages mean bigger copies.
 
+### [numeric 32768] How many 2 MB huge pages are needed to map a 64 GB region?
+
+:::answer
+64 GB / 2 MB = 2³⁶ / 2²¹ = 2¹⁵ = **32768** pages. With 4 KB pages it would take 16,777,216.
+:::
+
+### [numeric 128 unit=MB] How much memory do last-level page-table entries take to map 64 GB with 4 KB pages and 8-byte entries?
+
+:::answer
+64 GB / 4 KB = 16,777,216 entries × 8 B = 134,217,728 B = **128** MB, for each process that maps the region.
+:::
+
+### [numeric 132 unit=ns] A thread's memory accesses are 70% remote on a 2-socket server. Local access takes 90 ns and remote 150 ns. What is the average memory access time?
+
+:::answer
+0.3 × 90 + 0.7 × 150 = 27 + 105 = **132** ns, about 47% slower than all-local. Binding the thread and its memory to the same node would bring it back to 90 ns.
+:::
+
+### [mcq] What does `-XX:+UseNUMA` do for a JVM using G1 or Parallel GC?
+
+- [ ] Binds the whole JVM to one NUMA node
+- [x] Splits the young generation per node so each thread allocates new objects in memory local to the CPU it runs on
+- [ ] Enables huge pages for the heap
+- [ ] Disables the garbage collector on remote nodes
+
+Most objects die young, so keeping their allocation local avoids most remote accesses without restricting where threads run.
+
+### [exercise] A 2-socket server (2 × 32 cores, 2 × 256 GB) will run an in-memory cache in Java with a 300 GB heap. Propose a memory configuration (huge pages and NUMA) and estimate how many 2 MB huge pages to reserve.
+
+:::solution
+**Huge pages**: a 300 GB heap with 4 KB pages means about 78 million page-table entries (600 MB of PTEs) and constant TLB misses on random lookups. Reserve explicit huge pages: 300 GB / 2 MB = **153,600** pages (`vm.nr_hugepages = 153600`, ideally set at boot, before memory fragments). Then run with `-Xms300g -Xmx300g -XX:+UseLargePages`.
+
+**NUMA**: 300 GB doesn't fit on one node's 256 GB, so a single JVM must span both. Use `-XX:+UseNUMA` (G1 or Parallel GC) so young objects stay node-local. The long-lived cache data will be spread across nodes, so either interleave it (`numactl --interleave=all`) for even bandwidth, or, better if the keyspace can be split, run **two** JVMs of about 150 GB each, bound with `numactl --cpunodebind=N --membind=N`, with clients routing keys by hash. Two JVMs keep every access local and also halve GC pause scope.
+
+Verify with `numastat -p <pid>` (memory per node), `grep Huge /proc/meminfo` (huge pages used), and TLB miss counters.
+:::
+
 ## Quick Revision
 
 - Huge pages (2 MB/1 GB): fewer PTEs, bigger TLB reach, shorter walks → big-memory workloads 5–30% faster.
@@ -199,3 +261,4 @@ COW works at page granularity; bigger pages mean bigger copies.
 - **NUMA**: local memory fast, remote slower; **first touch** decides placement.
 - Bind for partitioned workloads; **interleave** for big shared structures.
 - Tools: `numactl`, `numastat`, `/proc/meminfo` Huge*, THP sysfs settings.
+- JVM: `-XX:+UseLargePages` (explicit) or `-XX:+UseTransparentHugePages`; `-XX:+UseNUMA` (G1 since JDK 14, Parallel) for node-local young objects.

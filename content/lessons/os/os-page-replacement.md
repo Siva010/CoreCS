@@ -32,7 +32,7 @@ Algorithms are evaluated on a **reference string** (sequence of page numbers acc
 
 **The problem.** Demand paging lets programs use more memory than exists, but only if evicting pages rarely hurts. When RAM is full and a new page must come in, an old one must go out.
 
-**Without a good policy.** A bad choice (evicting a page that's needed right away) doubles the I/O. A bad choice (evicting a page that's needed right away) doubles the I/O. Page-fault costs are huge ([Page Faults](lesson:os-page-faults)), so replacement quality directly determines performance under memory pressure.
+**Without a good policy.** A bad choice (evicting a page that's needed right away) doubles the I/O. Page-fault costs are huge ([Page Faults](lesson:os-page-faults)), so replacement quality directly determines performance under memory pressure.
 
 **The idea.** The perfect choice (evict the page needed furthest in the future) needs the future. The past is the next-best predictor: what hasn't been used for a while probably won't be used soon. Every practical algorithm is a cheaper and cheaper approximation of that guess.
 
@@ -54,7 +54,7 @@ Reference string (classic): **7, 0, 1, 2, 0, 3, 0, 4, 2, 3, 0, 3, 2, 1, 2, 0, 1,
 
 ### Optimal (OPT / MIN / Bélády) — evict the page whose next use is farthest in the future
 
-Frames evolve: [7], [7,0], [7,0,1] (3 faults) → ref 2: next uses: 7 at position 18, 0 at 5, 1 at 14 → evict 7 → [2,0,1] … Continuing yields **9 faults** — the minimum possible for this string and frame count.
+Frames evolve: [7], [7,0], [7,0,1] (3 faults). At ref 2 the next uses are 7 at position 18, 0 at 5 and 1 at 14, so evict 7 → [2,0,1]. Continuing yields **9 faults**, the minimum possible for this string and frame count.
 
 OPT is unimplementable (needs the future) but is the **yardstick**: "LRU is within X% of optimal".
 
@@ -69,6 +69,7 @@ OPT is unimplementable (needs the future) but is the **yardstick**: "LRU is with
 | FIFO | 15 | Yes, trivially | **Yes** |
 | OPT | 9 | No (needs future) | No |
 | LRU | 12 | Expensive exactly; approximated | No |
+| Clock (below) | 14 | Yes: one reference bit per page | Possible (it can behave like FIFO) |
 
 ::viz{id=page-replacement}
 
@@ -79,7 +80,7 @@ Intuition says more frames → fewer faults. **FIFO can violate this.** Referenc
 - 3 frames, FIFO: **9 faults**
 - 4 frames, FIFO: **10 faults**
 
-LRU and OPT never show the anomaly: they are **stack algorithms** — the set of pages in memory with n frames is always a subset of the set with n+1 frames, so adding frames can't cause extra faults.
+LRU and OPT never show the anomaly, because they are **stack algorithms**. The set of pages in memory with n frames is always a subset of the set with n+1 frames, so adding frames can't cause extra faults.
 
 ## Internal Mechanism
 
@@ -95,7 +96,31 @@ The goal: get close to LRU using only the one bit the hardware gives us for free
 2. If its reference bit is **1**, clear it (give a second chance) and advance.
 3. If it's **0**, evict it.
 
+```mermaid
+flowchart TD
+    N["page fault,<br/>no free frame"] --> H{"page under the hand:<br/>reference bit?"}
+    H -->|"1: used recently"| C["clear the bit (second chance),<br/>advance the hand"]
+    C --> H
+    H -->|"0: unused since<br/>the last sweep"| E["evict it, load the new page<br/>with bit 1, advance the hand"]
+```
+
 A frequently used page keeps getting its bit set again and survives; a page not referenced during one full sweep is evicted. Clock approximates LRU with O(1) amortized work and no per-access bookkeeping.
+
+A short trace with 3 frames and reference string **1, 2, 3, 2, 4, 1, 3**. A newly loaded page gets reference bit 1, and the hand moves past it. Bits are shown after each page:
+
+```text
+ref 1   fault  [1¹  ·   ·  ]   hand → frame 1
+ref 2   fault  [1¹  2¹  ·  ]   hand → frame 2
+ref 3   fault  [1¹  2¹  3¹ ]   hand → frame 0
+ref 2   hit    [1¹  2¹  3¹ ]   (2's bit was already 1)
+ref 4   fault  hand clears 1, 2, 3 and comes back to frame 0, now bit 0 → evict 1
+               [4¹  2⁰  3⁰ ]   hand → frame 1
+ref 1   fault  frame 1 holds 2 with bit 0 → evict 2
+               [4¹  1¹  3⁰ ]   hand → frame 2
+ref 3   hit    [4¹  1¹  3¹ ]
+```
+
+5 faults. Because every page had been referenced when the first eviction came, the hand cleared all the bits and Clock evicted in loading order, exactly like FIFO. LRU would take 6 faults on this string (it evicts 1, then 3, then 2), and OPT 4.
 
 **Enhanced clock** uses (reference, dirty) pairs, preferring to evict (0,0) — not recently used and clean — before (0,1) — needs writeback — to avoid I/O.
 
@@ -104,7 +129,7 @@ A frequently used page keeps getting its bit set again and survives; a page not 
 
 - **Linux** uses two LRU lists per memory cgroup and NUMA node — **active** and **inactive** — for file-backed and anonymous pages separately. New pages start inactive; a second access promotes them to active. Eviction takes from the inactive tail. Since Linux 6.1, **MGLRU** (multi-generational LRU) uses several generations and page-table scanning for better accuracy and lower CPU cost. `vm.swappiness` biases reclaim between file-backed pages (can be dropped/re-read) and anonymous pages (must be swapped).
 - **Scan resistance**: plain LRU is destroyed by a one-time sequential scan (a backup reads 500 GB once, evicting the hot set). The two-list design, **LRU-K** (evict by K-th most recent access), **2Q**, and **ARC** (adaptive replacement cache, used in ZFS) protect frequently used pages from one-time scans.
-- **Database buffer pools** implement their own replacement: PostgreSQL uses a clock-sweep with usage counts (0–5) and a small ring buffer for large sequential scans; InnoDB uses an LRU split into young and old sublists with a midpoint insertion (new pages enter at the old sublist's head and must survive a time window to become young). See [Buffer Pool](lesson:db-buffer-pool).
+- **Database buffer pools** implement their own replacement. PostgreSQL uses a clock-sweep with usage counts (0–5) and a small ring buffer for large sequential scans. InnoDB splits its LRU into young and old sublists with midpoint insertion: new pages enter at the old sublist's head and must survive a time window to become young. See [Buffer Pool](lesson:db-buffer-pool).
 :::
 
 ### Frame allocation
@@ -229,8 +254,71 @@ Use a hash map from key → node in a doubly linked list ordered by recency (hea
 - `get(k)`: if absent return miss; else move the node to the head and return its value.
 - `put(k, v)`: if present, update and move to head; else create a node at the head and insert into the map; if size exceeds capacity, remove the tail node (least recently used) from the list and the map.
 
-In Python, `collections.OrderedDict` with `move_to_end` and `popitem(last=False)`; in Java, `LinkedHashMap` with `accessOrder=true` and `removeEldestEntry`.
+```java
+class LruCache<K, V> {
+    private final class Node {
+        final K key; V value; Node prev, next;
+        Node(K key, V value) { this.key = key; this.value = value; }
+    }
+
+    private final int capacity;
+    private final Map<K, Node> map = new HashMap<>();
+    private final Node head = new Node(null, null), tail = new Node(null, null);  // sentinels
+
+    LruCache(int capacity) {
+        this.capacity = capacity;
+        head.next = tail;
+        tail.prev = head;
+    }
+
+    V get(K key) {
+        Node n = map.get(key);
+        if (n == null) return null;            // miss
+        unlink(n);
+        addFirst(n);                           // now the most recently used
+        return n.value;
+    }
+
+    void put(K key, V value) {
+        Node n = map.get(key);
+        if (n != null) {
+            n.value = value;
+            unlink(n);
+            addFirst(n);
+            return;
+        }
+        n = new Node(key, value);
+        map.put(key, n);
+        addFirst(n);
+        if (map.size() > capacity) {           // evict the least recently used
+            Node lru = tail.prev;
+            unlink(lru);
+            map.remove(lru.key);
+        }
+    }
+
+    private void unlink(Node n) { n.prev.next = n.next; n.next.prev = n.prev; }
+    private void addFirst(Node n) { n.next = head.next; n.prev = head; head.next.prev = n; head.next = n; }
+}
+```
+
+Both operations are O(1): the map finds the node, and the list moves or removes it without searching. In real Java code, `LinkedHashMap` with `accessOrder = true` and an overridden `removeEldestEntry` gives the same behaviour in a few lines.
 :::
+
+### [numeric 5] Using Clock with 3 frames, a reference bit set to 1 when a page is loaded or used, and the hand advancing past each newly loaded frame, how many faults does the reference string 1, 2, 3, 2, 4, 1, 3 cause?
+
+:::answer
+**5** faults: 1, 2, 3 (cold), then 4 (evicts 1 after the hand clears every bit) and 1 (evicts 2). The final 3 hits. Replay it step by step in the [page replacement lab](lab:page-replacement), choosing CLOCK.
+:::
+
+### [mcq] When does the Clock algorithm make exactly the same choices as FIFO?
+
+- [ ] Never; Clock always matches LRU
+- [x] When every page's reference bit is 1 at eviction time: the hand clears them all and evicts in loading order
+- [ ] When the number of frames is a power of two
+- [ ] Only when pages are dirty
+
+A reference bit carries one bit of recency. If everything was used recently, Clock has nothing to tell pages apart, so it falls back to the order they sit in the circle, which is loading order.
 
 ## Quick Revision
 
@@ -239,3 +327,4 @@ In Python, `collections.OrderedDict` with `move_to_end` and `popitem(last=False)
 - Classic string (3 frames): FIFO 15, LRU 12, OPT 9. Belady: 1,2,3,4,1,2,5,1,2,3,4,5 → 9 (3 frames) vs 10 (4 frames) under FIFO.
 - **Clock/second chance**: reference bit + circular hand ≈ LRU; enhanced clock also uses the dirty bit.
 - Real systems: active/inactive lists, MGLRU, scan resistance (LRU-K, 2Q, ARC); DBs run their own (clock-sweep, midpoint LRU).
+- Clock with every bit set = FIFO. Java LRU cache = `HashMap` + doubly linked list, or `LinkedHashMap(accessOrder = true)`.

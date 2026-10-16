@@ -12,7 +12,7 @@ stage: 2
 prerequisites: [os-syscalls-interrupts, os-file-descriptors]
 related: [os-epoll-event-loops, os-thread-pools, cn-sockets, os-concurrency-vs-parallelism]
 visualizations: [io-models]
-tags: [blocking io, non-blocking io, synchronous, asynchronous, select, poll, epoll, io_uring, aio, i/o multiplexing, eagain, c10k]
+tags: [blocking io, non-blocking io, synchronous, asynchronous, select, poll, epoll, io_uring, aio, i/o multiplexing, eagain, c10k, java nio, Selector, SocketChannel]
 ---
 
 ## Mental Model
@@ -53,41 +53,59 @@ I/O has two parts: waiting until data is there, and copying it. The models diffe
 
 ### Blocking
 
-```c
-int n = read(sock, buf, sizeof buf);    // sleeps until at least 1 byte arrives
+```java
+int n = socket.getInputStream().read(buf);    // sleeps until at least 1 byte arrives
 ```
 
 Thread-per-connection servers (classic Apache prefork/worker, early Java servers) — simple code, poor scaling past thousands of connections.
 
 ### Non-blocking
 
-```c
-fcntl(sock, F_SETFL, O_NONBLOCK);
-int n = read(sock, buf, sizeof buf);
-if (n < 0 && errno == EAGAIN) { /* nothing yet: do something else, try later */ }
+```java
+channel.configureBlocking(false);              // O_NONBLOCK on the socket
+int n = channel.read(buffer);                  // a SocketChannel and a ByteBuffer
+if (n == 0) { /* nothing yet (EAGAIN underneath): do something else, try later */ }
+if (n == -1) { /* the peer closed the connection */ }
 ```
 
 Alone, it leads to busy-polling loops. Its real purpose: combined with multiplexing, so that after readiness notification a read never blocks the event loop.
 
 ### Multiplexing with epoll
 
-```c
-int ep = epoll_create1(0);
-struct epoll_event ev = { .events = EPOLLIN, .data.fd = listen_fd };
-epoll_ctl(ep, EPOLL_CTL_ADD, listen_fd, &ev);
+In Java this is NIO's `Selector`, which is implemented with epoll on Linux:
 
-struct epoll_event ready[128];
-for (;;) {
-    int n = epoll_wait(ep, ready, 128, -1);      // block until ≥1 fd is ready
-    for (int i = 0; i < n; i++) {
-        int fd = ready[i].data.fd;
-        if (fd == listen_fd) accept_new_connections(ep, listen_fd);   // non-blocking accepts
-        else handle_readable(fd);                                      // non-blocking reads
+```java
+Selector selector = Selector.open();                          // epoll_create
+ServerSocketChannel server = ServerSocketChannel.open();
+server.bind(new InetSocketAddress(8080));
+server.configureBlocking(false);
+server.register(selector, SelectionKey.OP_ACCEPT);            // epoll_ctl(ADD)
+
+while (true) {
+    selector.select();                                         // epoll_wait: block until ≥1 channel is ready
+    Iterator<SelectionKey> it = selector.selectedKeys().iterator();
+    while (it.hasNext()) {
+        SelectionKey key = it.next();
+        it.remove();
+        if (key.isAcceptable()) acceptNewConnections(selector, server);   // non-blocking accepts
+        else if (key.isReadable()) handleReadable(key);                    // non-blocking reads
     }
 }
 ```
 
-One thread, thousands of connections, and CPU spent only on connections with actual activity. Details in [epoll & Event Loops](lesson:os-epoll-event-loops).
+One thread, thousands of connections, and CPU spent only on connections with actual activity. Netty, Vert.x and the Tomcat NIO connector are built on this loop. Details in [epoll & Event Loops](lesson:os-epoll-event-loops).
+
+```mermaid
+sequenceDiagram
+    participant T as Event-loop thread
+    participant K as Kernel
+    T->>K: epoll_wait (Selector.select)
+    Note over K: sleeps until any of 10,000 sockets has data
+    K-->>T: ready: sockets 17 and 512
+    T->>K: read(17), non-blocking
+    T->>K: read(512), non-blocking
+    T->>K: epoll_wait again
+```
 
 ### Asynchronous with io_uring (Linux 5.1+)
 
@@ -97,6 +115,8 @@ Two ring buffers shared between the process and the kernel:
 - **Completion queue (CQ)**: the kernel posts results ("request 42 done, 4096 bytes").
 
 One `io_uring_enter` call submits a batch and optionally waits for completions; with `SQPOLL`, a kernel thread polls the SQ and submission needs no syscall at all. It supports files, sockets, timeouts, accept, send/recv — a general async interface.
+
+The JDK has no io_uring API. Java's NIO.2 "asynchronous" channels offer a completion-style API, but on Linux `AsynchronousSocketChannel` is built on epoll, and `AsynchronousFileChannel` runs ordinary blocking reads on a thread pool. Libraries such as Netty's io_uring transport add real io_uring support.
 
 ::viz{id=io-models}
 
@@ -113,7 +133,12 @@ The two families answer different questions: "*when can* I do the I/O without bl
 
 ### Where blocking still hides
 
-Even in "non-blocking" servers: DNS resolution via `getaddrinfo` blocks (libraries use thread pools or async resolvers), page faults on mmap'd data block the thread, logging to disk may block on writeback throttling, and CPU-heavy work blocks an event loop just as surely as I/O.
+Even "non-blocking" servers block in places:
+
+- DNS resolution via `getaddrinfo` blocks (libraries use thread pools or async resolvers);
+- page faults on mmap'd data block the thread;
+- logging to disk may block on writeback throttling;
+- CPU-heavy work blocks an event loop just as surely as I/O.
 
 ## Example
 
@@ -190,6 +215,10 @@ Synchronous I/O: the thread performs the transfer and waits for it (blocking or 
 
 epoll reports regular files as always readable, since readiness isn't defined in terms of page-cache state; a read on a file whose data isn't cached still blocks the thread on disk I/O, stalling the event loop. Event-loop runtimes offload file I/O to thread pools (libuv), or use io_uring, which handles file I/O asynchronously.
 
+### [L2 · compare] Which OS I/O model does each Java I/O API use on Linux?
+
+`java.io` streams and blocking `Socket`s use **blocking I/O**: one thread per in-progress operation. NIO channels with a `Selector` use **non-blocking I/O plus multiplexing**: the `Selector` is epoll, and Netty, Vert.x and Tomcat's NIO connector are built on it. NIO.2 `AsynchronousSocketChannel` exposes a completion-style API but is implemented on epoll underneath, and `AsynchronousFileChannel` uses a thread pool doing blocking reads, because the JDK has no io_uring. Virtual threads (Java 21) let you write blocking-style code: when one blocks on a socket, the JVM parks it and registers the socket with its own epoll-based poller, so you get event-loop scaling with thread-per-request code.
+
 ### [L3 · debugging] A Node.js API's p99 latency spikes to seconds occasionally, even for trivial endpoints. What would you suspect?
 
 Something blocks the single event loop: synchronous work (JSON.parse/stringify of huge payloads, crypto, regexes with catastrophic backtracking, sync fs calls, large loops) or an exhausted libuv thread pool (DNS lookups, file I/O, crypto queued behind slow tasks). Measure event-loop lag (perf_hooks `monitorEventLoopDelay`), profile with `--prof`/clinic, move CPU work to worker threads, increase `UV_THREADPOOL_SIZE` if pool-starved, and avoid sync APIs in request paths.
@@ -218,6 +247,47 @@ Only completion-based models don't block the thread during the data copy.
 
 A return of 0 means the peer closed the connection (EOF).
 
+### [mcq] A Java `SocketChannel` is in non-blocking mode and no data has arrived. What does `channel.read(buffer)` return?
+
+- [x] 0
+- [ ] −1
+- [ ] It blocks until data arrives
+- [ ] It throws `WouldBlockException`
+
+Java translates `EAGAIN` into "0 bytes read". It returns −1 only at end of stream, when the peer has closed the connection, which is the opposite of the C convention, where 0 means EOF.
+
+### [numeric 10000 unit=MB] A thread-per-connection Java server holds 10,000 mostly idle WebSocket connections, and each platform thread reserves a 1 MB stack. How much virtual address space do the stacks reserve?
+
+:::answer
+10,000 × 1 MB = **10000** MB, about 10 GB of address space, plus 10,000 kernel threads for the scheduler to track. An event loop (or virtual threads) serves the same idle connections with a handful of threads.
+:::
+
+### [numeric 1024] `select()` uses fixed-size bit sets of `FD_SETSIZE` bits. On Linux, how many file descriptor numbers can one `select()` call watch at most?
+
+:::answer
+`FD_SETSIZE` is **1024**, so only fds 0–1023 can be watched, and the kernel scans every bit on each call. `poll` removes the limit, and `epoll` removes the per-call scan.
+:::
+
+### [exercise] A Netty-based Java service calls a JDBC repository method directly inside its channel handler. Under load, latency for every client rises together, even for requests that don't touch the database. Explain what is happening at the I/O-model level and fix it. Compare the models in the [I/O models visualization](viz:io-models).
+
+:::solution
+Netty runs a few event-loop threads (about 2 per core), each serving thousands of connections through one `Selector` (epoll). JDBC is blocking I/O: the event-loop thread sits in a socket `read` waiting for the database. While it waits, it can't call `select()` or run any other handler, so every connection assigned to that loop stalls, including ones that never touch the database. With a slow query, a few loop threads are enough to freeze the service.
+
+Fix: never block an event-loop thread. Hand blocking work to a separate executor and continue when it completes:
+
+```java
+ExecutorService dbPool = Executors.newFixedThreadPool(32);    // sized for the DB, not the CPU
+
+public void channelRead(ChannelHandlerContext ctx, Object msg) {
+    CompletableFuture
+        .supplyAsync(() -> repository.findOrder(parse(msg)), dbPool)      // blocking call off the loop
+        .thenAccept(order -> ctx.writeAndFlush(toResponse(order)));       // Netty hands the write back to the loop
+}
+```
+
+Alternatives: a non-blocking database driver (R2DBC, the Vert.x clients), or virtual threads with a blocking framework (Spring MVC on Java 21), where blocking is cheap because it parks only a virtual thread.
+:::
+
 ## Quick Revision
 
 - Two phases: **wait for readiness**, then **copy**. Models differ in who waits and how.
@@ -226,3 +296,4 @@ A return of 0 means the peer closed the connection (EOF).
 - **Async** (io_uring SQ/CQ rings, IOCP) = completion notification; works for files.
 - Regular files are always "ready" → event loops offload file I/O.
 - Never block an event loop (sync I/O, CPU-heavy work, DNS).
+- Java: `java.io` = blocking; NIO `Selector` = epoll multiplexing (non-blocking `read` returns 0, EOF = −1); NIO.2 async = completion API over epoll / thread pool; no io_uring in the JDK.

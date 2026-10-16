@@ -30,7 +30,7 @@ These goals **conflict**. Every scheduling algorithm is a particular compromise 
 
 **CPU scheduling** is the kernel's policy for choosing which ready thread runs on each CPU, and for how long. The **dispatcher** is the mechanism that performs the chosen switch (context switch, mode switch, jump to the resumed instruction). The time it takes is **dispatch latency**.
 
-A scheduler is **preemptive** if it can take the CPU away from a running thread (e.g., on a timer interrupt or when a higher-priority thread wakes); **non-preemptive** (cooperative) if a thread keeps the CPU until it blocks, yields or exits.
+A scheduler is **preemptive** if it can take the CPU away from a running thread, for example on a timer interrupt or when a higher-priority thread wakes. It is **non-preemptive** (cooperative) if a thread keeps the CPU until it blocks, yields or exits.
 
 ## Why It Exists
 
@@ -63,6 +63,15 @@ Programs alternate between **CPU bursts** (computing) and **I/O bursts** (waitin
 4. Running → Terminated — must choose another thread.
 
 Non-preemptive scheduling acts only on cases 1 and 4.
+
+```mermaid
+flowchart TD
+    R["running thread"] -->|"1. blocks on I/O or a lock"| S{"scheduler<br/>picks next"}
+    R -->|"2. time slice ends<br/>(preemptive only)"| S
+    W["blocked thread"] -->|"3. its event arrives;<br/>may preempt (preemptive only)"| S
+    R -->|"4. exits"| S
+    S --> D["dispatcher switches<br/>to the chosen thread"]
+```
 
 ### The metrics
 
@@ -100,7 +109,7 @@ FCFS runs them in arrival order:
 | P3 | 30 | 28 | 25 | 25 |
 | **Average** | | **26** | **16** | **16** |
 
-Two short jobs wait behind one long job — the **convoy effect**. Running P2 and P3 first (SJF) would give WT = (6 + 0 + 2)/3 ≈ 2.67. Algorithms are compared next in [Scheduling Algorithms](lesson:os-scheduling-algorithms).
+Two short jobs wait behind one long job — the **convoy effect**. Letting P2 and P3 preempt P1 as soon as they arrive (preemptive shortest-job-first, called SRTF) gives WT = (6 + 0 + 2)/3 ≈ 2.67. Non-preemptive SJF doesn't help here: at time 0, P1 is the only process, so it starts and runs to the end. Algorithms are compared next in [Scheduling Algorithms](lesson:os-scheduling-algorithms).
 
 ::viz{id=cpu-scheduler}
 
@@ -112,7 +121,7 @@ The problem: a running thread will never volunteer to stop if it's in a loop. Th
 
 ### Context-switch overhead is a scheduling cost
 
-Each switch costs ~1–3 µs plus cache/TLB effects ([Context Switching](lesson:os-context-switch)). A time slice (quantum) that is too small wastes CPU in switching; too large makes the system feel unresponsive. If a quantum is `q` and the switch cost is `s`, the fraction of CPU wasted on switching is roughly `s / (q + s)` when every quantum is used fully — 1 µs of switching on a 1 ms quantum is ~0.1%, but on a 10 µs quantum it's ~9%.
+Each switch costs ~1–3 µs plus cache/TLB effects ([Context Switching](lesson:os-context-switch)). A time slice (quantum) that is too small wastes CPU in switching; too large makes the system feel unresponsive. If a quantum is `q` and the switch cost is `s`, the fraction of CPU wasted on switching is roughly `s / (q + s)` when every quantum is used fully. For example, 1 µs of switching on a 1 ms quantum wastes ~0.1%, but on a 10 µs quantum it wastes ~9%.
 
 ### Multiprocessor scheduling
 
@@ -160,6 +169,7 @@ Interactive vs batch in one machine: your IDE (I/O-bound: waits for keystrokes, 
 - **"Waiting time is time spent blocked on I/O."** In scheduling, waiting time is time spent **ready** but not running.
 - **"Response time = turnaround time."** Response time is until *first* execution; turnaround is until *completion*.
 - **"Preemptive scheduling is always better."** It improves responsiveness but adds switches and makes shared-data code need synchronization; some real-time and embedded systems deliberately use cooperative scheduling.
+- **"`Thread.setPriority(Thread.MAX_PRIORITY)` makes a Java thread run first."** On Linux, HotSpot ignores Java thread priorities by default: all threads run in the normal time-sharing class with equal weight. To favour work, give it its own pool or process and use OS tools (`nice`, cgroup `cpu.weight`).
 
 ## Interview Questions
 
@@ -208,6 +218,40 @@ P1 waits 0, P2 waits 24 − 1 = 23, P3 waits 27 − 2 = 25 → (0 + 23 + 25)/3 =
 
 Users perceive delay until the editor reacts to input.
 
+### [numeric 6.33 ±0.01] P1 (AT 0, BT 5), P2 (AT 1, BT 3) and P3 (AT 2, BT 1) run under FCFS. What is the average turnaround time?
+
+:::answer
+Order: P1 [0–5], P2 [5–8], P3 [8–9]. Turnaround = completion − arrival: P1 = 5 − 0 = 5, P2 = 8 − 1 = 7, P3 = 9 − 2 = 7. Average = 19 / 3 ≈ **6.33**.
+:::
+
+### [numeric 62.5 unit=%] Under FCFS, P1 (AT 0, BT 4) and P2 (AT 10, BT 6) are the only processes. What is the CPU utilization from time 0 to time 16?
+
+:::answer
+The CPU runs P1 from 0 to 4, sits idle from 4 to 10 (nothing has arrived), and runs P2 from 10 to 16. Busy time = 4 + 6 = 10 out of 16, so utilization = 10 / 16 = **62.5**%.
+:::
+
+### [mcq] A Java service on Linux sets its report-generation threads to `Thread.MIN_PRIORITY` and its request threads to `Thread.MAX_PRIORITY`. Under load, reports still slow requests down. Why?
+
+- [ ] Java priorities only take effect after a restart
+- [x] On Linux, HotSpot ignores Java thread priorities by default, so all threads get equal CPU weight
+- [ ] `MAX_PRIORITY` threads are always scheduled last
+- [ ] Priorities apply only to virtual threads
+
+Java priorities are hints the JVM may ignore, and on Linux it does unless configured otherwise. Separate the work instead: a small bounded pool for reports, or a separate process with a lower `nice` value or cgroup `cpu.weight`.
+
+### [exercise] Open the [CPU scheduling lab](lab:cpu-scheduler) and load the "Convoy effect" preset: P1 (AT 0, BT 24), P2 (AT 1, BT 3), P3 (AT 2, BT 3). Find the average waiting time under FCFS, non-preemptive SJF, SRTF, and Round Robin with quantum 4. Explain why SJF is no better than FCFS here.
+
+:::solution
+| Algorithm | Waiting times (P1, P2, P3) | Average |
+|---|---|---|
+| FCFS | 0, 23, 25 | 16 |
+| SJF (non-preemptive) | 0, 23, 25 | 16 |
+| SRTF | 6, 0, 2 | 2.67 |
+| RR, q = 4 | 6, 3, 5 | 4.67 |
+
+Non-preemptive SJF picks the shortest job among those *ready*. At time 0 only P1 has arrived, so it starts and can't be interrupted, and P2 and P3 wait 24 time units anyway. SRTF compares the newcomer's burst with P1's remaining time and switches as soon as P2 arrives. Round robin also gets the short jobs out quickly, without knowing burst lengths in advance, at the cost of more context switches.
+:::
+
 ## Quick Revision
 
 - Scheduler = policy; dispatcher = mechanism (context switch).
@@ -216,3 +260,5 @@ Users perceive delay until the editor reacts to input.
 - I/O-bound → short bursts, needs quick response; CPU-bound → long bursts.
 - **Convoy effect** (FCFS), **starvation** (priority → aging), quantum too small = overhead, too large = FCFS.
 - Goals conflict: throughput vs response vs fairness vs average turnaround.
+- Non-preemptive SJF can't jump ahead of a job that is already running; SRTF (preemptive SJF) can.
+- Java thread priorities are ignored on Linux by default; control CPU share with pools, `nice` or cgroups.

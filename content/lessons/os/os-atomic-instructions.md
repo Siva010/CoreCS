@@ -11,14 +11,14 @@ relevance: high
 stage: 2
 prerequisites: [os-critical-section-problem]
 related: [os-sync-primitives, os-semaphores-monitors, os-cpu-caches-contention, db-optimistic-pessimistic]
-tags: [atomic, test-and-set, compare-and-swap, cas, fetch-and-add, ll/sc, spinlock, ticket lock, lock-free, aba problem, cache coherence]
+tags: [atomic, test-and-set, compare-and-swap, cas, fetch-and-add, ll/sc, spinlock, ticket lock, lock-free, aba problem, cache coherence, AtomicInteger, AtomicReference, AtomicStampedReference]
 ---
 
 ## Mental Model
 
 Software alone can't reliably make "check the value and change it" indivisible on modern CPUs. So the hardware provides a handful of instructions that do exactly that — **read, compute, and write a memory word as one indivisible step**, even with many cores racing.
 
-**Compare-and-swap** is the most important one. Think of it as a very strict clerk: *"Change the record from A to B — but only if it still says A. If someone changed it in the meantime, reject my request and tell me what it says now."* Almost every lock, atomic counter, concurrent queue and optimistic concurrency scheme (including database version checks) is built on that one idea.
+**Compare-and-swap** is the most important one. Think of it as a very strict clerk: *"Change the record from A to B — but only if it still says A. If someone changed it in the meantime, reject my request and tell me what it says now."* That one idea underlies almost every lock, atomic counter, concurrent queue and optimistic concurrency scheme, including database version checks.
 
 ## Definition
 
@@ -43,15 +43,19 @@ An atomic instruction is "read and write this memory word as one step". With tha
 
 ### A spinlock with test-and-set
 
-```c
-typedef struct { atomic_int locked; } spinlock;
+```java
+class SpinLock {
+    private final AtomicBoolean locked = new AtomicBoolean(false);
 
-void lock(spinlock *l) {
-    while (atomic_exchange(&l->locked, 1) == 1)   // TAS: set 1, get old value
-        ;                                          // old was 1 → someone holds it; spin
-}
-void unlock(spinlock *l) {
-    atomic_store(&l->locked, 0);                  // release store
+    void lock() {
+        while (locked.getAndSet(true)) {     // TAS: set true, get the old value
+            Thread.onSpinWait();             // old was true → someone holds it; spin
+        }
+    }
+
+    void unlock() {
+        locked.set(false);                   // a volatile store, so it has release semantics
+    }
 }
 ```
 
@@ -59,27 +63,35 @@ Mutual exclusion ✔ (only one TAS can observe 0), progress ✔, bounded waiting
 
 **Test-and-test-and-set (TTAS)** improves performance: spin on a plain *read* (cache-local, no bus traffic) and only attempt the expensive TAS when the lock looks free:
 
-```c
-void lock(spinlock *l) {
-    for (;;) {
-        while (atomic_load_explicit(&l->locked, memory_order_relaxed)) cpu_relax();  // PAUSE
-        if (atomic_exchange(&l->locked, 1) == 0) return;
+```java
+void lock() {
+    while (true) {
+        while (locked.get()) Thread.onSpinWait();   // spin on a read: served from the local cache
+        if (!locked.getAndSet(true)) return;        // looks free: now try the atomic exchange
     }
 }
 ```
+
+`Thread.onSpinWait()` compiles to the CPU's pause instruction (`PAUSE` on x86), which makes the spin loop cheaper for the core and its hyperthread sibling.
 
 ### A ticket lock with fetch-and-add (fair)
 
 The TAS spinlock's flaw is that whoever happens to win the race gets the lock — an unlucky thread can lose forever. The fix is the bakery idea from the previous lesson, now cheap thanks to one atomic instruction: take a numbered ticket and wait for your number.
 
-```c
-typedef struct { atomic_uint next; atomic_uint serving; } ticketlock;
+```java
+class TicketLock {
+    private final AtomicInteger next = new AtomicInteger();
+    private final AtomicInteger serving = new AtomicInteger();
 
-void lock(ticketlock *l) {
-    unsigned my = atomic_fetch_add(&l->next, 1);   // take a number
-    while (atomic_load(&l->serving) != my) cpu_relax();
+    void lock() {
+        int my = next.getAndIncrement();                  // take a number (fetch-and-add)
+        while (serving.get() != my) Thread.onSpinWait();  // wait until it is called
+    }
+
+    void unlock() {
+        serving.incrementAndGet();                        // call the next number
+    }
 }
-void unlock(ticketlock *l) { atomic_fetch_add(&l->serving, 1); }
 ```
 
 FIFO order → bounded waiting ✔.
@@ -88,27 +100,46 @@ FIFO order → bounded waiting ✔.
 
 Locks have a weakness: if the thread holding one is paused (preempted, page-faulted), everyone else waits. CAS allows a different style — don't lock at all; just *try* to install your change, and retry if someone beat you to it.
 
-```c
-// counter: retry loop
+```java
+// A counter: the CAS retry loop
+AtomicInteger counter = new AtomicInteger();
 int old;
-do { old = atomic_load(&counter); }
-while (!atomic_compare_exchange_weak(&counter, &old, old + 1));
+do {
+    old = counter.get();
+} while (!counter.compareAndSet(old, old + 1));
 
-// Treiber stack push
-void push(Node *n) {
-    Node *old = atomic_load(&top);
-    do { n->next = old; }
-    while (!atomic_compare_exchange_weak(&top, &old, n));  // on failure, old is refreshed
+// A Treiber stack: push with CAS
+class LockFreeStack<T> {
+    private record Node<E>(E value, Node<E> next) {}
+    private final AtomicReference<Node<T>> top = new AtomicReference<>();
+
+    void push(T value) {
+        Node<T> old, fresh;
+        do {
+            old = top.get();
+            fresh = new Node<>(value, old);
+        } while (!top.compareAndSet(old, fresh));   // retry if another thread changed top
+    }
 }
 ```
 
 The **CAS retry loop** is the universal pattern: read the current state, compute the desired new state, CAS it in; if someone else changed it first, re-read and retry. No thread ever blocks while holding anything, so a paused or preempted thread can't stop the others — that's **lock-freedom**: *some* thread always makes progress.
 
+```mermaid
+flowchart TD
+    R["read the current value"] --> C["compute the new value"]
+    C --> S{"CAS: still the<br/>value I read?"}
+    S -->|"yes: swapped in<br/>one atomic step"| D["done"]
+    S -->|"no: another thread<br/>changed it first"| R
+```
+
+`AtomicInteger.incrementAndGet()` hides this loop; on x86 the JIT replaces it with a single `lock xadd` instruction.
+
 ## Internal Mechanism
 
 ### How the hardware makes it atomic
 
-Modern CPUs implement locked RMW on cacheable memory by acquiring the cache line in **exclusive (Modified)** state in the core's cache (MESI protocol) and refusing to give it up to other cores until the operation completes. No global bus lock is needed. Consequence: every atomic operation on a shared variable forces that cache line to migrate to the executing core. Under contention, a line ping-pongs between cores at ~50–200 ns per transfer — so a "cheap" atomic can become the bottleneck.
+Modern CPUs implement a locked read-modify-write by taking the cache line in **exclusive (Modified)** state in the core's cache (MESI protocol). The core refuses to give the line up to other cores until the operation completes. No global bus lock is needed. Consequence: every atomic operation on a shared variable forces that cache line to migrate to the executing core. Under contention, a line ping-pongs between cores at ~50–200 ns per transfer — so a "cheap" atomic can become the bottleneck.
 
 ### Progress guarantees
 
@@ -127,7 +158,14 @@ The catch hidden in "compare": CAS checks that the value **is** A — not that i
 2. Thread 2 pops A, pops B, then pushes A back (A's memory reused). Now `top = A`, `A->next = C`.
 3. Thread 1 resumes: CAS(`top`, A, B) **succeeds** — `top` is A — and sets `top = B`, a node that was already freed. The stack is corrupted.
 
-Fixes: pair the pointer with a **version counter** incremented on every change (double-width CAS / tagged pointers), use LL/SC (fails on *any* intervening write), or use safe memory reclamation (**hazard pointers**, **epoch-based reclamation**) so a node can't be reused while a thread may still reference it. Garbage-collected languages largely avoid ABA for pointers because a node can't be reused while referenced.
+Fixes:
+
+- pair the pointer with a **version counter** incremented on every change (double-width CAS, tagged pointers);
+- use LL/SC, which fails on *any* intervening write;
+- use safe memory reclamation (**hazard pointers**, **epoch-based reclamation**), so a node can't be reused while a thread may still reference it.
+ Garbage-collected languages largely avoid ABA for pointers because a node can't be reused while referenced.
+
+In Java, the stack above can't hit ABA. Thread 1 still holds a reference to node A, so the garbage collector can't free it and hand its memory to a new node. ABA is still possible with *values*, for example a counter that goes 5 → 6 → 5. For that, Java has `AtomicStampedReference`, which CASes a reference together with an integer stamp, the version counter from the fix above.
 
 :::depth{level=advanced}
 ### Memory ordering of atomics
@@ -238,6 +276,55 @@ Any spinner may win after a release; a thread can starve.
 
 The failure means another thread made progress; retry against the new state (optionally with backoff).
 
+### [numeric 10 unit=million/s] 64 cores all increment one `AtomicLong`. Each increment needs the counter's cache line moved to the incrementing core, which takes about 100 ns. Roughly how many increments per second can the whole machine do, in millions?
+
+:::answer
+The line can only be in one core's cache at a time, so increments happen one after another: 1 s / 100 ns = 10,000,000 per second, that is **10** million, whether 2 or 64 cores take part. Adding cores adds waiting, not throughput. `LongAdder` avoids this by giving threads separate cells.
+:::
+
+### [numeric 3] Four threads read an `AtomicInteger` holding 0 at the same moment, and each then calls `compareAndSet(0, 1)`. How many of those CAS calls fail?
+
+:::answer
+Exactly one CAS finds the value still 0 and sets it to 1; the other **3** find 1 and fail. Their retry loops re-read 1 and try `compareAndSet(1, 2)`, and again only one succeeds. Under contention most CAS attempts are wasted work.
+:::
+
+### [mcq] What problem does Java's `AtomicStampedReference` solve?
+
+- [ ] It makes `compareAndSet` faster under contention
+- [x] ABA: it changes a reference only if both the reference and an integer stamp (version) still match, so "changed and changed back" is detected
+- [ ] It prevents false sharing between atomics
+- [ ] It guarantees that every thread's CAS eventually succeeds
+
+A plain CAS checks only that the current value equals the expected one. Bumping a stamp on every update makes an A → B → A history visible, because the stamp is different.
+
+### [exercise] Add a lock-free `pop()` to the Java `LockFreeStack` above. Then explain why the ABA scenario from this lesson (pop A, pop B, push A back) can't corrupt it in Java, while the same algorithm in C can.
+
+:::solution
+```java
+T pop() {
+    Node<T> old, next;
+    do {
+        old = top.get();
+        if (old == null) return null;           // empty stack
+        next = old.next();
+    } while (!top.compareAndSet(old, next));    // retry if top changed meanwhile
+    return old.value();
+}
+```
+
+In C, the ABA scenario needs node A's memory to be freed and reused for a new node that gets pushed. A stale thread then sees the same address with a different `next`, and its CAS succeeds wrongly. In Java, the stale thread still holds a reference to A, so the garbage collector can't reclaim it, and `push(value)` always allocates a fresh `Node`. If `top` is "A" again, it really is the same, unchanged node, and its `next` is still correct. The CAS's success is therefore safe. The protection comes from the GC: an object pool that recycled nodes would bring ABA back.
+:::
+
+### [exercise] In the [race condition lab](lab:race-condition), find an interleaving of the two `LOAD / ADD / STORE` sequences that loses an update. Then explain why Java's `AtomicInteger.incrementAndGet()` gives the right answer under every interleaving without a lock. (On x86 it compiles to a single `lock xadd` instruction.)
+
+:::solution
+One losing interleaving: T1 LOAD (reads 0), T2 LOAD (reads 0), T1 ADD, T1 STORE (writes 1), T2 ADD, T2 STORE (writes 1). Two increments ran, and the counter shows 1.
+
+The update is lost because the other thread runs in the gap between a LOAD and its STORE. `lock xadd` reads, adds and writes as one indivisible instruction. The `lock` prefix keeps the cache line in exclusive state for the whole instruction, so no other core can read or write it in between. With no gap, the lab's schedules of six instructions shrink to two schedules of one instruction each (T1 first or T2 first), and both end at 2.
+
+The lab's mutex also removes the gap, but a thread that finds the mutex held has to spin or sleep until it's released. With the atomic instruction there is nothing to hold. Contending cores take turns owning the cache line, at a cost of tens of nanoseconds each.
+:::
+
 ## Quick Revision
 
 - Atomic RMW: **TAS**, **CAS**, **FAA**, **LL/SC** — read-compute-write indivisibly via cache coherence.
@@ -246,3 +333,4 @@ The failure means another thread made progress; retry against the new state (opt
 - Lock-free: some thread always progresses; wait-free: every thread does.
 - **ABA**: value returned to A; fix with version tags, LL/SC, hazard pointers/epochs.
 - Contended atomics serialize on a cache line → shard counters.
+- Java: `AtomicBoolean.getAndSet` = TAS, `getAndIncrement` = FAA, `compareAndSet` = CAS, `Thread.onSpinWait()` = PAUSE, `AtomicStampedReference` = versioned CAS (ABA).

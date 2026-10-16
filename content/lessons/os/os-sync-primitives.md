@@ -12,21 +12,21 @@ stage: 2
 prerequisites: [os-race-conditions]
 related: [os-semaphores-monitors, os-atomic-instructions, os-classic-sync-problems, os-deadlocks, db-locking]
 visualizations: [race-condition]
-tags: [mutex, spinlock, read-write lock, semaphore, condition variable, monitor, barrier, futex, synchronized, lock contention]
+tags: [mutex, spinlock, read-write lock, semaphore, condition variable, monitor, barrier, futex, synchronized, lock contention, ReentrantLock, Condition, java.util.concurrent]
 ---
 
 ## Mental Model
 
 Every primitive answers one question about shared state:
 
-| Question | Primitive |
-|---|---|
-| "Only one of us may touch this at a time." | **Mutex** (or **spinlock** if the wait is tiny) |
-| "Many may read at once, but a writer needs it alone." | **Read-write lock** |
-| "At most N of us may use this pool at once." | **Counting semaphore** |
-| "Wait until some condition about the state becomes true." | **Condition variable** (always with a mutex) |
-| "Bundle the lock and the conditions into the object itself." | **Monitor** (`synchronized` + `wait/notify`) |
-| "Nobody continues until all of us arrive." | **Barrier** |
+| Question | Primitive | In Java |
+|---|---|---|
+| "Only one of us may touch this at a time." | **Mutex** (or **spinlock** if the wait is tiny) | `synchronized`, `ReentrantLock` |
+| "Many may read at once, but a writer needs it alone." | **Read-write lock** | `ReentrantReadWriteLock`, `StampedLock` |
+| "At most N of us may use this pool at once." | **Counting semaphore** | `Semaphore` |
+| "Wait until some condition about the state becomes true." | **Condition variable** (always with a mutex) | `Condition` from a `ReentrantLock` |
+| "Bundle the lock and the conditions into the object itself." | **Monitor** (`synchronized` + `wait/notify`) | any object: `synchronized` + `wait()`/`notifyAll()` |
+| "Nobody continues until all of us arrive." | **Barrier** | `CyclicBarrier`, `CountDownLatch`, `Phaser` |
 
 Most real bugs come from using the right primitive incorrectly (forgetting the `while` loop around a condition wait) or the wrong primitive (a semaphore where a mutex was meant).
 
@@ -54,13 +54,20 @@ A mutex says "one at a time". A condition variable says "sleep until something c
 
 ### Mutex
 
-```c
-pthread_mutex_lock(&account->lock);
-if (account->balance >= amount) account->balance -= amount;   // critical section
-pthread_mutex_unlock(&account->lock);
+```java
+private final ReentrantLock lock = new ReentrantLock();
+
+void withdraw(Account account, long amount) {
+    lock.lock();
+    try {
+        if (account.balance >= amount) account.balance -= amount;   // critical section
+    } finally {
+        lock.unlock();                    // runs on every path, even if an exception is thrown
+    }
+}
 ```
 
-Rules: lock, do the minimum, unlock — **on every path** (use RAII `std::lock_guard`, `try/finally`, `with` blocks). Keep critical sections short; never call slow or unknown code (I/O, callbacks) while holding a lock.
+Rules: lock, do the minimum, unlock — **on every path**. In Java that means `synchronized` (released automatically) or `unlock()` in a `finally` block. Keep critical sections short; never call slow or unknown code (I/O, callbacks) while holding a lock.
 
 ### Spinlock vs sleeping mutex
 
@@ -84,12 +91,17 @@ A mutex is stricter than necessary when most threads only *read*: two readers ca
 
 Sometimes the rule isn't "one at a time" but "at most N at a time" — 10 database connections, 4 GPU slots. A counter that blocks at zero expresses that directly.
 
-```python
-db_slots = threading.Semaphore(10)      # at most 10 concurrent queries
+```java
+private final Semaphore dbSlots = new Semaphore(10);   // at most 10 concurrent queries
 
-def query(sql):
-    with db_slots:                       # wait(): blocks when 10 are in use
-        return conn_pool.execute(sql)    # signal() on exit
+Result query(String sql) throws InterruptedException {
+    dbSlots.acquire();                    // wait(): blocks while all 10 permits are in use
+    try {
+        return pool.execute(sql);
+    } finally {
+        dbSlots.release();                // signal(): return the permit
+    }
+}
 ```
 
 Semaphores have **no owner**: any thread can signal. That makes them good for **signaling between threads** (producer signals "item available") and for **limiting concurrency** — and makes them a poor mutex replacement (no ownership checks, no priority inheritance, easy to signal twice).
@@ -98,18 +110,44 @@ Semaphores have **no owner**: any thread can signal. That makes them good for **
 
 The problem: a consumer needs to wait until the queue is non-empty. Checking in a loop burns CPU; sleeping without a lock risks missing the producer's signal. A condition variable is "sleep, and release the lock while you sleep, and wake me when someone signals".
 
-```c
-pthread_mutex_lock(&m);
-while (queue_empty(&q))              // WHILE, not IF
-    pthread_cond_wait(&not_empty, &m);   // atomically: unlock m + sleep; relock on wake
-item = dequeue(&q);
-pthread_mutex_unlock(&m);
+```java
+private final ReentrantLock lock = new ReentrantLock();
+private final Condition notEmpty = lock.newCondition();
+private final Deque<Item> queue = new ArrayDeque<>();
 
-// producer
-pthread_mutex_lock(&m);
-enqueue(&q, item);
-pthread_cond_signal(&not_empty);
-pthread_mutex_unlock(&m);
+Item take() throws InterruptedException {        // consumer
+    lock.lock();
+    try {
+        while (queue.isEmpty())                  // WHILE, not IF
+            notEmpty.await();                    // atomically: unlock + sleep; relock on wake
+        return queue.removeFirst();
+    } finally {
+        lock.unlock();
+    }
+}
+
+void put(Item item) {                            // producer
+    lock.lock();
+    try {
+        queue.addLast(item);
+        notEmpty.signal();
+    } finally {
+        lock.unlock();
+    }
+}
+```
+
+```mermaid
+sequenceDiagram
+    participant C as Consumer
+    participant L as Lock and queue
+    participant P as Producer
+    C->>L: lock(), queue is empty
+    C->>L: await(): unlock + sleep, atomically
+    P->>L: lock(), add item
+    P->>L: signal(), unlock()
+    L-->>C: wakes, re-acquires lock
+    C->>L: re-check: not empty, take item
 ```
 
 Why `while`: **spurious wakeups** are permitted, and with **Mesa semantics** (used by pthreads, Java) a signaled thread doesn't run immediately — another thread may grab the item first. The waiter must re-check the condition after waking. The atomic "release the mutex and sleep" inside `wait` prevents a **lost wakeup** (signal arriving between checking the condition and going to sleep).
@@ -259,6 +297,27 @@ Use a counting semaphore with 50 permits: `tryAcquire(200ms)` before the call, r
 
 A counting semaphore tracks available slots.
 
+### [numeric 15] A `Semaphore` is created with 10 permits. 25 threads call `acquire()` at about the same time, and none releases yet. How many threads are blocked?
+
+:::answer
+The first 10 acquires take the 10 permits; the remaining 25 − 10 = **15** threads block until permits are released.
+:::
+
+### [numeric 2] A counting semaphore starts at 7. Then 20 P (wait) operations and 15 V (signal) operations complete. What is its value?
+
+:::answer
+Each P subtracts 1 and each V adds 1: 7 − 20 + 15 = **2**. (In the textbook model a negative value means that many processes are waiting; here it ends positive, so no one is.)
+:::
+
+### [mcq] What is wrong with this Java code? `lock.lock(); updateBalances(); lock.unlock();`
+
+- [ ] Nothing; `ReentrantLock` unlocks itself automatically
+- [x] If `updateBalances()` throws, `unlock()` never runs and every other thread blocks forever
+- [ ] `lock()` must be called inside a `synchronized` block
+- [ ] `ReentrantLock` cannot be used across method calls
+
+Explicit locks are not released automatically. Put `unlock()` in a `finally` block right after `lock()`, or use `synchronized`, which the JVM releases on every exit path.
+
 ### [mcq] A consumer calls `if (queue.isEmpty()) cond.wait();` and then dequeues. What bug can occur?
 
 - [ ] Deadlock is guaranteed
@@ -267,6 +326,53 @@ A counting semaphore tracks available slots.
 - [ ] The producer can never signal
 
 Always use `while`.
+
+### [exercise] Implement a thread-safe bounded buffer of capacity N in Java with one `ReentrantLock` and two `Condition`s, so producers wait when it is full and consumers wait when it is empty. Then explain why two conditions are better than one. Try the semaphore version in the [producer–consumer lab](lab:producer-consumer).
+
+:::solution
+```java
+class BoundedBuffer<T> {
+    private final Object[] items;
+    private int head, tail, count;
+    private final ReentrantLock lock = new ReentrantLock();
+    private final Condition notFull = lock.newCondition();
+    private final Condition notEmpty = lock.newCondition();
+
+    BoundedBuffer(int capacity) { items = new Object[capacity]; }
+
+    void put(T item) throws InterruptedException {
+        lock.lock();
+        try {
+            while (count == items.length) notFull.await();    // full: wait for a consumer
+            items[tail] = item;
+            tail = (tail + 1) % items.length;
+            count++;
+            notEmpty.signal();                                // a consumer may proceed
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    T take() throws InterruptedException {
+        lock.lock();
+        try {
+            while (count == 0) notEmpty.await();              // empty: wait for a producer
+            T item = (T) items[head];
+            items[head] = null;
+            head = (head + 1) % items.length;
+            count--;
+            notFull.signal();                                 // a producer may proceed
+            return item;
+        } finally {
+            lock.unlock();
+        }
+    }
+}
+```
+
+With two conditions, a producer's `signal()` wakes only a waiting consumer, and vice versa. With a single condition (like `synchronized` + `wait/notify`), a `notify()` might wake another producer that can't proceed. That forces `notifyAll()`, which wakes everyone just so all but one go back to sleep (a thundering herd). In practice, use `ArrayBlockingQueue`, which is built exactly this way.
+:::
 
 ## Quick Revision
 
@@ -277,3 +383,4 @@ Always use `while`.
 - Futex: uncontended lock/unlock stays in user space (~20 ns).
 - Contention is the cost; reduce sharing, shrink critical sections, shard locks.
 - Pitfalls: deadlock, lock held during I/O, priority inversion (fix: inheritance), unfair locks vs convoys.
+- Java: `ReentrantLock` needs `unlock()` in `finally`; `Condition.await()` in a `while` loop; `ArrayBlockingQueue` = lock + two conditions.

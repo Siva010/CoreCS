@@ -11,7 +11,7 @@ relevance: high
 stage: 3
 prerequisites: [os-performance-method]
 related: [os-cpu-caches-contention, x-slow-query, x-overloaded-server, cn-tail-latency]
-tags: [profiling, flame graph, perf, strace, ltrace, ebpf, bpftrace, vmstat, iostat, pidstat, top, sar, observability, metrics, logs, traces, opentelemetry, off-cpu analysis]
+tags: [profiling, flame graph, perf, strace, ltrace, ebpf, bpftrace, vmstat, iostat, pidstat, top, sar, observability, metrics, logs, traces, opentelemetry, off-cpu analysis, jfr, async-profiler, jcmd, thread dump]
 ---
 
 ## Mental Model
@@ -21,7 +21,15 @@ Diagnosing performance is detective work with two kinds of evidence:
 - **Metrics** tell you *that* something is wrong and *where to look* (which resource is saturated, which endpoint is slow).
 - **Profiles and traces** tell you *why* (which code burns CPU, which call waits, which request path is slow).
 
-The skill is moving quickly from broad to specific: **system → process → thread → function → line**, forming a hypothesis at each level and testing it with the cheapest tool that can confirm or reject it.
+The skill is moving quickly from broad to specific: **system → process → thread → function → line**. At each level, form a hypothesis and test it with the cheapest tool that can confirm or reject it.
+
+```mermaid
+flowchart TD
+    M["metrics and dashboards:<br/>which service, which resource?"] -->|"vmstat, mpstat, iostat"| P["which process?"]
+    P -->|"pidstat, top -H"| T["which threads, doing what?"]
+    T -->|"busy: CPU profile<br/>(perf, async-profiler)"| F["which function?"]
+    T -->|"waiting: thread dumps,<br/>off-CPU profile, traces"| W["what is it waiting for?"]
+```
 
 ## Definition
 
@@ -70,6 +78,22 @@ perf script | stackcollapse-perf.pl | flamegraph.pl > cpu.svg
 
 A **flame graph**: each box is a function; the x-axis is the share of samples (not time order); the y-axis is stack depth; **wide towers** are where CPU goes. Language-specific equivalents: `async-profiler` (JVM), `py-spy` (Python), `pprof` (Go), `0x`/`--cpu-prof` (Node.js). They're safe in production at low sampling rates.
 
+### The JVM's own toolkit
+
+For a Java service, the JVM can answer most of these questions itself, safely in production:
+
+```bash
+jcmd <pid> Thread.print                               # thread dump (same as jstack, or kill -3)
+jcmd <pid> JFR.start duration=60s filename=app.jfr    # Flight Recorder: CPU samples, allocations,
+                                                       # locks, file and socket I/O, GC — about 1% overhead
+jcmd <pid> GC.heap_info                                # heap occupancy per generation
+asprof -d 30 -e cpu  -f cpu.html  <pid>                # async-profiler: CPU flame graph, no safepoint bias
+asprof -d 30 -e wall -f wall.html <pid>                # wall-clock mode: includes threads that are waiting
+asprof -d 30 -e alloc -f alloc.html <pid>              # where objects are allocated (GC pressure)
+```
+
+Open the `.jfr` file in JDK Mission Control. Its "Method Profiling", "Lock Instances" and "Socket I/O" pages cover on-CPU, lock and network waits in one recording.
+
 ### Off-CPU: why is it waiting?
 
 A CPU profiler only sees threads that are *running*. But a slow request is often a thread that is *not* running — it's waiting. Those waits are invisible to a CPU profile, so they need a different tool. If CPU is low but latency is high, sample where threads **block**:
@@ -80,7 +104,7 @@ A CPU profiler only sees threads that are *running*. But a slow request is often
 
 ### eBPF: safe, low-overhead kernel tracing
 
-The old trade-off was: detailed tracing (strace) is too slow for production; cheap metrics are too coarse. eBPF breaks it by running small, verified programs *inside* the kernel that count and summarise events where they happen, shipping out only the summary. eBPF programs attach to kernel/user events and aggregate in-kernel:
+The old trade-off was: detailed tracing (strace) is too slow for production; cheap metrics are too coarse. eBPF breaks it by running small, verified programs *inside* the kernel. They count and summarise events where they happen and ship out only the summary. eBPF programs attach to kernel/user events and aggregate in-kernel:
 
 ```bash
 biolatency           # histogram of block I/O latency
@@ -179,6 +203,10 @@ Use a sampling profiler with low overhead: `perf record -F 99 -g` for native cod
 
 Metrics are aggregated numbers over time (cheap, good for alerting and trends). Logs are discrete event records with detail (good for forensics, expensive at volume). Traces follow individual requests across components as spans (good for locating latency across services). Together they answer "is something wrong", "what happened" and "where did the time go".
 
+### [L2 · how] How would you profile a Java service in production?
+
+Start with Java Flight Recorder: `jcmd <pid> JFR.start duration=60s filename=app.jfr` records CPU samples, allocation, lock contention, socket and file I/O and GC events at around 1% overhead, and JDK Mission Control shows the hot methods and the longest waits. For CPU flame graphs, use async-profiler (`asprof -e cpu`), which samples with `perf_events` plus JVM stack walking, so JIT-compiled frames are named and there's no safepoint bias. Its wall-clock mode (`-e wall`) also samples blocked threads, which finds waits a CPU profile can't see. Add a few thread dumps (`jcmd <pid> Thread.print`) several seconds apart to see where threads are stuck. All of these are safe on a live instance for short windows.
+
 ### [L3 · debugging] A service's latency is high but CPU usage is low. How do you investigate?
 
 It's waiting, not computing. Take several thread dumps to see where threads block (locks, pool acquisition, socket reads), check pool/queue metrics, look at distributed traces for slow downstream spans, check DB lock waits and slow queries, and use off-CPU profiling (eBPF offcputime) if needed. Also check network (retransmits via `tcpretrans`, DNS latency) and disk (`biolatency`).
@@ -211,6 +239,40 @@ Width = share of samples.
 
 Off-CPU analysis shows where time is spent waiting.
 
+### [numeric 23760] A profiler samples every CPU at 99 Hz for 30 seconds on an 8-core machine where all cores are busy. How many stack samples does it collect?
+
+:::answer
+99 samples/s × 30 s × 8 cores = **23760** samples. That's enough for a stable picture: a function using 1% of the CPU still appears in about 240 samples.
+:::
+
+### [numeric 20 unit=%] In that profile, `Pattern.compile` appears in 4,752 of the samples. What share of CPU time is it responsible for?
+
+:::answer
+4,752 / 23,760 = 0.2 = **20**%. A flame graph would draw its tower one fifth of the full width.
+:::
+
+### [mcq] A Java service is slow, CPU is at 10%, and a CPU flame graph from async-profiler shows nothing unusual. Which async-profiler mode helps most next?
+
+- [ ] `-e alloc` (allocation profiling)
+- [x] `-e wall` (wall-clock sampling, including threads that are blocked or waiting)
+- [ ] `-e cpu` with a higher sampling rate
+- [ ] `-e cache-misses`
+
+A CPU profile only sees threads that are running. Wall-clock mode samples every thread whatever its state, so time spent waiting on locks, sockets or a connection pool shows up as wide towers.
+
+### [exercise] A Spring Boot service on Tomcat has p99 latency of 3 s and CPU at 15%. Three thread dumps taken 5 seconds apart show 150 of the 200 `http-nio-8080-exec-*` threads in `RUNNABLE` state with stacks topped by `sun.nio.ch.SocketDispatcher.read` called from `com.mysql.cj.protocol.ReadAheadInputStream`. Interpret the evidence and say what you'd check next.
+
+:::solution
+The threads are inside a socket read in the MySQL JDBC driver, so they are waiting for the database to answer. `RUNNABLE` is misleading: the JVM can't tell that the kernel has put a thread to sleep in a native read. The same picture in three dumps means the waits are long, not momentary. With 150 threads stuck there and CPU at 15%, the service isn't computing; it's queued behind slow queries.
+
+Next checks, moving to the database:
+- Which queries are slow right now: MySQL `SHOW PROCESSLIST` or `performance_schema` statement digests, and the slow query log.
+- Whether they are blocked on locks (`performance_schema.data_lock_waits`) or doing large scans (EXPLAIN).
+- The connection pool's metrics: if it has, say, 150 connections, they are all in use and the database may be overloaded by the concurrency itself.
+
+On the service side, add a query timeout so a slow database can't hold every request thread.
+:::
+
 ## Quick Revision
 
 - Broad → specific: system → process → thread → function.
@@ -219,3 +281,4 @@ Off-CPU analysis shows where time is spent waiting.
 - eBPF tools: biolatency, runqlat, tcpretrans, execsnoop, opensnoop.
 - Metrics (what/how much), logs (what exactly), traces (where across services).
 - strace is heavy; profilers at ~99 Hz are safe.
+- JVM: `jcmd Thread.print` (dumps), `JFR.start` (~1% overhead, everything), async-profiler `-e cpu` / `-e wall` / `-e alloc`. `RUNNABLE` in a socket read = waiting.

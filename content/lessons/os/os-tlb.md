@@ -101,15 +101,29 @@ CPUs have split L1 instruction/data TLBs, a larger shared L2 TLB (STLB), and **p
 
 ## Example
 
-Measuring TLB impact with `perf`:
+Measuring TLB impact with `perf`, on a Java program that reads random elements of a large array:
+
+```java
+public class RandomLookup {
+    public static void main(String[] args) {
+        long[] data = new long[1 << 30];                   // 8 GB: run with -Xmx10g
+        SplittableRandom rnd = new SplittableRandom(42);
+        long sum = 0;
+        for (int i = 0; i < 100_000_000; i++) {
+            sum += data[rnd.nextInt(data.length)];          // a random page almost every time
+        }
+        System.out.println(sum);
+    }
+}
+```
 
 ```bash
-$ perf stat -e dTLB-loads,dTLB-load-misses,iTLB-load-misses ./random_lookup
+$ perf stat -e dTLB-loads,dTLB-load-misses,iTLB-load-misses java -Xmx10g RandomLookup
   3,120,441,211  dTLB-loads
     412,339,002  dTLB-load-misses   # 13.2% of all dTLB loads — very high
 ```
 
-Re-running with transparent huge pages enabled for the dataset often cuts misses by an order of magnitude and runtime by 10–30% for such workloads.
+Re-running with transparent huge pages enabled for the dataset (`java -Xmx10g -XX:+UseTransparentHugePages RandomLookup`) often cuts misses by an order of magnitude and runtime by 10–30% for such workloads.
 
 ## Visualization
 
@@ -198,6 +212,32 @@ TLB misses: random access over 200 GB with 4 KB pages vastly exceeds TLB reach, 
 
 Tagged entries let translations from multiple address spaces coexist.
 
+### [numeric 104 unit=ns] With 4-level page tables, a TLB lookup time of about 0, memory access 100 ns and a 99% hit ratio, what is the effective access time? (A miss walks all 4 levels from memory.)
+
+:::answer
+Hit: 100 ns. Miss: 4 × 100 (walk) + 100 (data) = 500 ns. EAT = 0.99 × 100 + 0.01 × 500 = 99 + 5 = **104** ns. One miss in a hundred adds only 4%, but at 90% hits it would be 140 ns.
+:::
+
+### [numeric 130 unit=ns] A system has a two-level page table, a TLB lookup time of 10 ns, a memory access time of 100 ns and a TLB hit ratio of 0.9. What is the effective memory access time?
+
+:::answer
+Hit: 10 + 100 = 110 ns. Miss: 10 + 2 × 100 (two page-table levels) + 100 (data) = 310 ns. EAT = 0.9 × 110 + 0.1 × 310 = 99 + 31 = **130** ns.
+:::
+
+### [numeric 32 unit=GB] An L1 TLB for 1 GB pages has 32 entries. What is its reach?
+
+:::answer
+Reach = entries × page size = 32 × 1 GB = **32** GB. With 4 KB pages the same 32 entries would cover only 128 KB.
+:::
+
+### [exercise] Using the `RandomLookup` program above, predict what changes in `perf stat` when you replace random indexes with sequential ones (`data[i]`), and when you keep random indexes but enable transparent huge pages. Explain each in terms of TLB reach. Watch individual translations in the [address translation visualization](viz:address-translation).
+
+:::solution
+- **Sequential access**: consecutive `long`s share a 4 KB page, so one translation serves 512 elements in a row. The dTLB miss rate drops to nearly zero, and the hardware prefetcher also hides cache misses. The run is much faster than the random version.
+- **Random access, 4 KB pages**: 8 GB of data spans 2 million pages, far beyond a reach of a few MB (about 1,536 entries × 4 KB = 6 MB). Almost every access misses the TLB and needs a page walk, on top of the data cache miss.
+- **Random access, 2 MB pages**: the same 8 GB is only 4,096 pages. A TLB with about 1,536 huge-page entries covers 3 GB, so a large share of the walks disappear, and the walks that remain are shorter (one level less). The data cache misses remain, so the speedup is real but partial, typically 10–30%.
+:::
+
 ## Quick Revision
 
 - TLB = cache of VPN → PFN translations (+ permissions) in the MMU.
@@ -206,3 +246,4 @@ Tagged entries let translations from multiple address spaces coexist.
 - **TLB reach** = entries × page size → huge pages boost reach.
 - Process switch → flush or ASID/PCID tags; thread switch → TLB stays valid.
 - **Shootdowns**: IPIs to invalidate stale entries on other cores after mapping changes.
+- Two-level table: miss = t + 2m + m. JVM: `-XX:+UseTransparentHugePages` or `-XX:+UseLargePages` for big heaps with random access.

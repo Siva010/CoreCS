@@ -11,14 +11,18 @@ relevance: medium
 stage: 3
 prerequisites: [os-filesystem-internals]
 related: [os-page-cache, db-wal-durability, db-crash-recovery, x-durability-chain]
-tags: [crash consistency, journaling, fsck, write-ahead logging, metadata journaling, ordered mode, data journaling, copy-on-write filesystem, fsync, fdatasync, atomic rename, barriers]
+tags: [crash consistency, journaling, fsck, write-ahead logging, metadata journaling, ordered mode, data journaling, copy-on-write filesystem, fsync, fdatasync, atomic rename, barriers, FileChannel.force, ATOMIC_MOVE]
 ---
 
 ## Mental Model
 
-Appending one block to a file is not one write — it's several: update the **data block**, the **inode** (new size, new block pointer), and the **block bitmap** (mark the block used). The disk writes them one at a time, in an order you don't fully control. If power fails between them, the filesystem is left **half-updated**: an inode pointing to a block still marked free (which will be handed out again — two files sharing a block), or a block marked used that nothing points to (leaked space), or an inode pointing to garbage.
+Appending one block to a file is not one write — it's several: update the **data block**, the **inode** (new size, new block pointer), and the **block bitmap** (mark the block used). The disk writes them one at a time, in an order you don't fully control. If power fails between them, the filesystem is left **half-updated**. Three things can go wrong:
 
-**Journaling** is the same trick a careful accountant uses: *first write down in a notebook exactly what you're about to change, then make the changes.* After a crash, read the notebook and redo any change that was recorded completely; ignore any that were half-written in the notebook itself.
+- an inode points to a block still marked free, which will be handed out again (two files sharing a block);
+- a block is marked used but nothing points to it (leaked space);
+- an inode points to garbage.
+
+**Journaling** is the same trick a careful accountant uses: *first write down in a notebook exactly what you're about to change, then make the changes.* After a crash, read the notebook and redo any change that was recorded completely. Ignore any change that was only half-written in the notebook itself.
 
 ## Definition
 
@@ -51,7 +55,15 @@ Write down what you're about to do, mark it "committed", then do it. After a cra
 5. **Free** the journal space once checkpointing is complete.
 ::::
 
-After a crash, recovery scans the journal: transactions with a valid commit block are **replayed** (their blocks written to home locations — idempotent, so replaying twice is harmless); transactions without a commit block are discarded (the home locations were never touched, so the old state is intact).
+After a crash, recovery scans the journal. Transactions with a valid commit block are **replayed**: their blocks are written to their home locations, which is idempotent, so replaying twice is harmless. Transactions without a commit block are discarded. Their home locations were never touched, so the old state is intact.
+
+```mermaid
+flowchart TD
+    C["crash, then reboot"] --> S["scan the journal"]
+    S --> Q{"transaction has a<br/>commit block?"}
+    Q -->|yes| R["replay: copy its blocks to their<br/>home locations (safe to repeat)"]
+    Q -->|no| D["discard it: its home locations<br/>were never touched"]
+```
 
 ### Journaling modes (ext4)
 
@@ -77,20 +89,26 @@ Journaling keeps the filesystem *consistent*; it doesn't make your data *durable
 
 ### The atomic-replace pattern
 
-The problem: overwriting a file in place means a crash can leave it half old, half new. But `rename` is atomic — a name points to one inode or the other, never a mix. So write a complete new file, then swap the name. Updating a config or state file safely:
+The problem: overwriting a file in place means a crash can leave it half old, half new. But `rename` is atomic — a name points to one inode or the other, never a mix. So write a complete new file, then swap the name. Updating a config or state file safely, in Java:
 
-```python
-import os
-tmp = path + ".tmp"
-with open(tmp, "w") as f:
-    f.write(new_content)
-    f.flush()
-    os.fsync(f.fileno())          # 1. new contents durable
-os.rename(tmp, path)              # 2. atomic replace (POSIX guarantees atomic name switch)
-dfd = os.open(os.path.dirname(path) or ".", os.O_RDONLY)
-os.fsync(dfd)                     # 3. make the rename itself durable
-os.close(dfd)
+```java
+static void writeAtomically(Path path, byte[] content) throws IOException {
+    Path target = path.toAbsolutePath();
+    Path tmp = target.resolveSibling(target.getFileName() + ".tmp");
+    try (FileChannel ch = FileChannel.open(tmp, StandardOpenOption.CREATE,
+            StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
+        ByteBuffer buf = ByteBuffer.wrap(content);
+        while (buf.hasRemaining()) ch.write(buf);
+        ch.force(true);                                   // 1. new contents durable (fsync)
+    }
+    Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE);  // 2. atomic replace: rename(2) on Linux
+    try (FileChannel dir = FileChannel.open(target.getParent(), StandardOpenOption.READ)) {
+        dir.force(true);                                  // 3. make the rename itself durable
+    }
+}
 ```
+
+`FileChannel.force(true)` is `fsync` (data and metadata); `force(false)` is closer to `fdatasync`. Opening a directory as a `FileChannel` to fsync it works on Linux but not on Windows.
 
 Readers see either the old file or the complete new file — never a partial one. Skipping step 1 can leave a zero-length file after a crash on some filesystems (ext4's "rename" heuristics mitigate but don't guarantee this).
 
@@ -187,6 +205,35 @@ Only committed transactions are replayed.
 
 The directory entry is part of the directory's data.
 
+### [numeric 500] Each `fsync` on a server's disk takes 2 ms. A single thread commits transactions one at a time, each waiting for its own fsync. What is the maximum number of commits per second?
+
+:::answer
+1 / 0.002 s = **500** commits per second, no matter how fast the CPU is. Durable commits are limited by flush latency.
+:::
+
+### [numeric 25000] The same database adds group commit: one `fsync` makes 50 waiting transactions durable together. What is the maximum commit rate now?
+
+:::answer
+500 fsyncs per second × 50 commits each = **25000** commits per second. Each commit waits about the same time, but the flush cost is shared, which is why databases batch commits.
+:::
+
+### [mcq] What is the difference between `FileChannel.force(true)` and `force(false)` in Java?
+
+- [ ] `force(true)` also closes the channel
+- [x] `force(true)` flushes the file's content and its metadata (like `fsync`); `force(false)` may skip metadata not needed to read the data (like `fdatasync`)
+- [ ] `force(false)` only flushes to the page cache
+- [ ] They are identical on Linux
+
+Both make the file's data durable. Skipping metadata such as the modification time can save a write, which is why logs that preallocate their file use `force(false)`. A size change, though, is metadata that matters, so appending to a file still has to write it.
+
+### [exercise] A Java service saves its state with `Files.writeString(Path.of("state.json"), json)` every minute. After a power cut, `state.json` is empty and the service won't start. Explain what happened at the filesystem level and rewrite the save so a crash leaves either the old or the new file, complete.
+
+:::solution
+`Files.writeString` opens the file with truncation, writes, and closes, but never calls `fsync`. Truncating to zero changed metadata, which the journal committed quickly. The new contents were still only in the page cache when the power failed, so after the reboot the file was empty.
+
+The fix is the atomic-replace pattern from this lesson: write the new JSON to `state.json.tmp`, `force(true)` it, `Files.move(tmp, target, ATOMIC_MOVE)`, then `force(true)` on the directory (the `writeAtomically` method above). A crash before the rename leaves the old file intact; a crash after it leaves the complete new file. Also validate the file on startup (a checksum or a version field) and keep the previous version as a fallback.
+:::
+
 ## Quick Revision
 
 - One operation = several block writes → crash leaves inconsistency → fsck (slow) or journaling (fast).
@@ -195,3 +242,4 @@ The directory entry is part of the directory's data.
 - COW filesystems: write new tree, atomically switch root; snapshots + checksums.
 - `write()` ≠ durable; **fsync** file (+ directory for new names). Atomic replace: temp → fsync → rename → fsync dir.
 - Drive caches must honor flushes; fsync errors can mean lost data.
+- Java: `FileChannel.force(true)` = fsync, `force(false)` ≈ fdatasync, `Files.move(..., ATOMIC_MOVE)` = rename; `Files.writeString` never fsyncs.

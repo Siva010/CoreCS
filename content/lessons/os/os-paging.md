@@ -72,6 +72,17 @@ physical address   [ PFN (frame number) ]                   [ offset ]
 - Page table says VPN 19 → PFN `0x7F2`.
 - Physical address = `(0x7F2 << 12) | 0xABC` = `0x7F2ABC`.
 
+The same arithmetic in Java, which is exactly what the MMU does in hardware:
+
+```java
+long va = 0x0001_3ABCL;
+int pageShift = 12;                               // 4 KB pages: 2^12 bytes
+long vpn = va >>> pageShift;                      // 0x13: which page
+long offset = va & ((1L << pageShift) - 1);       // 0xABC: where inside it (low 12 bits)
+long pfn = 0x7F2;                                 // looked up in the page table
+long pa = (pfn << pageShift) | offset;            // 0x7F2ABC
+```
+
 ### The page-table entry
 
 | Bit / field | Meaning | Used for |
@@ -102,6 +113,17 @@ CR3 → page directory (1024 entries) → page table (1024 entries) → frame + 
 A process using 8 MB of contiguous memory needs 1 directory page + 2 page tables = 12 KB of page tables instead of 4 MB.
 
 **x86-64 four-level paging** (48-bit virtual addresses): 9 + 9 + 9 + 9 bits of index + 12 bits of offset. Each table is 512 entries × 8 bytes = 4 KB. Levels: PML4 → PDPT → PD → PT. (Five-level paging, 57-bit addresses, exists for machines with huge memory.)
+
+```mermaid
+flowchart TD
+    CR3["CR3 register:<br/>root of this process's tree"] -->|"bits 47–39"| L4["PML4 entry"]
+    L4 -->|"bits 38–30"| L3["PDPT entry"]
+    L3 -->|"bits 29–21"| L2["PD entry"]
+    L2 -->|"bits 20–12"| L1["PT entry: frame number"]
+    L1 -->|"bits 11–0: offset"| F["byte in the physical frame"]
+```
+
+Each arrow is one memory read, using the next 9 bits of the virtual address as an index into a 512-entry table.
 
 ::viz{id=address-translation}
 
@@ -242,6 +264,54 @@ Offset = low 12 bits = `0x7F9`. VPN = `0x3A7F9 >> 12` = `0x3A`. PFN = `0x1C`. Ph
 4 GB / 4 KB = 2³² / 2¹² = 2²⁰ frames → **20 bits**.
 :::
 
+### [numeric 16] A logical address space has 64 pages of 1 KB each, mapped onto 32 physical frames. How many bits are in a logical address?
+
+:::answer
+Logical space = 64 × 1 KB = 2⁶ × 2¹⁰ = 2¹⁶ bytes, so a logical address has **16** bits: 6 for the page number and 10 for the offset. (Physical space is 32 × 1 KB = 2¹⁵ bytes, so physical addresses have 15 bits.)
+:::
+
+### [numeric 16 unit=KB] On classic 32-bit x86 (two-level paging, 4 KB pages, 1024 entries per table), a process uses 12 MB of contiguous memory. How much memory do its page tables take?
+
+:::answer
+One page table covers 1024 × 4 KB = 4 MB, so 12 MB needs 3 page tables, plus 1 page directory: 4 pages × 4 KB = **16** KB. A flat single-level table would take 4 MB.
+:::
+
+### [numeric 3] RISC-V's Sv39 mode uses 39-bit virtual addresses, 4 KB pages, 8-byte PTEs and page-sized tables. How many levels does the page table have?
+
+:::answer
+VPN bits = 39 − 12 = 27. Each 4 KB table holds 4096 / 8 = 512 entries = 9 bits. 27 / 9 = **3** levels.
+:::
+
+### [mcq] A JVM with a 64 GB heap shows high TLB-miss rates and a lot of memory in page tables. Which setting targets both?
+
+- [ ] `-Xss` (thread stack size)
+- [x] Large pages for the heap (`-XX:+UseLargePages` with pre-allocated huge pages, or transparent huge pages)
+- [ ] A smaller young generation
+- [ ] More GC threads
+
+With 2 MB pages, one TLB entry covers 512 times as much memory, and the heap needs 512 times fewer last-level PTEs.
+
+### [exercise] Write a Java method that translates a virtual address using a single-level page table `long[] pageTable` (index = VPN, value = PFN, or −1 if the page isn't present) with 4 KB pages. Throw an exception for a non-present page, as the MMU would raise a page fault. Compare your results with the [address translation visualization](viz:address-translation).
+
+:::solution
+```java
+static final int PAGE_SHIFT = 12;                       // 4 KB pages
+static final long OFFSET_MASK = (1L << PAGE_SHIFT) - 1; // 0xFFF
+
+static long translate(long[] pageTable, long va) {
+    long vpn = va >>> PAGE_SHIFT;
+    long offset = va & OFFSET_MASK;
+    if (vpn >= pageTable.length || pageTable[(int) vpn] < 0) {
+        throw new IllegalStateException("page fault at 0x" + Long.toHexString(va));
+    }
+    long pfn = pageTable[(int) vpn];
+    return (pfn << PAGE_SHIFT) | offset;
+}
+```
+
+With `pageTable[0x3A] = 0x1C`, `translate(pageTable, 0x3A7F9)` returns `0x1C7F9`, the same as the exercise above. The real MMU does this split-lookup-join in hardware, walks a tree instead of one array, checks the permission bits too, and caches the answer in the TLB.
+:::
+
 ## Quick Revision
 
 - Pages (virtual) and frames (physical), same size (4 KB typical).
@@ -251,3 +321,4 @@ Offset = low 12 bits = `0x7F9`. VPN = `0x3A7F9 >> 12` = `0x3A`. PFN = `0x1C`. Ph
 - Multi-level: entries per table = page size / PTE size; x86-64: 4 levels × 9 bits + 12-bit offset.
 - No external fragmentation of physical memory; internal fragmentation remains.
 - Walks cost memory accesses → TLB. Inverted tables scale with RAM.
+- Logical address bits = log₂(pages × page size). Levels = (VA bits − offset bits) / log₂(page size / PTE size).

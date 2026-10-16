@@ -16,7 +16,7 @@ tags: [thread pool, executor, work queue, backpressure, bounded queue, rejection
 
 ## Mental Model
 
-A thread pool is a **restaurant kitchen with a fixed number of cooks and a ticket rail**. Orders (tasks) are clipped to the rail (the queue); free cooks (worker threads) take the next ticket. You don't hire a new cook for every order and fire them afterward — that would be absurd — and you don't let the rail grow forever: if tickets pile up beyond what the kitchen can cook in a reasonable time, the host must stop seating guests (**backpressure**) or turn them away (**load shedding**).
+A thread pool is a **restaurant kitchen with a fixed number of cooks and a ticket rail**. Orders (tasks) are clipped to the rail (the queue); free cooks (worker threads) take the next ticket. You don't hire a new cook for every order and fire them afterward; that would be absurd. Nor do you let the rail grow forever. If tickets pile up beyond what the kitchen can cook in a reasonable time, the host must stop seating guests (**backpressure**) or turn them away (**load shedding**).
 
 ## Definition
 
@@ -78,7 +78,7 @@ An unbounded queue hides overload: throughput stays constant, but latency grows 
 The problem with one queue: every worker grabs from the same place, so the queue's lock becomes the new bottleneck when tasks are tiny and workers are many.
 
 - A **single shared queue** is simple but its lock becomes contended with many workers and tiny tasks.
-- **Work-stealing** pools (Java `ForkJoinPool`, Go's scheduler, Tokio, .NET) give each worker its own deque: it pushes/pops its own tasks at one end (LIFO, cache-warm) and idle workers **steal** from the other end of busy workers' deques. Great for recursive divide-and-conquer and many small tasks.
+- **Work-stealing** pools (Java `ForkJoinPool`, Go's scheduler, Tokio, .NET) give each worker its own deque. A worker pushes and pops its own tasks at one end (LIFO, cache-warm), and idle workers **steal** from the other end of busy workers' deques. Great for recursive divide-and-conquer and many small tasks.
 
 ### Java's ThreadPoolExecutor semantics (a common trap)
 
@@ -108,7 +108,7 @@ Future<Receipt> f = paymentPool.submit(() -> paymentClient.charge(order));
 Receipt r = f.get(3, TimeUnit.SECONDS);             // don't wait forever
 ```
 
-Worst-case queue wait: 100 queued / (32 workers / 2 s) ≈ 6 s — longer than the 3 s caller timeout, so the queue should be smaller (≈ 32 × 3 s / 2 s ≈ 48 at most), or requests will time out while queued.
+Worst-case queue wait: 100 queued / (32 workers / 2 s) ≈ 6 s, longer than the 3 s caller timeout. The queue should be smaller (≈ 32 × 3 s / 2 s ≈ 48 at most), or requests will time out while queued.
 
 ## Complexity & Performance
 
@@ -198,6 +198,69 @@ L = λW = 200 × 0.1 = **20**.
 
 It grows beyond core only when the queue rejects an offer, which an unbounded queue never does.
 
+### [numeric 48] A pool has 32 workers, each task takes 2 s, and callers give up after 3 s. What is the largest queue length for which a newly queued task can still start before its caller times out?
+
+:::answer
+The pool finishes 32 tasks every 2 s, so the queue drains at 16 tasks per second. In 3 s it drains 16 × 3 = **48** tasks. A task queued behind more than 48 others starts after its caller has already left, and the work is wasted.
+:::
+
+### [numeric 75 unit=%] A pool of 40 workers receives 600 tasks per second, and each task takes 50 ms. What is the pool's utilization?
+
+:::answer
+Busy workers on average = 600 × 0.05 = 30 (Little's Law). Utilization = 30 / 40 = **75**%. That leaves some headroom; near 100%, queueing delay grows sharply.
+:::
+
+### [mcq] A `ThreadPoolExecutor` with a bounded queue uses `CallerRunsPolicy`. The queue fills up during a traffic spike. What happens?
+
+- [ ] New tasks are silently dropped
+- [ ] The pool creates threads beyond its maximum
+- [x] The thread that calls `execute()` runs the task itself, which slows down how fast new work is submitted
+- [ ] The oldest queued task is discarded
+
+Running the task on the submitter's thread is natural backpressure: while that thread is busy, it can't submit more. Be careful if the submitter is an event-loop or I/O thread, because it stops accepting connections while it works.
+
+### [exercise] This code hangs forever under load. Explain why, and fix it.
+
+```java
+ExecutorService pool = Executors.newFixedThreadPool(4);
+
+Future<Report> buildReport(Order o) {
+    return pool.submit(() -> {
+        Future<Price> p = pool.submit(() -> pricing.quote(o));    // subtask on the same pool
+        Future<Stock> s = pool.submit(() -> inventory.check(o));
+        return new Report(p.get(), s.get());                      // blocks a worker while waiting
+    });
+}
+```
+
+:::solution
+Each report task occupies a worker and then blocks in `get()`, waiting for subtasks that are queued on the same pool. With 4 or more reports in flight, all 4 workers are blocked waiting, and the subtasks they wait for sit in the queue with no free worker to run them. That is a deadlock by pool starvation; nothing times out because `get()` has no timeout.
+
+Fix: don't block a pool thread waiting for work on the same pool. Compose the results without blocking:
+
+```java
+CompletableFuture<Report> buildReport(Order o) {
+    CompletableFuture<Price> p = CompletableFuture.supplyAsync(() -> pricing.quote(o), ioPool);
+    CompletableFuture<Stock> s = CompletableFuture.supplyAsync(() -> inventory.check(o), ioPool);
+    return p.thenCombine(s, Report::new);    // runs when both are done; no thread waits
+}
+```
+
+Alternatives: separate pools for parents and subtasks, a `ForkJoinPool` (a joining worker runs pending subtasks itself), or virtual threads (blocking is cheap, but still put a semaphore in front of the downstream services). Always pass a timeout to `get()` as well.
+:::
+
+### [exercise] A `ThreadPoolExecutor` is a producer–consumer system: submitting threads produce tasks and workers consume them from the queue. Run the [producer–consumer lab](lab:producer-consumer) and fill the buffer. Which side blocks, and on which semaphore? Then explain what `new ThreadPoolExecutor(4, 4, 0, SECONDS, new ArrayBlockingQueue<>(100))` does differently when its queue is full, and how to get the lab's blocking behaviour back.
+
+:::solution
+In the lab, the producer blocks on `empty`. No empty slots are left, so `empty.acquire()` puts it to sleep until a consumer takes an item and releases `empty`.
+
+`ThreadPoolExecutor` never blocks the submitter. `execute()` calls the queue's non-blocking `offer()`. When that fails and the pool already runs its maximum of 4 threads, the task goes to the `RejectedExecutionHandler`. The default, `AbortPolicy`, throws `RejectedExecutionException`. A full queue turns into errors, not back-pressure.
+
+Two ways to get back-pressure:
+- **`CallerRunsPolicy`** runs the rejected task on the submitting thread. While the submitter runs that task it can't submit more, so producers slow to the workers' pace.
+- **A `Semaphore` with 104 permits** (100 queue slots plus 4 running tasks). Call `acquire()` before `execute()`, and `release()` in a `finally` block inside the task. This is the lab's `empty` semaphore, written in Java.
+:::
+
 ## Quick Revision
 
 - Pool = bounded reusable workers + work queue + rejection policy.
@@ -206,3 +269,4 @@ It grows beyond core only when the queue rejects an offer, which an unbounded qu
 - Bound queues, set timeouts, reject fast (backpressure/load shedding).
 - **Bulkheads** isolate slow dependencies; **work stealing** for many small tasks.
 - Traps: Java TPE never grows past core with an unbounded queue; pool-starvation deadlock; ThreadLocal leaks.
+- Max useful queue ≈ drain rate × caller timeout (32 workers / 2 s × 3 s = 48).

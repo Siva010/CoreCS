@@ -11,7 +11,7 @@ relevance: high
 stage: 2
 prerequisites: [os-what-an-os-does, os-context-switch]
 related: [os-io-models, os-file-descriptors, os-signals, os-hardware-model]
-tags: [system call, syscall, interrupt, exception, trap, fault, abort, interrupt handler, top half, bottom half, softirq, vdso, kpti, dma, irq]
+tags: [system call, syscall, interrupt, exception, trap, fault, abort, interrupt handler, top half, bottom half, softirq, vdso, kpti, dma, irq, types of system calls, interrupt vector table, parameter passing]
 ---
 
 ## Mental Model
@@ -51,24 +51,56 @@ There are exactly three ways into the kernel — ask (syscall), stumble (excepti
 
 ### Anatomy of a system call (x86-64 Linux)
 
-```c
-ssize_t n = read(fd, buf, 4096);
+```java
+byte[] buf = new byte[4096];
+int n = in.read(buf);     // in is a FileInputStream
+```
+
+```mermaid
+sequenceDiagram
+    participant J as Java code
+    participant L as JDK native code + libc
+    participant K as Kernel
+    J->>L: in.read(buf)
+    L->>K: syscall (rax = 0: read)
+    Note over K: syscall table → ksys_read
+    K-->>L: sysret, rax = bytes read
+    L-->>J: n
 ```
 
 ::::steps[read() from user mode to kernel and back]
-1. **libc wrapper** puts the syscall number (`read` = 0) in `rax` and arguments in `rdi`, `rsi`, `rdx` (then `r10`, `r8`, `r9`).
-2. **`syscall` instruction**: the CPU saves the user RIP in `rcx` and flags in `r11`, switches to kernel mode (CPL 0), and jumps to the entry point stored in the `LSTAR` MSR — set by the kernel at boot.
+1. **libc wrapper** (called by the JDK's native code for `FileInputStream`) puts the syscall number (`read` = 0) in `rax` and arguments in `rdi`, `rsi`, `rdx` (then `r10`, `r8`, `r9`).
+2. **`syscall` instruction**: the CPU saves the user RIP in `rcx` and flags in `r11`, then switches to kernel mode (CPL 0). It jumps to the entry point stored in the `LSTAR` MSR, which the kernel set at boot.
 3. **Kernel entry**: switch to the thread's kernel stack, save user registers (building `pt_regs`), apply mitigations (e.g., KPTI page-table switch, speculation barriers).
 4. **Dispatch**: index the **system call table** with `rax` → `ksys_read()`. Validate the fd, check that `buf` is a user-space address it's allowed to write, perform the operation (possibly sleeping if data isn't available).
 5. **Copy results** to user memory with `copy_to_user` (which handles faults safely).
-6. **Exit path**: check for pending signals and whether a reschedule is needed; restore registers; `sysret` returns to user mode at the saved RIP with `rax` = return value (negative errno values become `-1` + `errno` in libc).
+6. **Exit path**: check for pending signals and whether a reschedule is needed, then restore registers. `sysret` returns to user mode at the saved RIP with `rax` = return value; libc turns negative errno values into `-1` plus `errno`.
 ::::
+
+### Types of system calls
+
+Textbooks group system calls into six categories. Every Java I/O or process API ends in one of them:
+
+| Category | Linux examples | Java APIs that make these calls |
+|---|---|---|
+| **Process control** | `clone`, `execve`, `exit_group`, `wait4`, `kill` | `ProcessBuilder.start()`, `System.exit()`, `Process.waitFor()`, `ProcessHandle.destroy()` |
+| **File management** | `openat`, `read`, `write`, `close`, `lseek`, `fsync`, `rename`, `unlink` | `FileInputStream`, `FileChannel`, `Files.move()`, `Files.delete()` |
+| **Device management** | `ioctl`, `read`/`write` on device files | Rarely direct; through files under `/dev` |
+| **Information maintenance** | `getpid`, `clock_gettime`, `uname`, `sysinfo` | `ProcessHandle.current().pid()`, `System.nanoTime()` (vDSO, below) |
+| **Communication** | `socket`, `connect`, `accept`, `sendmsg`, `pipe`, `mmap` | `Socket`, `ServerSocketChannel`, process pipes, `FileChannel.map()` |
+| **Protection** | `chmod`, `chown`, `setuid`, `umask`, `seccomp` | `Files.setPosixFilePermissions()`, `Files.setOwner()` |
+
+There are three ways to pass a system call's parameters to the kernel:
+
+- **in registers** (Linux on x86-64, up to six);
+- **in a block of memory whose address is put in a register**, for larger structures such as the `struct` given to `sendmsg`;
+- **on the stack** (older 32-bit conventions).
 
 ### Interrupt handling: top half and bottom half
 
 The tension: an interrupt must be answered *immediately* (or the device's buffer overflows), but processing the data properly (running TCP) takes a while — and while one handler runs, other interrupts wait. The solution is to split the work in two. When a NIC receives packets:
 
-1. The device raises an interrupt; the CPU finishes the current instruction, saves minimal state, switches to kernel mode and jumps through the **IDT** (interrupt descriptor table) to the handler for that vector.
+1. The device raises an interrupt. The CPU finishes the current instruction, saves minimal state and switches to kernel mode. Then it jumps through the **IDT** (interrupt descriptor table, the textbook **interrupt vector table**) to the handler for that vector number.
 2. **Top half (hard IRQ handler)**: runs with that interrupt line masked, must be **very fast** — acknowledge the device, grab minimal data, schedule deferred work.
 3. **Bottom half (softirq / tasklet / workqueue)**: does the heavy lifting later with interrupts enabled — e.g., processing the received packets through the TCP/IP stack (`NET_RX` softirq, with NAPI polling under load).
 4. Wake any process waiting for the data (e.g., blocked in `recv`); return to the interrupted code (possibly rescheduling).
@@ -171,6 +203,10 @@ Exceptions (faults, traps, aborts) are synchronous — caused by the instruction
 
 libc places the syscall number and arguments in registers and executes `syscall`. The CPU switches to kernel mode and jumps to the kernel's entry point; the kernel saves user registers, looks up the handler in the syscall table, validates the fd and buffer, and performs the read — from the page cache or by issuing I/O and sleeping until it completes. It copies data to the user buffer, checks for pending signals/rescheduling, restores registers and returns to user mode with the byte count (or −1/errno via libc).
 
+### [L1 · conceptual] What are the main types of system calls? Give an example of each.
+
+Process control (`fork`/`clone`, `execve`, `exit`, `wait`), file management (`open`, `read`, `write`, `close`), device management (`ioctl`, reads and writes of device files), information maintenance (`getpid`, `clock_gettime`, `uname`), communication (`socket`, `connect`, `pipe`, shared memory via `mmap`) and protection (`chmod`, `chown`, `setuid`). Parameters travel in registers, in a memory block whose address is passed in a register, or on the stack. In Java, `ProcessBuilder.start()`, `FileChannel.read()`, `Socket.connect()` and `Files.setPosixFilePermissions()` each end in one of these categories.
+
 ### [L2 · why] Why are interrupt handlers split into a top half and a bottom half?
 
 While the top half runs, the interrupt line (or all interrupts) may be masked, so it must be as short as possible to keep latency low for other devices and avoid lost events. It does minimal work (acknowledge, capture data, schedule processing) and defers heavy work to the bottom half (softirq/tasklet/workqueue), which runs later with interrupts enabled and can be scheduled or throttled.
@@ -207,6 +243,57 @@ It's caused by the executing instruction and, once handled, the instruction re-e
 
 The kernel maps time data and code into user space.
 
+### [numeric 2.1 ±0.1 unit=s] A Java program writes a 10 MB file one byte at a time with `FileOutputStream.write(int)`, which makes one `write` system call per byte. If each call costs 200 ns of overhead, how long does the overhead alone take?
+
+:::answer
+10 MB = 10,485,760 bytes, so 10,485,760 calls × 200 ns ≈ 2,097,152,000 ns ≈ **2.1** s, just for crossing into the kernel and back.
+:::
+
+### [numeric 1280] The same program wraps the stream in a `BufferedOutputStream` with an 8 KB (8,192-byte) buffer. How many `write` system calls does it make for 10 MB?
+
+:::answer
+10,485,760 / 8,192 = **1280** calls, about 0.26 ms of overhead instead of 2.1 s. Buffering is the single biggest fix for syscall-heavy I/O.
+:::
+
+### [mcq] On Linux, how often does `System.nanoTime()` enter the kernel?
+
+- [ ] On every call: it is the `clock_gettime` system call
+- [x] Normally never: the JDK calls `clock_gettime`, which the vDSO serves in user space
+- [ ] Only the first time, then the JVM caches the value
+- [ ] Only when the timer interrupt fires
+
+The vDSO maps the kernel's clock data into the process, so reading the time costs about 20 ns with no mode switch. That is why fine-grained timing in Java is cheap.
+
+### [exercise] For each Java statement, name the system call category and the main Linux system call(s) it ends up making: (a) `new ProcessBuilder("ls").start()`; (b) `Files.readString(path)`; (c) `new Socket("db", 5432)`; (d) `Files.setPosixFilePermissions(path, perms)`; (e) `ProcessHandle.current().pid()`.
+
+:::solution
+- **(a) Process control**: `clone` (with `CLONE_VFORK`, via `posix_spawn`), `execve`, and later `wait4` from the JDK's reaper thread. Also `pipe2` to create the stdin/stdout/stderr pipes, which is communication.
+- **(b) File management**: `openat`, `fstat` (to size the buffer), `read` (one or more), `close`.
+- **(c) Communication**: `socket`, `connect` (which blocks for the TCP handshake). Resolving the name `db` may also `connect` to a DNS server or read `/etc/hosts`.
+- **(d) Protection**: `chmod` (`fchmodat`).
+- **(e) Information maintenance**: `getpid`, which the JVM looks up once and caches.
+
+Check any of these with `strace -f -e trace=process,file,network java Main`.
+:::
+
+### [exercise] Step through the [context switch visualization](viz:context-switch), which follows a timer interrupt. Which of its steps also happen on an ordinary system call, such as a `read()` that returns data immediately? Which happen only when the kernel switches to a different process?
+
+:::solution
+**On every kernel entry, including that `read()`:**
+- the CPU switches to kernel mode;
+- the user registers are saved;
+- the kernel runs its handler;
+- the registers are restored and the CPU returns to user mode.
+
+**Only on a switch to another process:**
+- the old process's PCB is updated;
+- the scheduler picks the next process;
+- the address space changes (a new page-table root in CR3, which can flush TLB entries);
+- a *different* process's registers are restored.
+
+After a switch, the caches and the TLB start cold for the new process. That is why a system call that doesn't block costs around 100 ns, while a context switch costs microseconds. A `read()` that has to wait for the disk or the network becomes the second case: the process blocks and the scheduler runs another one.
+:::
+
 ## Quick Revision
 
 - Three kernel entries: **syscall** (sync, deliberate), **exception** (sync, fault/trap/abort), **interrupt** (async, hardware) — all at kernel-chosen addresses.
@@ -215,3 +302,4 @@ The kernel maps time data and code into user space.
 - Fault = restart instruction (page fault); trap = continue after (breakpoint); abort = fatal.
 - vDSO: time calls without a syscall. Cost of a syscall ~100s of ns → batch, io_uring, bypass.
 - Watch `%sys`, `%si`, `/proc/interrupts`.
+- Six syscall types: process control, file, device, information, communication, protection. Parameters: registers, memory block, stack.

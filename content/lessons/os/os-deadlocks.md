@@ -13,18 +13,18 @@ prerequisites: [os-classic-sync-problems]
 related: [os-deadlock-handling, db-locking, os-sync-primitives, x-concurrency-everywhere]
 visualizations: [deadlock-graph]
 labs: [bankers, db-locks]
-tags: [deadlock, coffman conditions, mutual exclusion, hold and wait, no preemption, circular wait, resource allocation graph, wait-for graph, livelock, starvation]
+tags: [deadlock, coffman conditions, mutual exclusion, hold and wait, no preemption, circular wait, resource allocation graph, wait-for graph, livelock, starvation, tryLock, ThreadMXBean]
 ---
 
 ## Mental Model
 
 Four cars arrive at a four-way intersection at once. Each moves halfway in and waits for the car to its right to clear. Nobody can move forward, nobody backs up, and no traffic officer will pull anyone out. They'll wait forever.
 
-That's a deadlock: **a set of parties, each holding something and waiting for something held by another in the set, in a cycle, with no way to take anything away.** Remove *any one* of those ingredients and the deadlock can't happen — that observation is the basis of every prevention strategy.
+That's a deadlock: **a set of parties, each holding something and waiting for something held by another in the set, in a cycle, with no way to take anything away.** Remove *any one* of those ingredients and the deadlock can't happen. That observation is the basis of every prevention strategy.
 
 ## Definition
 
-A **deadlock** is a state in which a set of processes (or threads, or transactions) are each blocked waiting for an event — typically the release of a resource — that can only be caused by another process in the same set. None can proceed.
+A **deadlock** is a state in which each process in a set (or each thread, or transaction) is blocked waiting for an event, typically the release of a resource. Only another process in the same set can cause that event, so none can proceed.
 
 The **Coffman conditions** (1971): a deadlock can occur only if **all four** hold simultaneously:
 
@@ -110,6 +110,19 @@ Deadlocks aren't only about mutexes:
 - **Connection pools**: a request holds one DB connection and waits for a second from an exhausted pool while all other requests do the same.
 - **Distributed**: service A calls B synchronously while B calls back into A with bounded worker pools.
 
+### How many resources make deadlock impossible?
+
+A classic exam question: n processes share one resource type, and each needs at most m instances at once. The worst case is every process holding m − 1 instances and waiting for one more. If the system has even one instance beyond that, some process can get its last one, finish, and release everything. So deadlock is impossible when:
+
+**instances ≥ n × (m − 1) + 1**
+
+```text
+3 processes, each needing up to 4 tape drives:   3 × (4 − 1) + 1 = 10 drives
+6 drives, each process needing 2:                n × (2 − 1) + 1 ≤ 6  →  at most 5 processes
+```
+
+The connection-pool example below is the same formula: threads are the processes and connections the instances.
+
 ## Example
 
 A connection-pool deadlock (very common in production):
@@ -123,6 +136,21 @@ No connection is ever returned. Every thread waits for the pool timeout — or f
 ```
 
 Hold-and-wait + mutual exclusion + no preemption + circular wait (each waits for resources held by the others collectively). Fixes: never acquire a second connection while holding one (pass the transaction/connection through), or size pools so `pool ≥ threads × (max connections per thread − 1) + 1`.
+
+In Java, the JVM can find lock cycles for you. `jstack` prints "Found one Java-level deadlock", and code can ask too:
+
+```java
+ThreadMXBean threads = ManagementFactory.getThreadMXBean();
+long[] stuck = threads.findDeadlockedThreads();   // null when there is no cycle
+if (stuck != null) {
+    for (ThreadInfo t : threads.getThreadInfo(stuck, true, true)) {
+        System.out.println(t.getThreadName() + " waits for " + t.getLockName()
+                + " held by " + t.getLockOwnerName());
+    }
+}
+```
+
+It covers `synchronized` monitors and `java.util.concurrent` locks. It can't see the connection-pool cycle above, because a thread waiting for a pool isn't waiting for a lock another thread owns.
 
 ## Visualization
 
@@ -215,6 +243,57 @@ A global order makes a cycle impossible.
 
 They keep acting but make no progress; add randomized backoff.
 
+### [numeric 10] Three processes share a set of identical tape drives, and each needs at most 4 drives at a time. What is the minimum number of drives that makes deadlock impossible?
+
+:::answer
+In the worst case each process holds 3 drives and waits for a fourth: 3 × 3 = 9 drives in use and nobody can finish. One more drive lets a process complete and release its drives. Minimum = 3 × (4 − 1) + 1 = **10**.
+:::
+
+### [numeric 5] A system has 6 identical drives, and each process needs at most 2. What is the largest number of processes that is guaranteed to be deadlock-free?
+
+:::answer
+Need n × (2 − 1) + 1 ≤ 6, so n ≤ **5**. With 6 processes, each could hold one drive and wait for a second, with none free.
+:::
+
+### [numeric 21] 20 request threads share a JDBC connection pool, and each request may hold up to 2 connections at once. What is the smallest pool size that can never deadlock?
+
+:::answer
+It's the tape-drive formula: 20 × (2 − 1) + 1 = **21**. With 20, every thread could hold one connection and wait forever for a second. The better fix is to never take a second connection while holding one. Explore the waits as a graph in the [resource-allocation graph visualization](viz:deadlock-graph).
+:::
+
+### [exercise] Two Java threads transfer money in opposite directions, each locking its source account's `ReentrantLock` and then the destination's. Rewrite the locking so it can't deadlock *without* a global lock order, then show how a monitoring thread would detect a deadlock if one did happen.
+
+:::solution
+Break hold-and-wait: never wait for the second lock while holding the first. Try for it, and give everything back if it isn't free:
+
+```java
+boolean transfer(Account from, Account to, long amount) throws InterruptedException {
+    while (true) {
+        if (from.lock.tryLock(50, TimeUnit.MILLISECONDS)) {
+            try {
+                if (to.lock.tryLock(50, TimeUnit.MILLISECONDS)) {
+                    try {
+                        from.balance -= amount;
+                        to.balance += amount;
+                        return true;
+                    } finally {
+                        to.lock.unlock();
+                    }
+                }
+            } finally {
+                from.lock.unlock();      // release the first lock before retrying
+            }
+        }
+        Thread.sleep(ThreadLocalRandom.current().nextInt(1, 10));   // random backoff
+    }
+}
+```
+
+The random backoff matters. If both threads retried after the same fixed delay, they could collide forever in lockstep (livelock). Ordering locks by account ID is simpler when it's possible, and it never retries.
+
+Detection, for code that still uses blocking `lock()`: a scheduled task calls `ManagementFactory.getThreadMXBean().findDeadlockedThreads()` every few seconds and logs (or alerts on) the thread names and locks in any cycle it returns.
+:::
+
 ## Quick Revision
 
 - Deadlock = set of processes each waiting for a resource held by another in the set; nobody progresses.
@@ -223,3 +302,5 @@ They keep acting but make no progress; add randomized backoff.
 - Wait-for graph cycle = deadlock (DBs use this).
 - **Livelock** = busy but no progress; **starvation** = others progress, one never does.
 - Deadlocks show as zero throughput with low CPU. Diagnose with thread dumps / `pg_locks`. DBs abort a victim → retry.
+- No deadlock if instances ≥ n(m − 1) + 1 (n processes, each needing up to m).
+- Java: `tryLock(timeout)` + random backoff breaks hold-and-wait; `ThreadMXBean.findDeadlockedThreads()` finds lock cycles.

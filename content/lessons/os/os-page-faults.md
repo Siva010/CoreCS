@@ -12,12 +12,12 @@ stage: 2
 prerequisites: [os-paging, os-tlb]
 related: [os-page-replacement, os-thrashing-working-set, os-cow-mmap, os-page-cache, os-storage-devices]
 visualizations: [address-translation]
-tags: [demand paging, page fault, minor fault, major fault, invalid access, swap, effective access time, lazy allocation, zero page]
+tags: [demand paging, page fault, minor fault, major fault, invalid access, swap, effective access time, lazy allocation, zero page, AlwaysPreTouch]
 ---
 
 ## Mental Model
 
-Demand paging is a **library that keeps books in storage until someone asks for them.** Your program's address space is the catalog — every page is listed — but a page is only fetched into RAM (the reading room) when your program actually touches it. Touching a page that isn't in the reading room triggers a **page fault**: a hardware exception that pauses the program while the librarian (the kernel) fetches the page, then lets the program retry as if nothing happened.
+Demand paging is a **library that keeps books in storage until someone asks for them.** Your program's address space is the catalog, and every page is listed, but a page is only fetched into RAM (the reading room) when your program actually touches it. Touching a page that isn't in the reading room triggers a **page fault**. That hardware exception pauses the program while the librarian (the kernel) fetches the page, then lets the program retry as if nothing happened.
 
 Most faults are cheap (the book is already in the building — a **minor fault**). Some require a trip to the warehouse — a disk read (**major fault**) — and those are hundreds of thousands of times slower than a memory access.
 
@@ -50,7 +50,7 @@ A page fault is the hardware saying "this page isn't mapped yet — kernel, fix 
 
 ::::steps[A major page fault on a memory-mapped file page]
 1. **The CPU executes a load** from virtual address V. The TLB misses; the hardware walks the page table and finds the PTE **not present**.
-2. **The MMU raises a page-fault exception.** The CPU saves the faulting instruction's state, records the faulting address (CR2 on x86) and an error code (read/write, user/kernel, present/protection), switches to kernel mode and jumps to the page-fault handler.
+2. **The MMU raises a page-fault exception.** The CPU saves the faulting instruction's state and records the faulting address (CR2 on x86) plus an error code (read/write, user/kernel, present/protection). Then it switches to kernel mode and jumps to the page-fault handler.
 3. **The kernel looks up the VMA** (virtual memory area) containing V. None → invalid access → send `SIGSEGV`. Permission mismatch (write to read-only, execute NX) → `SIGSEGV` — unless it's a copy-on-write page, handled separately.
 4. **Valid but not present: find the data.** For a file-backed mapping, check the **page cache**. If the page is there → map it (**minor fault**, microseconds). If not → **major fault**: allocate a free physical frame (possibly evicting another page first — [Page Replacement](lesson:os-page-replacement)), and issue a block-device read.
 5. **The faulting thread sleeps** (Blocked, state `D`) while the disk works; the scheduler runs other threads.
@@ -104,23 +104,23 @@ Laziness has a cost when you *will* need everything: faulting one page at a time
 :::depth{level=advanced}
 ### Overcommit and the OOM killer
 
-Because allocation is lazy, Linux normally lets processes allocate more virtual memory than RAM + swap (`vm.overcommit_memory` = 0 heuristic, 1 always, 2 strict). The bill comes at fault time: if a page must be allocated and no memory can be freed, the kernel invokes the **OOM killer**, which chooses a victim by `oom_score` (mostly resident size, adjusted by `oom_score_adj`) and sends `SIGKILL`. In containers, the cgroup's memory limit triggers a cgroup-local OOM kill. See [Thrashing & Working Sets](lesson:os-thrashing-working-set).
+Because allocation is lazy, Linux normally lets processes allocate more virtual memory than RAM + swap (`vm.overcommit_memory` = 0 heuristic, 1 always, 2 strict). The bill comes at fault time. If a page must be allocated and no memory can be freed, the kernel invokes the **OOM killer**. It chooses a victim by `oom_score` (mostly resident size, adjusted by `oom_score_adj`) and sends `SIGKILL`. In containers, the cgroup's memory limit triggers a cgroup-local OOM kill. See [Thrashing & Working Sets](lesson:os-thrashing-working-set).
 :::
 
 ## Example
 
-Counting faults for a program:
+Counting faults for a Java program, run twice (exact numbers vary by JDK and machine):
 
 ```bash
-$ /usr/bin/time -v python3 -c "import numpy"
-    Major (requiring I/O) page faults: 142
-    Minor (reclaiming a frame) page faults: 12,803
-$ /usr/bin/time -v python3 -c "import numpy"     # run again
-    Major (requiring I/O) page faults: 0          # files now in page cache
-    Minor (reclaiming a frame) page faults: 12,797
+$ /usr/bin/time -v java -jar app.jar --version
+    Major (requiring I/O) page faults: 310
+    Minor (reclaiming a frame) page faults: 41,250
+$ /usr/bin/time -v java -jar app.jar --version     # run again
+    Major (requiring I/O) page faults: 0          # libjvm.so and the jar are now in the page cache
+    Minor (reclaiming a frame) page faults: 41,180
 ```
 
-The second run has no major faults: the library files are still in the page cache — a direct demonstration of cold vs warm starts.
+The second run has no major faults: `libjvm.so`, the class files and the jar are still in the page cache — a direct demonstration of cold vs warm starts. The tens of thousands of minor faults remain on every run: they are the JVM touching its heap, stacks and code cache for the first time.
 
 ## Visualization
 
@@ -214,6 +214,41 @@ Only ~half the index fits in RAM, so cold lookups incur major faults (~100 µs o
 
 The page is in the page cache; the kernel just maps it into this process.
 
+### [numeric 4194304] A JVM starts with `-Xms16g -XX:+AlwaysPreTouch`, which touches every page of the heap at startup. With 4 KB pages, how many pages does it touch?
+
+:::answer
+16 GB / 4 KB = 2³⁴ / 2¹² = 2²² = **4194304** pages, each a minor fault. Startup takes noticeably longer, but the heap never faults later during a request. With 2 MB huge pages it would be only 8,192 faults.
+:::
+
+### [numeric 110 ±1 unit=ns] Memory access takes 100 ns, a major fault served from NVMe takes 100 µs, and 1 in 10,000 accesses faults. What is the effective access time?
+
+:::answer
+EAT = (1 − p) × m + p × F = 0.9999 × 100 + 0.0001 × 100,000 = 99.99 + 10 ≈ **110** ns. Even with a fast SSD, one fault in ten thousand accesses costs 10%.
+:::
+
+### [mcq] After `fork()`, the child writes to a heap page it shares copy-on-write with the parent. What kind of fault is this?
+
+- [ ] Major fault: the page must be read from disk
+- [x] Minor fault: a protection fault on a present page, resolved by copying 4 KB in memory
+- [ ] Invalid fault: the child gets SIGSEGV
+- [ ] No fault: the write goes straight to the shared page
+
+The PTE is present but read-only, so the write traps. The kernel sees a writable, copy-on-write mapping, copies the page and maps the copy writable. No disk I/O is involved.
+
+### [exercise] A JVM with a 12 GB heap runs on a 16 GB host with swap enabled. Overnight, another process uses a lot of memory and part of the idle heap is swapped out. In the morning, the first full GC takes 40 seconds instead of 2. Explain what happened at the page level and how you would prevent it.
+
+:::solution
+A full GC marks every live object, so it touches pages across the whole heap, including the ones that were swapped out. Each touch is a major fault that reads 4 KB back from swap and puts the GC thread to sleep. Hundreds of thousands of these, served one at a time while the application is paused, turn a 2 s collection into a 40 s one. Some pages may be swapped out again while others come in, if memory is still short.
+
+Prevention:
+- Keep the JVM out of swap: `vm.swappiness=0` or no swap on the host, or a cgroup with `memory.swap.max=0` for the service.
+- Size the heap so that heap + non-heap memory + the page cache the service needs fits in RAM with headroom.
+- Protect the service's memory from neighbours with cgroup `memory.min`, or run memory-hungry jobs elsewhere.
+- Use `-XX:+AlwaysPreTouch` (with `-Xms` = `-Xmx`) so the heap is committed up front, making memory problems visible at startup instead of mid-day.
+
+Watch the major-fault counters (`pidstat -r`, `/proc/vmstat` `pgmajfault`) and the GC logs. Simulate faults with the [address translation visualization](viz:address-translation).
+:::
+
 ## Quick Revision
 
 - Demand paging: pages load on first access. Page fault = MMU exception on not-present/forbidden PTE.
@@ -222,3 +257,4 @@ The page is in the page cache; the kernel just maps it into this process.
 - `EAT = (1−p)m + pF`; 10% slowdown with m=100 ns, F=8 ms needs p < 1.25 × 10⁻⁶.
 - Overcommit + lazy allocation → OOM killer at fault time.
 - Watch `majflt`, `pgmajfault`, PSI; pre-touch/mlock for latency-critical memory.
+- JVM: `-XX:+AlwaysPreTouch` moves heap page faults to startup; GC touching swapped-out heap pages = catastrophic pauses.

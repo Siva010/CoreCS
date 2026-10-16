@@ -11,7 +11,7 @@ relevance: high
 stage: 2
 prerequisites: [os-process-creation]
 related: [os-ipc, os-syscalls-interrupts, os-process-creation]
-tags: [signals, sigterm, sigkill, sigchld, sigsegv, sigint, signal handler, async-signal-safe, graceful shutdown, eintr]
+tags: [signals, sigterm, sigkill, sigchld, sigsegv, sigint, signal handler, async-signal-safe, graceful shutdown, eintr, shutdown hook, exit code 137, exit code 143, thread dump]
 ---
 
 ## Mental Model
@@ -22,7 +22,7 @@ Two taps cannot be refused: **`SIGKILL`** and **`SIGSTOP`**. Everything else is 
 
 ## Definition
 
-A **signal** is a small integer notification delivered asynchronously to a process (or specific thread) by the kernel, either because of an event (hardware fault, child exit, terminal input) or because another process requested it via `kill()`. Each signal has a **disposition**: default action, ignore, or a user-defined **handler** function.
+A **signal** is a small integer notification that the kernel delivers asynchronously to a process (or a specific thread). It is sent either because of an event (hardware fault, child exit, terminal input) or because another process requested it via `kill()`. Each signal has a **disposition**: default action, ignore, or a user-defined **handler** function.
 
 ## Why It Exists
 
@@ -87,7 +87,7 @@ This is a consequence of how cheaply signals are stored: one bit per signal numb
 
 ### Interrupted system calls
 
-The problem: the kernel can only run a handler on the way back to user mode — but a process blocked in `read` might stay in the kernel for hours. To deliver promptly, the kernel has to abandon the wait. If a signal arrives while a process is blocked in a slow syscall (`read` on a socket, `accept`, `sleep`), the syscall is interrupted: it either fails with **`EINTR`** or is automatically restarted if the handler was installed with `SA_RESTART`. Robust code retries on `EINTR`.
+The problem: the kernel can only run a handler on the way back to user mode — but a process blocked in `read` might stay in the kernel for hours. To deliver promptly, the kernel has to abandon the wait. If a signal arrives while a process is blocked in a slow syscall (`read` on a socket, `accept`, `sleep`), the syscall is interrupted. It either fails with **`EINTR`**, or is restarted automatically if the handler was installed with `SA_RESTART`. Robust code retries on `EINTR`.
 
 ## Internal Mechanism
 
@@ -95,23 +95,44 @@ The problem: the kernel can only run a handler on the way back to user mode — 
 
 This restriction is the price of "interrupt between any two instructions". A handler can run **between any two instructions** of your program — including while your main code is inside `malloc` holding its lock, or halfway through updating a data structure. If the handler then calls `malloc` or `printf` (which may take the same locks or touch the same buffers), you get deadlock or corruption.
 
-So handlers may call only **async-signal-safe** functions (`write`, `_exit`, `kill`, `waitpid`, …; *not* `printf`, `malloc`, most of libc) and should typically do nothing but **set a flag** of type `volatile sig_atomic_t` or write a byte to a pipe (the **self-pipe trick**), letting the main loop do the real work. Modern Linux alternative: `signalfd` turns signals into readable file descriptor events that fit into an `epoll` loop.
+So handlers may call only **async-signal-safe** functions: `write`, `_exit`, `kill`, `waitpid` and a few more, but *not* `printf`, `malloc` or most of libc. A handler should typically do nothing but **set a flag** of type `volatile sig_atomic_t`, or write a byte to a pipe (the **self-pipe trick**), and let the main loop do the real work. Modern Linux alternative: `signalfd` turns signals into readable file descriptor events that fit into an `epoll` loop.
 
-```c
-static volatile sig_atomic_t stop = 0;
-static void on_term(int sig) { (void)sig; stop = 1; }   // flag only
+### Signals in a Java program
 
-int main(void) {
-    struct sigaction sa = { .sa_handler = on_term };
-    sigemptyset(&sa.sa_mask);
-    sigaction(SIGTERM, &sa, NULL);
-    sigaction(SIGINT,  &sa, NULL);
-    while (!stop) {
-        serve_one_request();        // main loop checks the flag
+Java never runs your code inside a signal handler. The JVM installs its own native handlers, and they follow the flag pattern above:
+
+- **SIGTERM, SIGINT, SIGHUP**: the handler only wakes the JVM's "Signal Dispatcher" thread. That thread starts the shutdown sequence, which runs your **shutdown hooks** as ordinary Java threads, then exits.
+- **SIGQUIT** (`kill -3`): prints a thread dump of every Java thread to stdout, and the JVM keeps running.
+- **SIGSEGV and SIGBUS**: used internally, for example to turn a null dereference in JIT-compiled code into a `NullPointerException`.
+- **SIGKILL**: cannot be handled, so no hooks, `finally` blocks or `close()` calls run.
+
+A graceful shutdown in Java is a shutdown hook:
+
+```java
+import com.sun.net.httpserver.HttpServer;
+import java.net.InetSocketAddress;
+
+public class Server {
+    public static void main(String[] args) throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
+        server.createContext("/", exchange -> {
+            byte[] body = "ok\n".getBytes();
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+
+        // Runs on SIGTERM or Ctrl+C (SIGINT), in its own thread, outside any signal handler.
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            server.stop(20);   // stop accepting; wait up to 20 s for in-flight requests
+            // then close connection pools and flush logs here
+        }, "graceful-shutdown"));
     }
-    drain_and_close();              // graceful shutdown outside the handler
 }
 ```
+
+`HttpServer.stop(20)` closes the listening socket and waits for running exchanges, which is the drain step from the Kubernetes sequence below. Frameworks do the same: Spring Boot's `server.shutdown=graceful` is a shutdown hook.
 
 :::depth{level=advanced}
 ### Signals and threads
@@ -180,6 +201,10 @@ The terminal driver sends `SIGINT` to the foreground process group. Unless the p
 
 Handlers run asynchronously, between any two instructions, possibly while the main code holds a lock or is mid-update of a data structure. Calling non-async-signal-safe functions (malloc, printf, most of libc) from the handler can deadlock (re-taking a held lock) or corrupt state. Setting a `volatile sig_atomic_t` flag (or writing to a self-pipe/`signalfd`) defers the work to the main loop, where it's safe.
 
+### [L2 · how] How does a Java application react to SIGTERM, and what is different about SIGKILL?
+
+The JVM installs a native handler for SIGTERM (also SIGINT and SIGHUP). The handler does almost nothing; it wakes the JVM's Signal Dispatcher thread, which starts the shutdown sequence. All registered shutdown hooks (`Runtime.addShutdownHook`) start as threads and run concurrently, and the JVM halts when they finish. Its exit status is then 128 + 15 = 143, which is why Kubernetes shows "exit code 143" after a normal rollout. SIGKILL can't be caught, so the kernel ends the process at once: no shutdown hooks, no `finally` blocks, no flushed buffers. A container killed by the OOM killer or after the grace period shows exit code 137 (128 + 9). Hooks must also finish quickly; whatever is still running when the grace period ends is SIGKILLed.
+
 ### [L2 · how] Your program receives three SIGCHLD signals in quick succession but the handler runs once. Why, and how do you handle it correctly?
 
 Standard signals are tracked as a pending bit, not a queue, so multiple instances before delivery coalesce into one. The handler must reap all exited children: loop `while (waitpid(-1, &status, WNOHANG) > 0) {}`.
@@ -216,6 +241,48 @@ SIGKILL and SIGSTOP are the only two that a process cannot handle, block or igno
 
 The kernel doesn't apply default fatal actions to PID 1 for signals without handlers (protecting init). Docker waits (default 10 s) and then kills it.
 
+### [numeric 9] A container in Kubernetes exits with status 137. A process killed by a signal is reported as 128 + the signal number. Which signal number killed it?
+
+:::answer
+137 − 128 = **9**, which is SIGKILL. It came either from the OOM killer (the container went over its memory limit; Kubernetes shows `OOMKilled`) or from the kubelet after the grace period, because the app didn't exit after SIGTERM.
+:::
+
+### [mcq] After a rolling deploy, Kubernetes shows that the old Java pods ended with exit code 143. What does that tell you?
+
+- [ ] The JVM crashed with a segmentation fault
+- [x] The pod received SIGTERM (15) and the JVM ran its shutdown sequence and exited, which is the normal, graceful path
+- [ ] The pod ran out of memory
+- [ ] The application called `System.exit(143)` because of an error
+
+143 = 128 + 15. The JVM handles SIGTERM by running shutdown hooks and then exiting with that status. Exit code 137 (SIGKILL) would be the worrying one.
+
+### [mcq] A JVM receives SIGKILL while a request is half-processed. Which of these runs before the process disappears?
+
+- [ ] Shutdown hooks registered with `Runtime.addShutdownHook`
+- [ ] `finally` blocks of the running threads
+- [ ] `close()` of try-with-resources blocks
+- [x] None of these
+
+SIGKILL can't be caught, so the kernel removes the process without running any of its code. Anything that must survive a crash — committed data, idempotency records — has to be durable *before* it is needed, not written during shutdown.
+
+### [exercise] A Java service's Dockerfile ends with `ENTRYPOINT java -jar app.jar` (shell form). `docker stop` always waits the full 10 seconds, the app's shutdown hook never runs, and in-flight requests fail. Explain why and fix it.
+
+:::solution
+The shell form runs `/bin/sh -c "java -jar app.jar"`, so `sh` is PID 1 and `java` is its child. `docker stop` sends SIGTERM to PID 1 only. `sh` doesn't forward it, and as PID 1 without a SIGTERM handler it ignores it. After 10 seconds Docker sends SIGKILL to everything, so the JVM never sees SIGTERM and its hooks never run.
+
+Fix: use the exec form, `ENTRYPOINT ["java", "-jar", "app.jar"]`. Then the JVM is PID 1. It installs its own SIGTERM handler, so the PID 1 rule (which only drops signals left at their default action) doesn't apply, and the shutdown hook runs. Alternatives: `exec java -jar app.jar` as the last line of a wrapper script, or `docker run --init` / tini as PID 1, which forwards signals and also reaps zombies.
+:::
+
+### [exercise] In the [process lifecycle lab](lab:process-lifecycle), exit a child before its parent calls `wait()` and watch the zombie appear. Which signal tells the parent the child has exited? How does a Java program that starts children with `ProcessBuilder` avoid leaving zombies, and when can a Java service still collect them?
+
+:::solution
+The kernel sends **SIGCHLD** to the parent when a child exits. The child stays a zombie (state `Z` in `ps`) until the parent collects its exit status with `wait()` or `waitpid()`.
+
+The JDK reaps for you. For each child it starts, a "process reaper" thread calls `waitpid()` and then completes `process.onExit()` and `waitFor()`. Children started with `ProcessBuilder` don't linger as zombies, even if your code never calls `waitFor()`.
+
+Zombies still pile up when the JVM is **PID 1 in a container**. An orphan whose parent died is re-parented to PID 1, and the JVM never waits for processes it didn't start. A typical case is a shell script the service runs that backgrounds children of its own. The fix is a tiny init process as PID 1 (`docker run --init`, or `tini`), which reaps orphans.
+:::
+
 ## Quick Revision
 
 - Signal = asynchronous kernel notification; disposition = default / ignore / handler.
@@ -224,3 +291,4 @@ The kernel doesn't apply default fatal actions to PID 1 for signals without hand
 - Handlers: only async-signal-safe calls → set a flag / self-pipe / `signalfd`.
 - Blocked syscalls return **EINTR** (or restart with `SA_RESTART`).
 - Graceful shutdown = handle SIGTERM, drain, exit before the grace period ends. PID 1 ignores unhandled signals.
+- Java: SIGTERM/SIGINT → shutdown hooks (exit 143); SIGQUIT → thread dump; SIGKILL → nothing runs (exit 137).

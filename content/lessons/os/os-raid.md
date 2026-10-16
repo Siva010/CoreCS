@@ -44,6 +44,19 @@ Spread blocks across disks for speed; keep a copy (mirror) or a XOR (parity) so 
 
 Mirroring survives a failure by storing everything twice — expensive. Parity asks: what's the *least* extra data that lets me rebuild any one missing block? One XOR of all the blocks is enough. For data blocks D1, D2, D3: `P = D1 ⊕ D2 ⊕ D3`. If D2 is lost: `D2 = D1 ⊕ D3 ⊕ P`. XOR is its own inverse, so any single missing block (data or parity) can be reconstructed.
 
+What a RAID controller computes, byte by byte, in Java:
+
+```java
+// Parity over three data blocks of the same stripe
+byte[] parity = new byte[BLOCK];
+for (int i = 0; i < BLOCK; i++) parity[i] = (byte) (d1[i] ^ d2[i] ^ d3[i]);
+
+// The disk holding d2 dies: rebuild d2 from everything that survived
+byte[] rebuilt = new byte[BLOCK];
+for (int i = 0; i < BLOCK; i++) rebuilt[i] = (byte) (d1[i] ^ d3[i] ^ parity[i]);
+// Arrays.equals(rebuilt, d2) is true
+```
+
 ### Levels compared (n disks of equal size)
 
 | Level | Technique | Usable capacity | Survives | Read perf | Write perf | Typical use |
@@ -63,6 +76,18 @@ Parity's cheap capacity comes with a bill on writes: the parity depends on every
 3. Compute new parity = old parity ⊕ old data ⊕ new data.
 4. Write new data block.
 5. Write new parity block.
+
+```mermaid
+sequenceDiagram
+    participant C as Controller
+    participant D as Data disk
+    participant P as Parity disk
+    C->>D: 1. read old data
+    C->>P: 2. read old parity
+    Note over C: new P = old P ⊕ old D ⊕ new D
+    C->>D: 3. write new data
+    C->>P: 4. write new parity
+```
 
 **4 I/Os per logical write** (2 reads + 2 writes); RAID 6 needs 6 (two parity blocks). Full-stripe writes avoid the penalty (compute parity from new data only). This is why RAID 5/6 are poor for random-write-heavy databases and RAID 10 is preferred.
 
@@ -147,6 +172,14 @@ Each stripe's parity block is the XOR of its data blocks. XOR is reversible: any
 
 To update one data block and keep parity consistent: read the old data, read the old parity, write the new data, and write the new parity computed as old parity ⊕ old data ⊕ new data — two reads plus two writes.
 
+### [L2 · compare] RAID 5 vs RAID 6: what does the second parity block buy, and what does it cost?
+
+RAID 6 stores two independent parity blocks per stripe (computed differently, e.g. XOR plus a Reed–Solomon syndrome), so it survives any two simultaneous disk failures, or one failure plus an unrecoverable read error during the rebuild. It costs one more disk of capacity (n − 2 usable instead of n − 1) and a bigger small-write penalty: 6 I/Os (read data and both parities, write all three) instead of 4. For large modern drives, where rebuilds take days, that safety is usually worth it.
+
+### [L2 · numerical] Eight disks of 150 random IOPS each. What random-write IOPS do RAID 10 and RAID 5 deliver?
+
+Raw = 8 × 150 = 1,200 IOPS. RAID 10 writes each block twice (both mirrors): 1,200 / 2 = **600**. RAID 5 needs 4 I/Os per small write: 1,200 / 4 = **300**. Reads are about 1,200 for both, since any copy (RAID 10) or the data block itself (RAID 5) can serve them.
+
 ### [L3 · why] Why is RAID 5 considered risky with very large disks?
 
 Rebuilding after a failure must read every block of every surviving disk; with multi-TB drives this takes many hours to days, during which the array has no redundancy. A second disk failure or a single unrecoverable read error during the rebuild can make data unrecoverable. RAID 6 or RAID 10 reduce this risk.
@@ -168,6 +201,55 @@ Rebuilding after a failure must read every block of every surviving disk; with m
 
 RAID 0 only stripes.
 
+### [numeric 300] An array of 8 disks, each doing 150 random IOPS, is configured as RAID 5. About how many small random writes per second can it sustain?
+
+:::answer
+Raw capacity is 8 × 150 = 1,200 disk I/Os per second, and each small write costs 4 (two reads, two writes): 1,200 / 4 = **300** writes per second.
+:::
+
+### [numeric 6 unit=TB] Six 2 TB disks are set up as RAID 10. What is the usable capacity?
+
+:::answer
+RAID 10 mirrors every block, so half the raw capacity is usable: 6 × 2 TB / 2 = **6** TB.
+:::
+
+### [numeric 4.8] Consumer drives are rated at 1 unrecoverable read error (URE) per 10¹⁴ bits read. A RAID 5 rebuild reads 60 TB from the surviving disks. How many UREs would you expect during the rebuild?
+
+:::answer
+60 TB = 60 × 10¹² bytes × 8 = 4.8 × 10¹⁴ bits. Expected UREs = 4.8 × 10¹⁴ / 10¹⁴ = **4.8**. With RAID 5 already degraded, each one means an unrecoverable stripe. This is why large arrays use RAID 6.
+:::
+
+### [mcq] A RAID 10 array has 4 disks: mirror pair A (disks 1 and 2) and mirror pair B (disks 3 and 4), striped together. Which two simultaneous failures lose data?
+
+- [ ] Disks 1 and 3
+- [x] Disks 1 and 2
+- [ ] Disks 2 and 4
+- [ ] Any two failures lose data
+
+Losing both halves of one mirror destroys every stripe unit on that pair. One disk from each pair is fine: each pair still has a copy.
+
+### [exercise] A stripe holds three 4-bit data blocks: D1 = 1011, D2 = 0110, D3 = 1100. Compute the parity block, then show how D2 is recovered after its disk fails.
+
+:::solution
+P = D1 ⊕ D2 ⊕ D3:
+
+```text
+D1      1011
+D2    ⊕ 0110  → 1101
+D3    ⊕ 1100  → 0001   = P
+```
+
+Recover D2 = D1 ⊕ D3 ⊕ P:
+
+```text
+D1      1011
+D3    ⊕ 1100  → 0111
+P     ⊕ 0001  → 0110   = D2 ✓
+```
+
+XOR works bit by bit, and x ⊕ x = 0, so XORing everything that survived cancels out everything except the missing block. The `rebuilt` loop in the Java code above does the same thing for every byte of a real block.
+:::
+
 ## Quick Revision
 
 - Striping (speed), mirroring (copy), parity (XOR reconstruction).
@@ -175,3 +257,4 @@ RAID 0 only stripes.
 - Rebuilds on large disks are long and risky (second failure, UREs) → RAID 6/10, scrubbing, hot spares.
 - Write hole with parity RAID.
 - **RAID is not a backup.**
+- Random-write IOPS: RAID 10 = raw / 2, RAID 5 = raw / 4, RAID 6 = raw / 6. Expected UREs in a rebuild = bits read / 10¹⁴.

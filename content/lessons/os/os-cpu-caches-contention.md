@@ -11,14 +11,14 @@ relevance: medium
 stage: 3
 prerequisites: [os-hardware-model, os-atomic-instructions, os-performance-method]
 related: [os-race-conditions, os-context-switch, os-hugepages-numa, os-profiling-observability]
-tags: [cpu cache, cache line, mesi, cache coherence, false sharing, true sharing, lock contention, cache miss, locality, ipc, memory bound, context switch overhead]
+tags: [cpu cache, cache line, mesi, cache coherence, false sharing, true sharing, lock contention, cache miss, locality, ipc, memory bound, context switch overhead, Contended, LongAdder]
 ---
 
 ## Mental Model
 
-Each core has its own private notebook (L1/L2 cache), and they share a whiteboard (L3 and RAM). When one core writes a value, every other core's copy of that **page of the notebook** (a 64-byte **cache line**) must be torn out — they have to re-copy it from whoever has the latest version.
+Each core has its own private notebook (L1/L2 cache), and they share a whiteboard (L3 and RAM). When one core writes a value, every other core's copy of that **page of the notebook** (a 64-byte **cache line**) must be torn out. The others then re-copy it from whoever has the latest version.
 
-If two cores keep writing to the same line — even to **different variables** that merely happen to sit on the same line — that line ping-pongs between them hundreds of thousands of times per second. Code that looks perfectly parallel runs *slower* on eight cores than on one.
+Suppose two cores keep writing to the same line, even to **different variables** that merely happen to sit on it. The line then ping-pongs between them hundreds of thousands of times per second. Code that looks perfectly parallel runs *slower* on eight cores than on one.
 
 ## Definition
 
@@ -57,23 +57,42 @@ A write to a line in Shared state requires a **read-for-ownership**/invalidate r
 
 The hardware doesn't know about variables; it only knows lines. So two variables that happen to be neighbours behave as if they were one shared variable.
 
-```c
-struct Counters { long a; long b; };   // a and b share one 64-byte line
-struct Counters c;
-// thread 1: for (...) c.a++;          // core 0 writes the line
-// thread 2: for (...) c.b++;          // core 1 writes the same line
+```java
+class Counters {
+    volatile long a;    // written only by thread 1
+    volatile long b;    // written only by thread 2, but it sits next to a, on the same 64-byte line
+}
+
+// thread 1: for (...) counters.a++;     core 0 keeps taking the line
+// thread 2: for (...) counters.b++;     core 1 keeps taking it back
 ```
 
 The threads never touch each other's data, but every increment invalidates the other core's copy. Typical slowdown vs padded layout: **several times to 10×+**.
 
-Fix: pad or align each hot per-thread item to its own line:
-
-```c
-struct alignas(64) PaddedCounter { long value; char pad[64 - sizeof(long)]; };
-struct PaddedCounter per_thread[NTHREADS];
+```mermaid
+sequenceDiagram
+    participant C0 as Core 0 (writes a)
+    participant L as Line holding a and b
+    participant C1 as Core 1 (writes b)
+    C0->>L: own the line, write a
+    C1->>L: steal the line, write b
+    C0->>L: steal it back, write a
+    C1->>L: steal it back, write b
+    Note over C0,C1: the line ping-pongs though no variable is shared
 ```
 
-Java offers `@Contended` (JDK internal/with flag) and libraries pad manually (LMAX Disruptor, `LongAdder` cells); Go's runtime pads hot structures; Linux uses `____cacheline_aligned_in_smp`.
+Fix: give each hot field its own cache line. The JDK has an annotation for exactly this:
+
+```java
+// Outside the JDK, run with -XX:-RestrictContended, and compile with
+// --add-exports java.base/jdk.internal.vm.annotation=ALL-UNNAMED
+class Counters {
+    @jdk.internal.vm.annotation.Contended volatile long a;   // padded onto its own line
+    @jdk.internal.vm.annotation.Contended volatile long b;
+}
+```
+
+In application code, prefer classes that already do this: `LongAdder` pads its cells with `@Contended`, and the LMAX Disruptor pads its sequence counters. Hand-written padding fields are unreliable in Java because the JVM chooses the field layout. Go's runtime pads hot structures, and Linux uses `____cacheline_aligned_in_smp`.
 
 ### Contended locks and atomics
 
@@ -167,6 +186,10 @@ When threads on different cores modify different variables that happen to reside
 
 Each cache line in each core's cache has a state (e.g., MESI). Before a core writes a line, it must obtain exclusive ownership, invalidating other copies; reads of a line modified elsewhere fetch the latest data from the owner. This keeps all cores consistent at the cost of inter-core traffic for shared, written data.
 
+### [L2 · how] How do you avoid false sharing in Java?
+
+Keep data written by different threads apart. Prefer per-thread state (a local variable, merged at the end) or JDK classes designed for it: `LongAdder` and `LongAccumulator` spread updates over padded cells, and `ConcurrentHashMap` counts its size with striped cells. When you must place hot fields yourself, `@jdk.internal.vm.annotation.Contended` pads a field (or a group of fields) onto its own cache line; outside the JDK it needs `-XX:-RestrictContended`. Manual padding with dummy `long` fields is fragile, because HotSpot decides field order. Confirm the problem and the fix with `perf c2c` or a JMH benchmark that runs the threads on different cores.
+
 ### [L3 · debugging] A multithreaded aggregation job gets slower when you go from 4 to 16 threads, with CPU at 100%. How do you investigate?
 
 Suspect contention: false sharing on per-thread accumulators, a shared atomic counter, a contended lock, or allocator contention. Use `perf c2c` to find cache lines with heavy cross-core modified hits, `perf top`/flame graphs for time in lock/atomic functions, and check IPC. Fix with per-thread accumulators padded to cache lines, sharded structures, and merging results at the end.
@@ -199,6 +222,55 @@ Different variables, same 64-byte line.
 
 Low IPC with many LLC misses means cores stall waiting on memory.
 
+### [numeric 16.7 ±0.2 unit=million/s] Two threads on different cores alternately increment fields that share one cache line, and moving the line between cores takes 60 ns. At most, how many increments per second can they make together, in millions?
+
+:::answer
+Every increment needs the line moved first, so increments happen one at a time, 60 ns apart: 1 s / 60 ns ≈ 16,666,667 per second, about **16.7** million. Two threads on padded lines could each do hundreds of millions per second.
+:::
+
+### [numeric 512 unit=bytes] Eight per-thread counters (8-byte `long`s) are each padded onto their own 64-byte cache line. How much memory do they occupy?
+
+:::answer
+8 × 64 = **512** bytes, against 64 bytes unpadded. The 448 bytes of padding buy freedom from false sharing, a good trade for a handful of hot counters and a bad one for millions of objects.
+:::
+
+### [mcq] You annotate a field of your own class with `@jdk.internal.vm.annotation.Contended`, but measurements show no change. What is the most likely reason?
+
+- [ ] The annotation only works on `static` fields
+- [x] Outside the JDK it is ignored unless the JVM runs with `-XX:-RestrictContended`
+- [ ] It requires the G1 collector
+- [ ] It only pads `int` fields
+
+By default the JVM honours `@Contended` only for JDK classes. `LongAdder` gets the padding automatically, which is one reason to use it rather than rolling your own.
+
+### [exercise] Write a small Java experiment showing false sharing: two threads each increment their own `volatile long` field 100 million times, first with the fields in one object, then with each field padded onto its own line. Predict the results and list what could make the measurement misleading.
+
+:::solution
+```java
+class Shared  { volatile long a; volatile long b; }
+class Padded  {
+    @jdk.internal.vm.annotation.Contended volatile long a;   // run with -XX:-RestrictContended
+    @jdk.internal.vm.annotation.Contended volatile long b;
+}
+
+static long run(Runnable r1, Runnable r2) throws InterruptedException {
+    Thread t1 = new Thread(r1), t2 = new Thread(r2);
+    long start = System.nanoTime();
+    t1.start(); t2.start(); t1.join(); t2.join();
+    return (System.nanoTime() - start) / 1_000_000;          // milliseconds
+}
+
+// Shared s = new Shared();
+// run(() -> { for (int i = 0; i < 100_000_000; i++) s.a++; },
+//     () -> { for (int i = 0; i < 100_000_000; i++) s.b++; });
+// ...then the same with Padded p.
+```
+
+**Prediction**: the shared version is several times slower, often 3–10×, because every increment of a volatile field must own the line, and the other core keeps taking it away. In the padded version each core keeps its line in its own cache.
+
+**What can mislead you**: JIT warm-up (run each version several times and ignore the first runs, or use JMH); both threads landing on the same physical core's hyperthreads, which share L1 so the effect shrinks (pin them, or run on an idle machine); and forgetting `-XX:-RestrictContended`, which makes both versions identical. Confirm with `perf c2c`, which should show heavy cross-core "HITM" traffic on one line in the shared version only.
+:::
+
 ## Quick Revision
 
 - Cache line = 64 B unit; coherence (MESI) invalidates other copies on writes.
@@ -206,3 +278,4 @@ Low IPC with many LLC misses means cores stall waiting on memory.
 - Contended locks/atomics serialize on one line; shard (per-thread/per-CPU) and merge.
 - Locality: sequential > pointer chasing; struct-of-arrays for field scans.
 - Diagnose: `perf stat` (IPC, misses), `perf c2c` (false sharing), `vmstat cs`, lock profiles.
+- Java: `@Contended` (+ `-XX:-RestrictContended`) pads a field; prefer `LongAdder` and per-thread state; manual padding is unreliable.

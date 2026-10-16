@@ -11,28 +11,47 @@ relevance: high
 stage: 3
 prerequisites: [os-what-an-os-does, os-processes, os-scheduling-basics]
 related: [cn-container-networking, os-thrashing-working-set, os-performance-method, os-syscalls-interrupts]
-tags: [virtual machine, hypervisor, type 1, type 2, kvm, container, namespaces, cgroups, docker, kubernetes, overlayfs, seccomp, gvisor, firecracker, isolation]
+tags: [virtual machine, hypervisor, type 1, type 2, kvm, container, namespaces, cgroups, docker, kubernetes, overlayfs, seccomp, gvisor, firecracker, isolation, UseContainerSupport, MaxRAMPercentage]
 ---
 
 ## Mental Model
 
 - A **virtual machine** is a **whole fake computer**: virtual CPUs, virtual RAM, virtual disks and NICs. A complete guest OS kernel boots inside it. The hypervisor underneath multiplexes the real hardware among several fake computers.
-- A **container** is **not a computer at all** — it's an ordinary process on the host kernel wearing **blinders**: it sees its own filesystem tree, its own process list, its own network interfaces, its own hostname (namespaces), and it has a **budget** for CPU, memory and I/O (cgroups). There's only one kernel, shared by all containers.
+- A **container** is **not a computer at all**. It's an ordinary process on the host kernel wearing **blinders**: it sees its own filesystem tree, process list, network interfaces and hostname (namespaces). It also has a **budget** for CPU, memory and I/O (cgroups). There's only one kernel, shared by all containers.
 
 That single difference — **separate kernels vs one shared kernel** — explains nearly every trade-off between them.
+
+```mermaid
+flowchart TD
+    subgraph vm["Virtual machines"]
+        direction TB
+        A1["app"] --> K1["guest kernel"]
+        A2["app"] --> K2["guest kernel"]
+        K1 --> H["hypervisor"]
+        K2 --> H
+        H --> HW1["hardware"]
+    end
+    subgraph ct["Containers"]
+        direction TB
+        C1["app in its namespaces"] --> HK["one host kernel<br/>(cgroups enforce budgets)"]
+        C2["app in its namespaces"] --> HK
+        HK --> HW2["hardware"]
+    end
+    vm ~~~ ct
+```
 
 ## Definition
 
 - **Hypervisor (VMM)**: software that creates and runs virtual machines.
   - **Type 1 (bare-metal)**: runs directly on hardware — KVM (Linux kernel as hypervisor), Xen, VMware ESXi, Hyper-V.
   - **Type 2 (hosted)**: runs as an application on a host OS — VirtualBox, VMware Workstation.
-- **Container**: a process (or group) isolated using OS-level mechanisms — on Linux, **namespaces** (what you can see), **cgroups** (what you can use), a separate root filesystem (typically **overlayfs** image layers), plus security filters (capabilities, **seccomp**, LSMs like AppArmor/SELinux).
+- **Container**: a process (or group) isolated using OS-level mechanisms. On Linux those are **namespaces** (what you can see), **cgroups** (what you can use) and a separate root filesystem (typically **overlayfs** image layers), plus security filters (capabilities, **seccomp**, LSMs like AppArmor/SELinux).
 
 ## Why It Exists
 
 **The problem.** One physical server is too big for one application, but programs sharing a machine step on each other: conflicting library versions, one app eating all the memory, one compromise exposing the rest.
 
-**Two ideas, two levels.** You can isolate at the *hardware* level — fake a whole machine, so each tenant has its own kernel — or at the *kernel* level — keep one kernel but make it lie to each process about what exists and cap what it can use.
+**Two ideas, two levels.** You can isolate at the *hardware* level: fake a whole machine, so each tenant has its own kernel. Or you can isolate at the *kernel* level: keep one kernel, but make it lie to each process about what exists and cap what it can use.
 
 - **VMs**: run many OSes on one server (consolidation), isolate tenants strongly, migrate running machines, snapshot entire systems. They made cloud computing possible.
 - **Containers**: package an application with its dependencies and run it anywhere with near-native performance and millisecond startup — without the overhead of a full guest OS per app. They made microservices and Kubernetes practical.
@@ -72,6 +91,26 @@ Two separate questions, answered by two separate features: *what can this proces
 - `io.max`, `io.weight` (block I/O), `pids.max` (fork bombs)
 
 A container runtime (runc, crun) does roughly: create namespaces with `clone()`/`unshare()`, set up the root filesystem (overlayfs layers), configure cgroups, drop capabilities, apply a seccomp profile, then `exec` the entrypoint.
+
+### Java inside a container
+
+Since JDK 10 the JVM reads its cgroup limits (`-XX:+UseContainerSupport`, on by default), and you can see what it detected:
+
+```bash
+$ docker run --cpus=2 --memory=1g eclipse-temurin:21 java -XshowSettings:system -version
+Operating System Metrics:
+    Provider: cgroupv2
+    Effective CPU Count: 2
+    CPU Period: 100000us
+    CPU Quota: 200000us
+    Memory Limit: 1.00G
+    ...
+```
+
+These numbers drive the JVM's defaults:
+
+- `Runtime.getRuntime().availableProcessors()` returns the CPU quota rounded up (1.5 CPUs → 2), and GC threads, JIT compiler threads and the common `ForkJoinPool` are sized from it.
+- The default maximum heap is **25%** of the memory limit (`-XX:MaxRAMPercentage=25`). That is safe but often wasteful; services usually set 60–75%, leaving the rest for metaspace, thread stacks, code cache and direct buffers.
 
 ```text
 ┌──────────── Host (one Linux kernel) ─────────────┐
@@ -214,6 +253,37 @@ Namespaces isolate what a process sees; cgroups limit what it can use.
 
 A VM (or a compatibility layer) is required.
 
+### [numeric 512 unit=MB] A Java 21 service runs in a container with a 2 GB memory limit and no heap flags. What is its default maximum heap size?
+
+:::answer
+The default `MaxRAMPercentage` is 25% of the container's limit: 0.25 × 2,048 MB = **512** MB. Most of the container's memory sits unused unless you raise the percentage.
+:::
+
+### [numeric 2] A container's `cpu.max` is `150000 100000` (150 ms of CPU per 100 ms period). What does `Runtime.getRuntime().availableProcessors()` return inside it?
+
+:::answer
+The quota is 150,000 / 100,000 = 1.5 CPUs, and the JVM rounds up: **2**. Thread pools sized from it get 2 threads, while the kernel still throttles the container to 1.5 CPUs' worth of time per period.
+:::
+
+### [mcq] Which Linux feature makes a containerized Java process see itself as PID 1?
+
+- [ ] cgroups
+- [ ] The mount namespace
+- [x] The PID namespace
+- [ ] seccomp
+
+A new PID namespace numbers its first process 1. Seen from the host, the same process has an ordinary PID. Being PID 1 brings the duties covered in [Signals](lesson:os-signals): handling SIGTERM and reaping zombies.
+
+### [exercise] A Spring Boot service will run in Kubernetes with a 4 GB memory limit and a 2-CPU limit. Choose the JVM memory settings, explain how the JVM will size its thread pools, and say what you'd watch to confirm the pod isn't being OOM-killed or throttled.
+
+:::solution
+**Memory**: the pod's limit covers the whole process, not just the heap. Set `-XX:MaxRAMPercentage=70` (about 2.8 GB of heap), leaving about 1.2 GB for metaspace (often 150–250 MB for Spring), thread stacks (about 200 Tomcat threads × up to 1 MB), JIT code cache, GC structures and direct buffers. Optionally cap them with `-XX:MaxMetaspaceSize` and `-XX:MaxDirectMemorySize`. Verify with `-XX:NativeMemoryTracking=summary` and `jcmd <pid> VM.native_memory summary` under load.
+
+**CPU**: the JVM sees 2 CPUs (`availableProcessors()` = 2), so it starts 2 parallel GC threads and a 1-thread common `ForkJoinPool` (cores − 1). Pools you size yourself (Tomcat's 200 threads, a fixed executor) don't adapt; for CPU-bound work keep them near 2, while I/O-bound pools can be larger.
+
+**Watch**: container restarts with reason `OOMKilled` (exit 137) and the container's RSS against its limit; cgroup `cpu.stat` (`nr_throttled`, `throttled_usec`) for CPU throttling; GC logs for heap pressure. If throttling appears during bursts, raise the CPU limit or remove it and keep only a CPU request.
+:::
+
 ## Quick Revision
 
 - VM = virtual hardware + own guest kernel (hypervisor; VT-x/AMD-V, EPT, virtio/SR-IOV). Type 1 (bare metal) vs Type 2 (hosted).
@@ -221,3 +291,4 @@ A VM (or a compatibility layer) is required.
 - Shared kernel → fast, dense, weaker isolation; VMs → strong isolation, more overhead.
 - Middle ground: gVisor, Firecracker/Kata microVMs.
 - Gotchas: CPU throttling, host-sized thread pools, OOMKilled, PID 1 duties.
+- JVM in containers: limits detected since JDK 10 (`-XshowSettings:system`); `availableProcessors()` = quota rounded up; default max heap = 25% of the limit → set `MaxRAMPercentage` (≈ 60–75%).
