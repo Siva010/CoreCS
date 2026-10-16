@@ -63,12 +63,12 @@ Why a preflight: old servers were written assuming browsers could never send a c
 
 ```mermaid
 sequenceDiagram
-    participant B as Browser (page on app.example.com)
+    participant B as Browser<br/>(page on app.example.com)
     participant A as api.example.com
-    B->>A: OPTIONS /api/orders with Origin, Access-Control-Request-Method PUT, -Headers content-type, authorization
-    A-->>B: 204 Access-Control-Allow-Origin app.example.com, -Allow-Methods PUT, -Allow-Headers content-type, authorization, -Max-Age 600
+    B->>A: OPTIONS /api/orders with Origin,<br/>Access-Control-Request-Method PUT,<br/>-Headers content-type, authorization
+    A-->>B: 204 Access-Control-Allow-Origin<br/>app.example.com, -Allow-Methods PUT,<br/>-Allow-Headers content-type,<br/>authorization, -Max-Age 600
     B->>A: PUT /api/orders/7 (actual request)
-    A-->>B: 200 + Access-Control-Allow-Origin app.example.com
+    A-->>B: 200 + Access-Control-Allow-Origin<br/>app.example.com
 ```
 
 `Access-Control-Max-Age` lets the browser cache the preflight result, avoiding an extra round trip on every call.

@@ -62,7 +62,7 @@ close()                                   close()
 The kernel finishes handshakes on its own so that a busy application doesn't make clients wait for the SYN-ACK. That means finished-but-not-yet-claimed connections need a place to wait:
 
 ```mermaid
-flowchart LR
+flowchart TD
     SYN["incoming SYN"] --> SQ["SYN queue<br/>(half-open, SYN_RECV)"]
     SQ -->|"final ACK<br/>of handshake"| AQ["accept queue<br/>(ESTABLISHED,<br/>not yet accepted)"]
     AQ -->|"accept()"| APP["application gets<br/>a new fd"]

@@ -127,12 +127,12 @@ sequenceDiagram
     participant CPU
     participant RAM
     participant SSD
-    CPU->>RAM: write read-command into submission queue
+    CPU->>RAM: write read-command<br/>into submission queue
     CPU->>SSD: ring doorbell register
-    Note over CPU: CPU runs other threads meanwhile
-    SSD->>RAM: DMA 4 KB of data into buffer
+    Note over CPU: CPU runs other<br/>threads meanwhile
+    SSD->>RAM: DMA 4 KB of data<br/>into buffer
     SSD->>CPU: interrupt (completion)
-    CPU->>RAM: handler marks I/O done, wakes waiting thread
+    CPU->>RAM: handler marks I/O done,<br/>wakes waiting thread
 ```
 
 Without DMA the CPU would copy every byte itself (**programmed I/O**), wasting cycles. Without interrupts it would have to **poll** the device repeatedly. (At very high rates, polling can actually win — NVMe and high-speed NICs use hybrid interrupt/poll modes, e.g. Linux NAPI.)

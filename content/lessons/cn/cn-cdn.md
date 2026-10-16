@@ -54,7 +54,7 @@ A CDN is a worldwide set of HTTP caches. Users are sent to the nearest one; it a
 ### Request flow
 
 ```mermaid
-flowchart LR
+flowchart TD
     U["User in Mumbai"] -->|"~5 ms"| E["Edge PoP Mumbai"]
     E -->|"hit"| U
     E -->|"miss"| S["Shield tier (Singapore)"]

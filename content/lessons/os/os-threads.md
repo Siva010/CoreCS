@@ -130,7 +130,7 @@ The problem with kernel threads at scale: each one costs a kernel object, a fixe
 - **Many-to-many (M:N)**: M user threads multiplexed onto N kernel threads by a runtime scheduler. (Go, Java virtual threads since JDK 21, Erlang.)
 
 ```mermaid
-flowchart TB
+flowchart LR
     subgraph mn["M:N model"]
       G1[goroutine] --> P1[kernel thread 1]
       G2[goroutine] --> P1

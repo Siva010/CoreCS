@@ -62,12 +62,12 @@ sequenceDiagram
     participant S as Server
     Note over S: LISTEN
     Note over C: CLOSED → SYN_SENT
-    C->>S: SYN seq=x, MSS=1460, wscale=7, SACK_PERM, TS
-    Note over S: SYN_RECV (in SYN queue)
-    S->>C: SYN-ACK seq=y, ack=x+1, MSS, wscale, SACK_PERM, TS
-    Note over C: ESTABLISHED (can send data now)
+    C->>S: SYN seq=x, MSS=1460,<br/>wscale=7, SACK_PERM, TS
+    Note over S: SYN_RECV<br/>(in SYN queue)
+    S->>C: SYN-ACK seq=y, ack=x+1,<br/>MSS, wscale, SACK_PERM, TS
+    Note over C: ESTABLISHED<br/>(can send data now)
     C->>S: ACK ack=y+1 (may carry data)
-    Note over S: ESTABLISHED (moved to accept queue)
+    Note over S: ESTABLISHED<br/>(moved to accept queue)
 ```
 
 The client can send data with its third segment; the server's application sees the connection after `accept()` ([Sockets](lesson:cn-sockets)).

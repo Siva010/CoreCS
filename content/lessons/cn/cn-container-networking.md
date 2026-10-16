@@ -75,15 +75,16 @@ Cloud "VPC-native" CNIs (AWS VPC CNI, GKE VPC-native) give pods real VPC IPs —
 Pods die and get new IPs constantly, so clients can't use pod IPs directly. A Service gives them one address that never changes and quietly maps each new connection to a current pod.
 
 ```mermaid
+%%{init: {"sequence": {"width": 100, "actorMargin": 20}}}%%
 sequenceDiagram
     participant C as Client pod
     participant DNS as CoreDNS
-    participant K as kube-proxy rules on client node
-    participant P as Backend pod 10.244.3.17
-    C->>DNS: A? payments.prod.svc.cluster.local
-    DNS-->>C: 10.96.41.12 (ClusterIP)
+    participant K as kube-proxy rules<br/>on client node
+    participant P as Backend pod<br/>10.244.3.17
+    C->>DNS: A? payments.prod.svc.<br/>cluster.local
+    DNS-->>C: 10.96.41.12<br/>(ClusterIP)
     C->>K: SYN to 10.96.41.12:80
-    Note over K: DNAT to a ready endpoint chosen at connection start
+    Note over K: DNAT to a ready endpoint<br/>chosen at connection start
     K->>P: SYN to 10.244.3.17:8080
     P-->>C: SYN-ACK (reverse NAT via conntrack)
 ```

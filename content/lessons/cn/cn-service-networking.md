@@ -59,11 +59,11 @@ A **Service** gets a stable virtual IP and a DNS name (`payments.prod.svc.cluste
 Since the sidecar sits on every request path, anything it does is applied to every call uniformly — without touching application code.
 
 ```mermaid
-flowchart LR
+flowchart TD
     A["Service A container"] -->|"plain HTTP to localhost"| PA["Sidecar A (Envoy)"]
-    PA -->|"mTLS, L7 load balancing, retries, timeout"| PB["Sidecar B (Envoy)"]
+    PA -->|"mTLS, L7 load balancing,<br/>retries, timeout"| PB["Sidecar B (Envoy)"]
     PB -->|"plain HTTP to localhost"| B["Service B container"]
-    CP["Control plane"] -.->|"endpoints, routes, certs, policy"| PA
+    CP["Control plane"] -.->|"endpoints, routes,<br/>certs, policy"| PA
     CP -.-> PB
 ```
 

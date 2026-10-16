@@ -74,22 +74,23 @@ Traditional VPNs grant network-level access ("once inside, you can reach everyth
 The two obstacles: neither peer knows its own public address, and neither NAT will accept an unexpected packet. STUN solves the first; simultaneous sending solves the second.
 
 ```mermaid
+%%{init: {"sequence": {"width": 100, "actorMargin": 20}}}%%
 sequenceDiagram
-    participant A as Peer A (behind NAT A)
+    participant A as Peer A<br/>(behind NAT A)
     participant STUN as STUN server
-    participant Sig as Signaling server
-    participant B as Peer B (behind NAT B)
-    A->>STUN: Binding request (from 10.0.0.5:4000)
-    STUN-->>A: you appear as 198.51.100.7:62000
+    participant Sig as Signaling<br/>server
+    participant B as Peer B<br/>(behind NAT B)
+    A->>STUN: Binding request<br/>(from 10.0.0.5:4000)
+    STUN-->>A: you appear as<br/>198.51.100.7:62000
     B->>STUN: Binding request
     STUN-->>B: you appear as 203.0.113.20:51000
-    A->>Sig: my candidates (host, reflexive 198.51.100.7:62000, relay)
+    A->>Sig: my candidates (host,<br/>reflexive 198.51.100.7:62000,<br/>relay)
     B->>Sig: my candidates
     Sig-->>A: B's candidates
     Sig-->>B: A's candidates
-    A->>B: UDP to 203.0.113.20:51000 (opens mapping in NAT A)
-    B->>A: UDP to 198.51.100.7:62000 (opens mapping in NAT B)
-    Note over A,B: both NATs now have outbound mappings, packets flow directly
+    A->>B: UDP to 203.0.113.20:51000<br/>(opens mapping in NAT A)
+    B->>A: UDP to 198.51.100.7:62000<br/>(opens mapping in NAT B)
+    Note over A,B: both NATs now have outbound mappings,<br/>packets flow directly
 ```
 
 - Works when NATs use **endpoint-independent mapping** (the same public port for all destinations).

@@ -49,16 +49,16 @@ Client: "here are my options and my half of a key exchange". Server: "here's my 
 sequenceDiagram
     participant C as Client
     participant S as Server
-    C->>S: ClientHello: versions, cipher suites, key_share (X25519 public), SNI, ALPN (h2, http/1.1), random
-    Note over S: pick suite + group, compute shared secret from both key shares, derive handshake keys
-    S->>C: ServerHello: chosen suite, key_share (server public), random
-    S->>C: [encrypted] EncryptedExtensions (ALPN = h2, ...)
+    C->>S: ClientHello: versions, cipher suites,<br/>key_share (X25519 public), SNI,<br/>ALPN (h2, http/1.1), random
+    Note over S: pick suite + group,<br/>compute shared secret<br/>from both key shares,<br/>derive handshake keys
+    S->>C: ServerHello: chosen suite,<br/>key_share (server public), random
+    S->>C: [encrypted] EncryptedExtensions<br/>(ALPN = h2, ...)
     S->>C: [encrypted] Certificate (chain)
-    S->>C: [encrypted] CertificateVerify (signature over transcript with private key)
-    S->>C: [encrypted] Finished (MAC over transcript)
-    Note over C: validate chain + hostname, verify signature and Finished, derive application keys
+    S->>C: [encrypted] CertificateVerify<br/>(signature over transcript<br/>with private key)
+    S->>C: [encrypted] Finished<br/>(MAC over transcript)
+    Note over C: validate chain + hostname,<br/>verify signature and Finished,<br/>derive application keys
     C->>S: [encrypted] Finished
-    C->>S: [encrypted] HTTP request (application data)
+    C->>S: [encrypted] HTTP request<br/>(application data)
     S->>C: [encrypted] HTTP response
 ```
 

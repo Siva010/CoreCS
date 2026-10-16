@@ -72,7 +72,7 @@ This is the hardware half of "protection must be enforced by hardware". Modern C
 There are exactly three ways the CPU goes from user mode into the kernel:
 
 ```mermaid
-flowchart LR
+flowchart BT
     U["User mode:<br/>your program"] -->|"system call<br/>(deliberate)"| K["Kernel mode"]
     U -->|"exception / fault<br/>(accidental: page fault,<br/>divide by zero)"| K
     H["Hardware device<br/>or timer"] -->|"interrupt<br/>(external)"| K

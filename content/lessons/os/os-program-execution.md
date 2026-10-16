@@ -82,11 +82,11 @@ sequenceDiagram
     Kernel-->>Shell: returns child PID
     Kernel-->>Child: returns 0 (child starts)
     Child->>Kernel: execve("./server")
-    Note over Kernel: discard old address space, map ELF, build stack
-    Kernel-->>Child: start at dynamic loader, then _start, then main()
+    Note over Kernel: discard old address space,<br/>map ELF, build stack
+    Kernel-->>Child: start at dynamic loader,<br/>then _start, then main()
     Shell->>Kernel: wait(child)
     Note over Shell: shell blocks
-    Child->>Kernel: many syscalls, page faults, preemptions
+    Child->>Kernel: many syscalls,<br/>page faults, preemptions
     Child->>Kernel: exit(0)
     Kernel-->>Shell: wait returns status 0
 ```

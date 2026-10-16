@@ -73,12 +73,12 @@ sequenceDiagram
     participant Kernel
     participant App
     Orchestrator->>Kernel: kill(pid, SIGTERM)
-    Kernel->>Kernel: mark SIGTERM pending for App
-    Note over App: App is in user mode or blocked in a syscall
-    Kernel->>App: on return to user mode, jump to SIGTERM handler
-    App->>App: handler sets shutting_down flag
-    App->>Kernel: sigreturn resumes main loop
-    App->>App: main loop sees flag, drains requests, exits
+    Kernel->>Kernel: mark SIGTERM<br/>pending for App
+    Note over App: App is in user mode<br/>or blocked in a syscall
+    Kernel->>App: on return to user mode,<br/>jump to SIGTERM handler
+    App->>App: handler sets<br/>shutting_down flag
+    App->>Kernel: sigreturn resumes<br/>main loop
+    App->>App: main loop sees flag,<br/>drains requests, exits
 ```
 
 ### Standard signals don't queue

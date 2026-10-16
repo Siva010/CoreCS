@@ -43,15 +43,15 @@ NAT rewrites the source address and port on the way out, writes the mapping in a
 
 ```mermaid
 sequenceDiagram
-    participant L as Laptop 192.168.1.23
-    participant R as NAT router (public 198.51.100.7)
-    participant S as Server 93.184.215.14
-    L->>R: src 192.168.1.23:51514 dst 93.184.215.14:443
-    Note over R: create entry 192.168.1.23:51514 maps to 198.51.100.7:40001
-    R->>S: src 198.51.100.7:40001 dst 93.184.215.14:443
-    S->>R: src 93.184.215.14:443 dst 198.51.100.7:40001
-    Note over R: lookup 40001, rewrite destination back
-    R->>L: src 93.184.215.14:443 dst 192.168.1.23:51514
+    participant L as Laptop<br/>192.168.1.23
+    participant R as NAT router<br/>(public 198.51.100.7)
+    participant S as Server<br/>93.184.215.14
+    L->>R: src 192.168.1.23:51514<br/>dst 93.184.215.14:443
+    Note over R: create entry<br/>192.168.1.23:51514<br/>maps to 198.51.100.7:40001
+    R->>S: src 198.51.100.7:40001<br/>dst 93.184.215.14:443
+    S->>R: src 93.184.215.14:443<br/>dst 198.51.100.7:40001
+    Note over R: lookup 40001,<br/>rewrite destination back
+    R->>L: src 93.184.215.14:443<br/>dst 192.168.1.23:51514
 ```
 
 Every packet in both directions is rewritten (addresses, ports, and checksums recomputed). Entries expire after inactivity: TCP entries after a long timeout for established connections (hours on Linux by default, often minutes on consumer routers and cloud NAT gateways), UDP entries after tens of seconds to minutes.

@@ -63,18 +63,19 @@ For each incoming frame:
    - broadcast (`ff:ff:…`) or most multicast → flood.
 
 ```mermaid
+%%{init: {"sequence": {"width": 100, "actorMargin": 20}}}%%
 sequenceDiagram
-    participant A as Host A (port 1)
+    participant A as Host A<br/>(port 1)
     participant S as Switch
-    participant B as Host B (port 2)
-    participant C as Host C (port 3)
+    participant B as Host B<br/>(port 2)
+    participant C as Host C<br/>(port 3)
     A->>S: frame dst=B src=A
-    Note over S: learn A on port 1, B unknown so flood
+    Note over S: learn A on port 1,<br/>B unknown so flood
     S->>B: frame (flooded)
     S->>C: frame (flooded, C ignores it)
     B->>S: reply dst=A src=B
-    Note over S: learn B on port 2, A known on port 1
-    S->>A: reply (forwarded only to port 1)
+    Note over S: learn B on port 2,<br/>A known on port 1
+    S->>A: reply (forwarded<br/>only to port 1)
 ```
 
 ### Broadcast vs collision domains

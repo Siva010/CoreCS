@@ -51,20 +51,21 @@ DNS is a tree of servers, each responsible for one part of a name, plus caches e
 ### Resolving `www.example.com` from a cold cache
 
 ```mermaid
+%%{init: {"sequence": {"width": 80, "actorMargin": 12}}}%%
 sequenceDiagram
-    participant App as Browser + OS stub resolver
-    participant R as Recursive resolver
-    participant Root as Root server
-    participant TLD as .com TLD server
-    participant Auth as example.com authoritative
-    App->>R: A? www.example.com (recursive query)
+    participant App as Browser + OS<br/>stub resolver
+    participant R as Recursive<br/>resolver
+    participant Root as Root<br/>server
+    participant TLD as .com TLD<br/>server
+    participant Auth as example.com<br/>authoritative
+    App->>R: A? www.example.com<br/>(recursive query)
     R->>Root: A? www.example.com
-    Root-->>R: referral: .com NS a.gtld-servers.net (+ glue IPs)
+    Root-->>R: referral: .com NS<br/>a.gtld-servers.net<br/>(+ glue IPs)
     R->>TLD: A? www.example.com
-    TLD-->>R: referral: example.com NS ns1.example-dns.net (+ glue)
+    TLD-->>R: referral: example.com NS<br/>ns1.example-dns.net (+ glue)
     R->>Auth: A? www.example.com
-    Auth-->>R: www.example.com A 93.184.215.14 TTL 300
-    R-->>App: 93.184.215.14 (cached for 300 s)
+    Auth-->>R: www.example.com A 93.184.215.14<br/>TTL 300
+    R-->>App: 93.184.215.14<br/>(cached for 300 s)
 ```
 
 - **Recursive query** (client → resolver): "give me the final answer".

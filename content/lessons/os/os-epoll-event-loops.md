@@ -41,14 +41,14 @@ epoll is a kernel-side list of "sockets that have something for you", filled in 
 ### Inside epoll
 
 ```mermaid
-flowchart LR
+flowchart TD
     subgraph kernel["kernel: epoll instance"]
-      I["interest list (red-black tree of watched fds)"]
-      R["ready list (linked list of fds with events)"]
+      I["interest list<br/>(red-black tree<br/>of watched fds)"]
+      R["ready list<br/>(linked list of<br/>fds with events)"]
     end
-    S1["socket A receives data"] -->|"wakeup callback adds A"| R
-    S2["socket B becomes writable"] -->|"callback adds B"| R
-    App["event loop thread"] -->|"epoll_ctl ADD/MOD/DEL"| I
+    S1["socket A<br/>receives data"] -->|"wakeup callback<br/>adds A"| R
+    S2["socket B<br/>becomes writable"] -->|"callback adds B"| R
+    App["event loop thread"] -->|"epoll_ctl<br/>ADD/MOD/DEL"| I
     App -->|"epoll_wait"| R
     R -->|"returns A, B"| App
 ```

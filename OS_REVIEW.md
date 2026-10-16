@@ -205,6 +205,7 @@ Measured on the theory sections (Mental Model through Example):
 | Lessons with a Mermaid diagram | 14 of 45 | 48 of 48 |
 | Mermaid diagrams | 14 | 50 |
 | New diagrams below 80% of natural size (desktop column) | — | 0 of 36 |
+| Older diagrams below 80% of natural size | 8 of 14 | 0 of 14 |
 
 - **36 new diagrams**, each placed next to the text it illustrates. For example:
   - a virtual-to-physical mapping for two processes;
@@ -229,6 +230,7 @@ Measured on the theory sections (Mental Model through Example):
   - Sequence diagrams got narrower actor boxes.
   - The gantt chart is pinned to the column width, since gantt otherwise draws at the full window width (it was at 44% of natural size).
   - The smallest new diagram renders at 82%.
+- **The older diagrams were fixed too.** Eight of the original 14 rendered at 53–74% of natural size: hardware model, what an OS does, program execution, signals, threads, deadlocks, page cache and epoll. A separate session gave their labels explicit line breaks and turned two left-to-right flows top-to-bottom, and its work was merged after the Java round. They now render at 89–100%. The same session fixed 11 Networks diagrams.
 - **Accuracy.** The new `open()` diagram first skipped a step: it never checked the selected permission bits against the requested mode. It was fixed before publishing.
 
 ## Update 5: Java examples
@@ -334,7 +336,6 @@ Two more labs, for the two topics where a wrong mental model does the most damag
   - a page-cache lab showing read-ahead, dirty pages and writeback;
   - an AMAT/EAT calculator.
 - **The Java check isn't part of the build.** `scripts/_verify-java.mts` needs a local JDK, so it runs by hand, not in `npm run check` or the Cloudflare build. 39 blocks are fragments that only compile with the lesson's surrounding names, and none of the code is executed.
-- **Eight older diagrams render below 80% of natural size.** They are in hardware model, what an OS does, program execution, signals, threads, deadlocks, page cache and epoll, and range from 53% to 74%. A separate session is fixing them. Merging that work may conflict with this round's edits in the same eight files.
 - **Linux-first.** Windows gets only occasional notes (NT scheduling, handles, IOCP), and macOS almost none.
 - **112 theory sentences are still over 30 words.** The readability work targeted the longest ones first.
 - **Production relevance barely moved (8.8 → 8.9).** It was already high, and these rounds added practice, theory and Java mapping, not new operational depth.

@@ -66,6 +66,7 @@ Why draw a graph: "who holds what, who waits for what" is hard to see in code bu
 - **Assignment edge** R → P: an instance of R is allocated to P.
 
 ```mermaid
+%%{init: {"flowchart": {"minNodeWidth": 0}}}%%
 flowchart LR
     P1((P1)) -->|requests| R2[R2]
     R2 -->|held by| P2((P2))
