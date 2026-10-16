@@ -188,7 +188,7 @@ Each cache line in each core's cache has a state (e.g., MESI). Before a core wri
 
 ### [L2 · how] How do you avoid false sharing in Java?
 
-Keep data written by different threads apart. Prefer per-thread state (a local variable, merged at the end) or JDK classes designed for it: `LongAdder` and `LongAccumulator` spread updates over padded cells, and `ConcurrentHashMap` counts its size with striped cells. When you must place hot fields yourself, `@jdk.internal.vm.annotation.Contended` pads a field (or a group of fields) onto its own cache line; outside the JDK it needs `-XX:-RestrictContended`. Manual padding with dummy `long` fields is fragile, because HotSpot decides field order. Confirm the problem and the fix with `perf c2c` or a JMH benchmark that runs the threads on different cores.
+Keep data written by different threads apart. Prefer per-thread state (a local variable, merged at the end) or JDK classes designed for it: `LongAdder` and `LongAccumulator` spread updates over padded cells, and `ConcurrentHashMap` counts its size with striped cells. When you must place hot fields yourself, `@jdk.internal.vm.annotation.Contended` pads a field (or a group of fields) onto its own cache line. Outside the JDK it needs `--add-exports java.base/jdk.internal.vm.annotation=ALL-UNNAMED` to compile and `-XX:-RestrictContended` to take effect. Manual padding with dummy `long` fields is fragile, because HotSpot decides field order. Confirm the problem and the fix with `perf c2c` or a JMH benchmark that runs the threads on different cores.
 
 ### [L3 · debugging] A multithreaded aggregation job gets slower when you go from 4 to 16 threads, with CPU at 100%. How do you investigate?
 
@@ -249,6 +249,7 @@ By default the JVM honours `@Contended` only for JDK classes. `LongAdder` gets t
 ```java
 class Shared  { volatile long a; volatile long b; }
 class Padded  {
+    // compile with --add-exports java.base/jdk.internal.vm.annotation=ALL-UNNAMED
     @jdk.internal.vm.annotation.Contended volatile long a;   // run with -XX:-RestrictContended
     @jdk.internal.vm.annotation.Contended volatile long b;
 }

@@ -11,6 +11,7 @@ relevance: high
 stage: 3
 prerequisites: [os-file-descriptors, os-storage-devices]
 related: [os-journaling, os-page-cache, os-file-descriptors, db-pages-records]
+labs: [file-allocation]
 tags: [filesystem, inode, directory, dentry, hard link, symbolic link, soft link, permissions, chmod, setuid, extents, superblock, block allocation, vfs, contiguous allocation, linked allocation, indexed allocation, fat, free-space management, bitmap, directory structure, access methods]
 ---
 
@@ -101,6 +102,8 @@ With 4 KB blocks and 4-byte block addresses (1,024 addresses per block):
 | Triple indirect | 1,024³ | 4 TB |
 
 Small files are fast (direct pointers); large files need extra reads through indirect blocks.
+
+::lab{id=file-allocation}
 
 **Extents (ext4, XFS, Btrfs)**: if blocks are usually allocated contiguously anyway, listing each one is wasteful — say "blocks 5000 to 37,767" once. Extents describe runs of contiguous blocks as `(start block, length)`. One extent can cover up to 128 MB in ext4; a large contiguous file needs a handful of extents instead of millions of pointers. Extent trees handle fragmented files.
 
@@ -329,6 +332,12 @@ Addresses per block = 1,024 / 4 = 256. Blocks: 10 + 256 + 256² = 10 + 256 + 65,
 - **(a) Contiguous** (or large extents): the size is known when it's written and it never grows, so there is no growth problem. Streaming reads consecutive blocks with almost no seeking, and readers can skip ahead by arithmetic.
 - **(b) Indexed** (multi-level, like an inode or extent tree): random access needs any block's address quickly. Linked allocation would need up to N reads to reach block N; indexed needs a few, usually cached.
 - **(c) Indexed with extents**, or linked if random access is never needed: the file grows unpredictably, which contiguous allocation handles badly (it may have to move the file). Indexed allocation appends block addresses as the file grows, and an extent-based filesystem keeps appended runs contiguous where it can. A pure linked scheme also grows easily, but makes reading recent entries near the end slow.
+:::
+
+### [numeric 1036] With ext2's 4 KB blocks and 4-byte block addresses, what is the first logical block of a file that is reached through the double indirect pointer? Check it in the [file allocation lab](lab:file-allocation).
+
+:::answer
+**1036**. The 12 direct pointers cover blocks 0–11. The single indirect block holds 4,096 ÷ 4 = 1,024 addresses, so it covers blocks 12–1,035. Block 1,036 is the first one reached through the double indirect pointer. It starts at byte 1,036 × 4,096 = 4,243,456, just past 4 MB + 48 KB, and reading it takes 3 disk reads once the inode is in memory: two index blocks, then the data block.
 :::
 
 ## Quick Revision

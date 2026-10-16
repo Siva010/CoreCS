@@ -45,6 +45,8 @@ Other scripts:
 - **Widgets**: `src/components/widgets/` — one component per simulator, lazily loaded by id from `src/lib/registry.ts`.
 - **SQL labs**: PGlite (PostgreSQL in WebAssembly) runs in a Web Worker (`public/vendor/sql-worker.js`), so a runaway query can be cancelled by terminating the worker. Seeds, exercises and
   grading live in `src/lib/sql/`; `npx tsx scripts/_verify-sql.mts` runs every reference solution against the real seed and checks that classic wrong answers are rejected.
+- **Java examples**: `npx tsx scripts/_verify-java.mts` compiles every ```` ```java ```` block in the lessons with the local JDK (21 or later). Fragments are tried as a class body and as a method
+  body; only names the lesson defines elsewhere may be missing.
 - **Progress**: a Zustand store persisted to `localStorage` (`src/lib/progress/`), with SM-2 style spaced repetition, mastery estimation and a revision queue. Nothing leaves the browser.
 - **Search**: a static `/search-index.json` consumed by MiniSearch in the ⌘K palette.
 

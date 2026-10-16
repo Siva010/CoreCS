@@ -126,6 +126,36 @@ export const WIDGETS: WidgetDef[] = [
     tryThis: ["Increase concurrent connections: watch thread count per model.", "Where does the data copy from kernel to user space happen in each model?"],
     lessons: ["os-io-models", "os-epoll-event-loops"],
   },
+  {
+    id: "file-allocation",
+    title: "File Allocation & Inodes",
+    subject: "os",
+    kinds: ["lab"],
+    description:
+      "Set an inode's block size and direct/indirect pointers and see the largest file, which pointer reaches any byte, and how many disk reads it costs. Then lay one file out with contiguous, linked, FAT and indexed allocation on a fragmented disk.",
+    tryThis: [
+      "With ext2's 4 KB blocks, find the first byte that needs the double indirect pointer.",
+      "Switch to 1 KB blocks: why does the largest file drop from 4 TB to 16 GB?",
+      "Allocate a 5-block file contiguously. Why does it fail with 16 blocks free?",
+      "Read block 7 of an 8-block file with each method and compare the disk reads.",
+    ],
+    lessons: ["os-filesystem-internals"],
+  },
+  {
+    id: "raid",
+    title: "RAID Layout & Rebuild",
+    subject: "os",
+    kinds: ["lab"],
+    description:
+      "Lay out RAID 0, 1, 5, 6 and 10 stripe by stripe with real parity bytes. Fail disks and watch blocks rebuilt with XOR (and Reed–Solomon Q for RAID 6), count the I/Os of a small write, and see the rebuild risk for large drives.",
+    tryThis: [
+      "RAID 5: fail one disk and check one rebuilt block's XOR by hand.",
+      "Fail a second disk in RAID 5, then do the same in RAID 6.",
+      "RAID 10 with 4 disks: which two failures does it survive, and which kill it?",
+      "Change one data block and count the I/Os in RAID 5, 6 and 10.",
+    ],
+    lessons: ["os-raid"],
+  },
   // ───────────────────────────── Computer Networks ─────────────────────────────
   {
     id: "encapsulation",

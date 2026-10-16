@@ -11,6 +11,7 @@ relevance: medium
 stage: 3
 prerequisites: [os-storage-devices]
 related: [os-storage-devices, db-replication, x-durability-chain]
+labs: [raid]
 tags: [raid, raid 0, raid 1, raid 5, raid 6, raid 10, striping, mirroring, parity, xor, write penalty, rebuild, hot spare]
 ---
 
@@ -92,6 +93,8 @@ sequenceDiagram
 **4 I/Os per logical write** (2 reads + 2 writes); RAID 6 needs 6 (two parity blocks). Full-stripe writes avoid the penalty (compute parity from new data only). This is why RAID 5/6 are poor for random-write-heavy databases and RAID 10 is preferred.
 
 **Write-hole problem**: a crash between writing data and parity leaves them inconsistent; a later reconstruction produces garbage. Mitigated by battery/flash-backed controller caches, journaling (Linux md write journal), or ZFS RAID-Z's copy-on-write full-stripe writes.
+
+::lab{id=raid}
 
 ## Internal Mechanism
 
@@ -248,6 +251,19 @@ P     ⊕ 0001  → 0110   = D2 ✓
 ```
 
 XOR works bit by bit, and x ⊕ x = 0, so XORing everything that survived cancels out everything except the missing block. The `rebuilt` loop in the Java code above does the same thing for every byte of a real block.
+:::
+
+### [exercise] In the [RAID lab](lab:raid), set up RAID 5 with 5 disks and fail disk 1. Check the rebuilt D1 in stripe 0 by hand. Then fail disk 3 too, and see the array lost. Switch to RAID 6 and fail two disks. Why can RAID 6 rebuild two lost blocks per stripe when RAID 5 can rebuild only one?
+
+:::solution
+**By hand:** D1 = D0 ⊕ D2 ⊕ D3 ⊕ P0 = 0x73 ⊕ 0xE1 ⊕ 0x5E ⊕ 0xE4. Step by step:
+- 0x73 ⊕ 0xE1 = 0x92;
+- 0x92 ⊕ 0x5E = 0xCC;
+- 0xCC ⊕ 0xE4 = 0x28, D1's original value.
+
+**Why two failures beat RAID 5.** With two disks gone, each stripe has two unknown blocks. RAID 5 stores one equation per stripe (P = XOR of the data), and one equation can't determine two unknowns.
+
+RAID 6 stores a second, independent equation: Q = g⁰·D0 ⊕ g¹·D1 ⊕ g²·D2 ⊕ …, computed in the finite field GF(2⁸). Each data block has a different coefficient in Q, so P and Q together pin down any two missing values, just as two independent linear equations determine two unknowns. A second plain XOR wouldn't help: it would be the same equation twice.
 :::
 
 ## Quick Revision
