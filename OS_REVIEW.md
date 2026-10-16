@@ -1,6 +1,6 @@
 # Operating Systems track — review and ratings
 
-*Reviewed 16 October 2026, covering all 45 operating-systems lessons. They were then improved in the same five rounds as the [database track](DBMS_REVIEW.md), with every code example moved to Java, and a sixth round added two labs and a repeatable Java check. The track now has 48 lessons.*
+*Reviewed 16 October 2026, covering all 45 operating-systems lessons. They were then improved in the same five rounds as the [database track](DBMS_REVIEW.md), with every code example moved to Java, and two more rounds added four labs and a repeatable Java check. The track now has 48 lessons.*
 
 ## Verdict
 
@@ -17,7 +17,7 @@ The rounds:
 - **Understandability:** long sentences split, more worked traces, and hover definitions for 115 OS terms.
 - **Diagrams:** every lesson has one (14 of 45 did before).
 - **Java:** 94 Java blocks, up from 7, all compile-checked with JDK 21. One C block is left on purpose.
-- **Labs and a Java check:** two new labs, *File Allocation & Inodes* and *RAID Layout & Rebuild*, and a script that compiles every Java block.
+- **Labs and a Java check:** four new labs (*File Allocation & Inodes*, *RAID Layout & Rebuild*, *Journaling: Crash & Recover* and *Memory Model Litmus Tests*) and a script that compiles every Java block.
 
 **Overall 7.9 → 8.9.** Most of the gain is practice (3.5 → 8.7), which started very low.
 
@@ -302,20 +302,36 @@ The database round added two labs for its new theory. This round does the same f
   - Deliberate non-Java (the side-by-side threads) and Netty examples are listed in the script with the reason.
   - Its first run found that the false-sharing lesson's prose and exercise mentioned only the runtime flag for `@Contended`, not the `--add-exports` flag needed to compile. Both now give both flags.
 
+## Update 7: journaling and memory-model labs
+
+Two more labs, for the two topics where a wrong mental model does the most damage.
+
+- **Journaling: Crash & Recover** (`/labs/journaling`) appends one block to a file, which must change three blocks together: the data block, the inode and the free-space bitmap.
+  - **No journal:** you pick which writes survived the crash, and the lab shows what fsck does.
+  - **ext4's three modes** (writeback, ordered, journal): you crash after any protocol step, and the lab shows the journal and home blocks at the crash and after recovery, with a verdict: complete, unchanged, inconsistent, or consistent with stale data in the file.
+  - It shows why fsck can't catch the stale-data case, why writeback mode can produce it, and why ordered mode can't.
+- **Memory Model Litmus Tests** (`/labs/memory-model`) covers four classic two-thread Java programs: message passing, store buffering (Dekker), load buffering and object publication.
+  - For each one it lists every sequentially consistent interleaving and the outcome none of them produces.
+  - It shows whether that outcome is allowed with plain, final, release/acquire or volatile fields, and why.
+  - It shows where x86 and ARM hardware show the outcome with plain fields.
+  - The verdicts follow the JMM and the VarHandle access-mode rules, and agree with the lesson's existing practice answers. For example, message passing allows all four outcomes with plain fields and three with a volatile flag.
+- **Practice:** a lab exercise for journaling and a lab-based MCQ for the memory model.
+  - Totals: practice 310 → 312 items, and lessons whose practice uses a lab 32 → 33.
+  - Journaling's practice score goes from 8 to 9. Track averages don't move at one decimal.
+
 ## Readiness by audience
 
 | Audience | Before | After | Comment |
 |---|---|---|---|
 | **Freshers / campus placements / GATE-style theory** | 7.5 | **8.9** | Every lesson has at least two numericals or worked exercises. Numericals cover scheduling, page replacement, EAT/AMAT, Banker's, disk scheduling, working set, RAID capacity and permission bits. They are checked against the site's simulators, and inode and RAID questions now have labs of their own. The textbook gaps are filled. |
-| **1–3 YOE Java backend** | 7.0 | **9.0** | Every concept is shown in the code the reader writes. The JMM and JVM-on-Linux lessons cover what Java interviews and incidents actually ask: volatile and safe publication, RSS vs heap, OOMKilled vs `OutOfMemoryError`, thread dumps. |
+| **1–3 YOE Java backend** | 7.0 | **9.0** | Every concept is shown in the code the reader writes. The JMM and JVM-on-Linux lessons cover what Java interviews and incidents actually ask: volatile and safe publication, RSS vs heap, OOMKilled vs `OutOfMemoryError`, thread dumps. A litmus-test lab shows which outcomes volatile, final and release/acquire rule out. |
 | **3–5+ YOE / performance and systems rounds** | 8.0 | **8.6** | Covers JFR, async-profiler and `jcmd`, epoll and virtual threads, NUMA and hugepage flags, and CPU quotas. It is still conceptual: there are no hands-on performance labs. |
 
 ## What is still missing (honest gaps)
 
 - **Written exercises are self-graded.** MCQs and the 130 numericals are checked automatically. The 62 written exercises rely on comparing your answer with the worked solution.
-- **16 lessons have no lab to practise against.** The ones that would most benefit are journaling, the page cache, profiling and protection. Labs that would help:
-  - a journaling lab that crashes mid-write and replays the log;
-  - a JMM litmus-test explorer that shows which outcomes are allowed;
+- **15 lessons have no lab to practise against.** The ones that would most benefit are the page cache, profiling, protection and the JVM on Linux. Labs that would help:
+  - a page-cache lab showing read-ahead, dirty pages and writeback;
   - an AMAT/EAT calculator.
 - **The Java check isn't part of the build.** `scripts/_verify-java.mts` needs a local JDK, so it runs by hand, not in `npm run check` or the Cloudflare build. 39 blocks are fragments that only compile with the lesson's surrounding names, and none of the code is executed.
 - **Eight older diagrams render below 80% of natural size.** They are in hardware model, what an OS does, program execution, signals, threads, deadlocks, page cache and epoll, and range from 53% to 74%. A separate session is fixing them. Merging that work may conflict with this round's edits in the same eight files.
@@ -347,8 +363,8 @@ Arrows show before → after where something changed. Questions and practice ite
 | `os-hugepages-numa` | 4 → 6 | 2 → 7 | 9 | 9 | 7 → **8** | 4 → **8** | 9 | 9 | 7.8 → **8.7** |
 | `os-io-models` | 6 → 7 | 2 → 6 | 9 | 9 | 8 → **9** | 3 → **9** | 9 | 9 | 7.8 → **9.0** |
 | `os-ipc` | 7 → 8 | 2 → 7 | 9 | 9 | 8 → **9** | 3 → **9** | 8 → **9** | 8 → **9** | 7.5 → **9.0** |
-| `os-java-memory-model` | 8 (new) | 6 (new) | 9 | 9 | 9 | 9 | 9 | 9 | **9.0** (new) |
-| `os-journaling` | 6 | 2 → 6 | 9 | 9 | 9 | 3 → **8** | 9 | 9 | 8.0 → **8.8** |
+| `os-java-memory-model` | 8 (new) | 7 (new) | 9 | 9 | 9 | 9 | 9 | 9 | **9.0** (new) |
+| `os-journaling` | 6 | 2 → 7 | 9 | 9 | 9 | 3 → **9** | 9 | 9 | 8.0 → **9.0** |
 | `os-jvm-on-linux` | 7 (new) | 6 (new) | 9 | 9 | 9 | 8 | 9 | 8 | **8.7** (new) |
 | `os-mlfq-real-schedulers` | 6 | 2 → 6 | 9 | 9 | 9 | 3 → **9** | 9 | 8 → **9** | 7.8 → **9.0** |
 | `os-page-cache` | 5 → 6 | 2 → 6 | 9 | 9 | 8 → **9** | 3 → **8** | 9 | 9 | 7.8 → **8.8** |

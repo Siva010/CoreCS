@@ -156,6 +156,35 @@ export const WIDGETS: WidgetDef[] = [
     ],
     lessons: ["os-raid"],
   },
+  {
+    id: "journaling",
+    title: "Journaling: Crash & Recover",
+    subject: "os",
+    kinds: ["lab"],
+    description:
+      "Append one block to a file and pull the plug at any step: with no journal, and with ext4's writeback, ordered and full data journaling. See what is on disk, what fsck or journal replay does, and whether the file ends up complete, unchanged or full of stale data.",
+    tryThis: [
+      "No journal: which single write, surviving alone, leaves the filesystem inconsistent?",
+      "Ordered mode: crash after the commit but before the checkpoint. Why is that safe?",
+      "Writeback mode: find the crash point that leaves stale data in the file.",
+      "Why does data=journal write the data twice, and what does that buy?",
+    ],
+    lessons: ["os-journaling"],
+  },
+  {
+    id: "memory-model",
+    title: "Memory Model Litmus Tests",
+    subject: "os",
+    kinds: ["lab"],
+    description:
+      "Four classic two-thread Java programs: message passing, store buffering, load buffering and object publication. See every outcome sequential interleaving can produce, the one it can't, and whether plain, final, release/acquire or volatile fields let Java produce it anyway.",
+    tryThis: [
+      "Message passing: which single field must be volatile so thread 2 never sees the flag without the data?",
+      "Store buffering: why does release/acquire not rule out (0, 0) when volatile does?",
+      "Publication: how does a final field make the half-built object impossible without volatile?",
+    ],
+    lessons: ["os-java-memory-model", "os-race-conditions"],
+  },
   // ───────────────────────────── Computer Networks ─────────────────────────────
   {
     id: "encapsulation",

@@ -26,6 +26,8 @@ const WIDGETS: Record<string, ComponentType> = {
   "io-models": lazy(() => import("./os/IoModels")),
   "file-allocation": lazy(() => import("./os/FileAllocation")),
   raid: lazy(() => import("./os/Raid")),
+  journaling: lazy(() => import("./os/Journaling")),
+  "memory-model": lazy(() => import("./os/MemoryModel")),
   // Computer networks
   encapsulation: lazy(() => import("./cn/Encapsulation")),
   "tcp-handshake": lazy(() => import("./cn/TcpHandshake")),

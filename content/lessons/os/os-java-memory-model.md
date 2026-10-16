@@ -11,6 +11,7 @@ relevance: high
 stage: 2
 prerequisites: [os-race-conditions, os-atomic-instructions]
 related: [os-sync-primitives, os-critical-section-problem, os-cpu-caches-contention, os-threads, db-consistency-models]
+labs: [memory-model]
 visualizations: [race-condition]
 tags: [java memory model, jmm, happens-before, volatile, synchronized, final fields, safe publication, double-checked locking, data race, sequential consistency, VarHandle, acquire, release, jcstress]
 ---
@@ -79,6 +80,8 @@ ready = true;                                     use(current);   // guaranteed 
 ```
 
 `volatile` does **not** make compound actions atomic: `count++` on a volatile field is still a read, an add and a write ([Race Conditions](lesson:os-race-conditions)).
+
+::lab{id=memory-model}
 
 ### synchronized: mutual exclusion plus visibility
 
@@ -400,6 +403,15 @@ void replace(Map<String, Boolean> newFlags) {
 
 Readers always see a complete map, old or new. `Map.copyOf` is immutable, so nothing can change under a reader, and the volatile write gives the happens-before edge.
 :::
+
+### [mcq] In the [memory model lab](lab:memory-model), store buffering (`x = 1; r1 = y;` against `y = 1; r2 = x;`) still allows r1 = 0, r2 = 0 when the writes use `setRelease` and the reads use `getAcquire`. Which change rules that outcome out?
+
+- [x] Declare `x` and `y` volatile, or use the VarHandle volatile mode (`setVolatile`, `getVolatile`)
+- [ ] Make only the reads `getAcquire` and the writes plain
+- [ ] Add `Thread.onSpinWait()` between each thread's write and its read
+- [ ] Use `getOpaque` and `setOpaque` instead
+
+Release and acquire order accesses in one direction only, so a release store may still be passed by a later acquire load of a different variable. On x86 both compile to plain moves, and the store buffer produces (0, 0). Volatile accesses also join one total order that respects each thread's program order: whichever write is first in it, the other thread's read comes later and sees it. `onSpinWait()` is only a CPU hint, and opaque mode is weaker than acquire/release.
 
 ## Quick Revision
 

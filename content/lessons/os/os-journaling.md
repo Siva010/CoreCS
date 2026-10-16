@@ -11,6 +11,7 @@ relevance: medium
 stage: 3
 prerequisites: [os-filesystem-internals]
 related: [os-page-cache, db-wal-durability, db-crash-recovery, x-durability-chain]
+labs: [journaling]
 tags: [crash consistency, journaling, fsck, write-ahead logging, metadata journaling, ordered mode, data journaling, copy-on-write filesystem, fsync, fdatasync, atomic rename, barriers, FileChannel.force, ATOMIC_MOVE]
 ---
 
@@ -72,6 +73,8 @@ flowchart TD
 | `data=journal` | Data and metadata | Data and metadata consistent | Every data block written twice |
 | `data=ordered` (default) | Metadata only; data written before metadata commits | No metadata pointing to garbage | Moderate |
 | `data=writeback` | Metadata only, no ordering | Metadata consistent, but files may contain stale/garbage data after crash | Fastest |
+
+::lab{id=journaling}
 
 ### Copy-on-write filesystems
 
@@ -232,6 +235,20 @@ Both make the file's data durable. Skipping metadata such as the modification ti
 `Files.writeString` opens the file with truncation, writes, and closes, but never calls `fsync`. Truncating to zero changed metadata, which the journal committed quickly. The new contents were still only in the page cache when the power failed, so after the reboot the file was empty.
 
 The fix is the atomic-replace pattern from this lesson: write the new JSON to `state.json.tmp`, `force(true)` it, `Files.move(tmp, target, ATOMIC_MOVE)`, then `force(true)` on the directory (the `writeAtomically` method above). A crash before the rename leaves the old file intact; a crash after it leaves the complete new file. Also validate the file on startup (a checksum or a version field) and keep the previous version as a fallback.
+:::
+
+### [exercise] In the [journaling lab](lab:journaling), choose *No journal*. Find every combination of surviving writes (D, I, B) that leaves the filesystem inconsistent, and the one that leaves it consistent but wrong. Then switch to `data=writeback` and find the crash point that gives the same wrong result. Why can `data=ordered` never give it?
+
+:::solution
+**No journal.** The filesystem is inconsistent whenever I and B disagree:
+- I alone, or I and D: the inode uses a block the bitmap calls free, so the block could be handed to another file too.
+- B alone, or B and D: a block is marked in use that no file uses, so the space leaks.
+
+**Consistent but wrong: I and B without D.** The metadata agrees, but the file's new block holds whatever stale bytes were there before, possibly another file's deleted data. fsck can't detect this, because nothing is inconsistent. (D alone is harmless: the append is lost, and D sits in a block that is still free.)
+
+**Writeback.** Crash after the commit (step 2) or the checkpoint (step 3), before the data write. The transaction committed, so recovery replays I′ and B′, and the file now points at a block that never got its data.
+
+**Ordered.** Step 1 puts D on disk before the commit block can be written. Any transaction recovery replays therefore already has its data in place. A crash before the commit discards the metadata, and the file is simply unchanged.
 :::
 
 ## Quick Revision
