@@ -55,6 +55,18 @@ Wide-column: partition key = conversation_id, clustering key = created_at DESC  
 Key-value:  key = "conv:X:recent" → list of the last 20 messages (maintained on write)
 ```
 
+Choosing by the main access pattern:
+
+```mermaid
+flowchart LR
+    Q{"main access<br/>pattern?"} -->|"get and put by key, TTL"| KV["Key-value<br/>Redis, DynamoDB"]
+    Q -->|"load and save<br/>a whole aggregate"| DOC["Document<br/>MongoDB"]
+    Q -->|"huge write volume,<br/>read a slice of a partition"| WC["Wide-column<br/>Cassandra"]
+    Q -->|"multi-hop relationships"| G["Graph<br/>Neo4j"]
+    Q -->|"scan and aggregate history"| COL["Columnar<br/>ClickHouse, BigQuery"]
+    Q -->|"ad-hoc questions,<br/>joins, transactions"| REL["Relational<br/>PostgreSQL, MySQL"]
+```
+
 ### Schema-on-write vs schema-on-read
 
 - Relational: the database enforces types and constraints at write time.

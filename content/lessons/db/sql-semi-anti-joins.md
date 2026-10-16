@@ -67,6 +67,15 @@ Semi join = keep A rows that have a match in B (EXISTS). Anti join = keep A rows
 
 ## How It Works
 
+Both are the same question with opposite answers:
+
+```mermaid
+flowchart LR
+    C["each customer"] --> Q{"at least one<br/>matching order?"}
+    Q -->|yes| S["semi join: keep<br/>anti join: drop"]
+    Q -->|no| A["semi join: drop<br/>anti join: keep"]
+```
+
 ### Semi join: JOIN + DISTINCT vs EXISTS
 
 ```sql

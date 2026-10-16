@@ -84,6 +84,17 @@ UNION ALL
 SELECT 'supplier', email FROM suppliers;     -- rows can't collide: the source column differs
 ```
 
+The extra work is easy to see in the plan. Every set operation starts by streaming both branches, and only `UNION ALL` stops there:
+
+```mermaid
+flowchart TD
+    A["rows from branch A"] --> AP["Append<br/>stream both branches"]
+    B["rows from branch B"] --> AP
+    AP -->|"UNION ALL"| R1["result, as streamed"]
+    AP -->|"UNION, INTERSECT, EXCEPT"| H["hash or sort it all,<br/>count each row per branch"]
+    H --> R2["keep rows by the rule:<br/>either · both · A only"]
+```
+
 ## Internal Mechanism
 
 :::depth{level=advanced}

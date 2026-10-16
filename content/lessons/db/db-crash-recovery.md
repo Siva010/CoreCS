@@ -52,9 +52,9 @@ After a crash: find where to start (analysis), replay every logged change so the
 ARIES (IBM, 1992) is the classic algorithm, used in spirit by DB2, SQL Server and InnoDB.
 
 ```mermaid
-flowchart LR
+flowchart TD
     CP["last checkpoint"] --> A["1. Analysis<br/>scan forward:<br/>which transactions were active?<br/>which pages were dirty?"]
-    A --> R["2. Redo<br/>from the oldest dirty page's LSN,<br/>reapply every logged change<br/>(committed or not) where pageLSN < record LSN"]
+    A --> R["2. Redo<br/>from the oldest dirty page's LSN,<br/>reapply every logged change,<br/>committed or not,<br/>where pageLSN < record LSN"]
     R --> U["3. Undo<br/>roll back 'loser' transactions<br/>(no commit record), newest first,<br/>writing CLRs"]
 ```
 

@@ -79,6 +79,15 @@ Compute {A, D}⁺:
 
 {A, D}⁺ = all attributes → {A, D} is a super key.
 
+The same closure as a chain — each step uses an FD whose left side is already known:
+
+```mermaid
+flowchart TD
+    S["start: A, D"] -->|"A → B"| B["A, B, D"]
+    B -->|"B → C"| C["A, B, C, D"]
+    C -->|"CD → E"| E["A, B, C, D, E<br/>every attribute"]
+```
+
 ### Finding all candidate keys
 
 The shortcut comes from one observation: an attribute that nothing determines can only be known if it's *in* the key. 

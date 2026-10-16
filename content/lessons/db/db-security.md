@@ -63,6 +63,17 @@ SQL injection exists because code and data travel in the same string; parameters
 
 ## How It Works
 
+The layers a request passes through, each limiting the damage if the one before it fails:
+
+```mermaid
+flowchart TD
+    U["user input"] --> A["app: parameterized queries"]
+    A -->|"TLS, verify-full"| R["database role:<br/>only the grants it needs"]
+    R --> P["row-level security:<br/>only this tenant's rows"]
+    P --> D[("data, WAL, backups<br/>encrypted at rest")]
+    R -.-> L["audit log<br/>shipped off-host"]
+```
+
 ### SQL injection, mechanically
 
 The application builds SQL by pasting input into a string:

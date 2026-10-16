@@ -73,10 +73,10 @@ There are exactly three ways the CPU goes from user mode into the kernel:
 
 ```mermaid
 flowchart LR
-    U["User mode: your program"] -->|"system call (deliberate)"| K["Kernel mode"]
-    U -->|"exception / fault (accidental: page fault, divide by zero)"| K
-    H["Hardware device or timer"] -->|"interrupt (external)"| K
-    K -->|"return to user (iret / sysret)"| U
+    U["User mode:<br/>your program"] -->|"system call<br/>(deliberate)"| K["Kernel mode"]
+    U -->|"exception / fault<br/>(accidental: page fault,<br/>divide by zero)"| K
+    H["Hardware device<br/>or timer"] -->|"interrupt<br/>(external)"| K
+    K -->|"return to user<br/>(iret / sysret)"| U
 ```
 
 Each entry jumps to a kernel-chosen address — the program cannot pick where in the kernel it lands. That single property is what makes the boundary safe. (If a program could jump to *any* kernel address, it could skip straight past the permission check inside `open()` — the privilege would be worthless.)

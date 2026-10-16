@@ -58,6 +58,19 @@ Decide what one output row means, name the pattern (rank, anti-join, islands, ru
 
 ## How It Works
 
+Most questions map to one of a few shapes:
+
+```mermaid
+flowchart LR
+    Q{"what does the<br/>question ask?"} -->|"Nth, or top N per group"| W["window ranking<br/>dense_rank, row_number"]
+    Q -->|"never, no matching row"| A["anti join<br/>NOT EXISTS"]
+    Q -->|"every, all of"| D["division<br/>double NOT EXISTS"]
+    Q -->|"consecutive days, streaks"| G["gaps and islands<br/>date minus row_number"]
+    Q -->|"compared with last month"| L["LAG over a full calendar"]
+    Q -->|"values as columns"| P["pivot<br/>FILTER or CASE"]
+    Q -->|"tree or hierarchy"| R["recursive CTE"]
+```
+
 ### 1. Nth highest salary
 
 ```sql

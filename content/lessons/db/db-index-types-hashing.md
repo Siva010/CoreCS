@@ -92,6 +92,15 @@ Data file: 30,000 records, 100 bytes each, 1,024-byte blocks → blocking factor
 
 The multilevel version's fan-out (68 here, hundreds in real 8 KB pages) is what makes a B+ tree only 3–4 levels deep for billions of rows ([B+ Trees](lesson:db-btree)).
 
+The multilevel dense index from the table above, level by level. A lookup reads one block per level and then the data block: 3 + 1 = 4 reads.
+
+```mermaid
+flowchart TD
+    T["top level: 1 block<br/>first key of each block below"] --> L2["2nd level: 7 blocks"]
+    L2 --> L1["1st level: 442 blocks<br/>one entry per record"]
+    L1 --> D["data file: 3,000 blocks"]
+```
+
 ### Static hashing
 
 Choose M buckets; record goes to bucket h(key) mod M. Equality search: compute, read one bucket (plus its overflow chain). The trouble is that M is fixed: as the file grows, overflow chains lengthen and lookups degrade toward linear scans; if you over-provision M, space is wasted. Rehashing everything into a bigger table is a stop-the-world operation. Skewed keys (many records with the same hash) defeat it regardless of M.

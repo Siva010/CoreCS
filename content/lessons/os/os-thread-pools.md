@@ -40,13 +40,13 @@ A thread pool is a queue of tasks plus a few threads looping "take a task, run i
 
 ```mermaid
 flowchart LR
-    C1[request] --> Q[(bounded work queue)]
+    C1[request] --> Q[("bounded<br/>work queue")]
     C2[request] --> Q
     C3[request] --> Q
     Q --> W1[worker 1]
     Q --> W2[worker 2]
     Q --> W3[worker N]
-    Q -. queue full .-> R[reject / backpressure]
+    Q -. queue full .-> R["reject /<br/>backpressure"]
 ```
 
 1. Submitters enqueue tasks (the queue is a blocking queue: mutex + condition variables inside).

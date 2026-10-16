@@ -85,6 +85,16 @@ Limit  (actual time=812.4..812.4 rows=10 loops=1)
 
 Story: scan all customers, keep 41k in Pune, hash them; scan 9.8M paid orders and probe; 412k joined rows; top-10 sort. Most time is the 9.8M-row orders scan (~400 ms) plus probing (~390 ms). A fix would target reading fewer orders — e.g., join from the Pune customers into an index on `orders(customer_id)` if Pune were a small fraction, or pre-aggregating.
 
+A plan as a tree, read from the leaves up. Compare the estimate with the actual count on every node; the first big gap is usually the cause. Here the scan of `orders` was estimated at 1,000 rows and produced 240,000, and every node above it inherited the mistake:
+
+```mermaid
+flowchart BT
+    O["Seq Scan orders<br/>est 1,000 · actual 240,000"] --> J["Hash Join<br/>est 1,000 · actual 240,000"]
+    C["Seq Scan customers<br/>est 50,000 · actual 50,000"] --> H["Hash"]
+    H --> J
+    J --> A["HashAggregate<br/>est 100 · actual 9,800"]
+```
+
 ### Computing where time goes
 
 - `actual time` of a node **includes its children**. Exclusive time ≈ node's total − children's totals.

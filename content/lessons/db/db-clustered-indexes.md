@@ -55,9 +55,9 @@ In a clustered table the rows live inside the primary-key B+ tree, in key order.
 ### InnoDB: two lookups for a secondary index
 
 ```mermaid
-flowchart LR
-    Q["WHERE email = 'a@x.com'"] --> S["secondary B+ tree (email → PK)"]
-    S -->|"PK = 7731"| C["clustered B+ tree (PK → full row)"]
+flowchart TD
+    Q["WHERE email = 'a@x.com'"] --> S["secondary B+ tree<br/>email → PK"]
+    S -->|"PK = 7731"| C["clustered B+ tree<br/>PK → full row"]
     C --> R["row"]
 ```
 

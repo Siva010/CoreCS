@@ -50,6 +50,17 @@ List the queries that matter, design the index each one wants (equality → rang
 6. **Verify with EXPLAIN ANALYZE on production-like data**, then deploy with `CREATE INDEX CONCURRENTLY`.
 7. **Prune periodically**: drop unused and redundant indexes.
 
+The method as a loop — it never really ends, because queries change:
+
+```mermaid
+flowchart TD
+    A["list the queries<br/>by frequency × cost"] --> B["per query: equality columns,<br/>then range or sort, then INCLUDE"]
+    B --> C["merge overlapping<br/>candidates per table"]
+    C --> D["verify with EXPLAIN<br/>on real data"]
+    D --> E["monitor usage,<br/>drop what's unused"]
+    E --> A
+```
+
 ### Why an index isn't used: the checklist
 
 | Cause | Example | Fix |

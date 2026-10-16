@@ -54,6 +54,18 @@ Reading: whole table, index slice, index only, or bitmap of pages. Joining: look
 
 ## How It Works
 
+How the planner picks, in one picture:
+
+```mermaid
+flowchart LR
+    R{"how many rows does<br/>this step need?"} -->|"a few"| I["Index Scan"]
+    R -->|"a few percent"| B["Bitmap Heap Scan"]
+    R -->|"most of the table"| S["Seq Scan"]
+    J{"joining two inputs:<br/>what fits?"} -->|"small outer,<br/>index on the inner key"| NL["Nested Loop"]
+    J -->|"large inputs,<br/>equality condition"| HJ["Hash Join"]
+    J -->|"inputs already<br/>sorted on the key"| MJ["Merge Join"]
+```
+
 ### Scans
 
 - **Sequential scan**: reads pages 0..N, checking the filter on each row. Sequential I/O is efficient and benefits from read-ahead; cost ∝ table size.

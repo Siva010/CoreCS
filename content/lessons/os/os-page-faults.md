@@ -62,15 +62,15 @@ For **anonymous memory** (heap, stack) touched for the first time, step 4 alloca
 
 ```mermaid
 flowchart TD
-    A["access to virtual address"] --> B{"PTE present and access allowed?"}
+    A["access to virtual address"] --> B{"PTE present and<br/>access allowed?"}
     B -->|yes| OK["translation succeeds"]
     B -->|no| F["page fault exception"]
-    F --> V{"address in a valid VMA with permission?"}
+    F --> V{"address in a valid VMA<br/>with permission?"}
     V -->|no| SEGV["SIGSEGV"]
-    V -->|"write to COW page"| COW["copy page, map private writable copy"]
-    V -->|yes, not present| C{"page in RAM already? (page cache / swap cache / zero page)"}
+    V -->|"write to COW page"| COW["copy page, map private<br/>writable copy"]
+    V -->|yes, not present| C{"page in RAM already?<br/>(page cache / swap cache /<br/>zero page)"}
     C -->|yes| MINOR["minor fault: map it"]
-    C -->|no| MAJOR["major fault: allocate frame (evict if needed), read from disk or swap, sleep"]
+    C -->|no| MAJOR["major fault: allocate frame<br/>(evict if needed), read from<br/>disk or swap, sleep"]
     MINOR --> RETRY["restart instruction"]
     MAJOR --> RETRY
     COW --> RETRY

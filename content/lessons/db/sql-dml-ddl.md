@@ -105,6 +105,17 @@ DO UPDATE SET views = daily_stats.views + EXCLUDED.views;
 
 `ON CONFLICT` requires a unique constraint or index on the conflict target. It resolves the "check if exists, then insert or update" race inside the database. `EXCLUDED` refers to the row you tried to insert. `ON CONFLICT DO NOTHING` implements idempotent inserts.
 
+The upsert decision, as the database makes it:
+
+```mermaid
+flowchart TD
+    I["INSERT … ON CONFLICT (day, page)"] --> Q{"row with that key<br/>in the unique index?"}
+    Q -->|no| N["insert the new row"]
+    Q -->|yes| A{"conflict action"}
+    A -->|"DO UPDATE"| U["update the existing row<br/>using the EXCLUDED values"]
+    A -->|"DO NOTHING"| X["skip it, no error"]
+```
+
 ### DELETE vs TRUNCATE vs DROP
 
 | | DELETE | TRUNCATE | DROP |

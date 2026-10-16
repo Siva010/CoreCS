@@ -42,6 +42,20 @@ Slow query = too much work, for one of two reasons. Either the planner misjudged
 
 ## How It Works
 
+The loop most investigations follow:
+
+```mermaid
+flowchart TD
+    S["slow query"] --> E["EXPLAIN (ANALYZE, BUFFERS)"]
+    E --> Q{"estimated vs actual rows<br/>far apart?"}
+    Q -->|yes| F["fix the estimates: ANALYZE,<br/>statistics target, extended statistics"]
+    Q -->|no| W{"does the plan do<br/>too much work?"}
+    W -->|yes| R["rewrite or index: sargable predicates,<br/>keyset pagination, no N+1"]
+    W -->|no| X["ask for less: fewer rows,<br/>cache, precompute"]
+    F --> E
+    R --> E
+```
+
 ### How estimates are made
 
 The planner can't run every candidate plan to see which is fastest — it must *predict* row counts from a small summary of the data. Its simplifying assumptions (uniform values, independent columns) are what break.

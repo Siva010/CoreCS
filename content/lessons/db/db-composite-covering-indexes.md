@@ -108,6 +108,17 @@ CREATE INDEX orders_cust_date_cov ON orders (customer_id, order_date DESC) INCLU
 
 All required columns are in the index → **Index Only Scan**: no table page fetches at all. For a customer with 20 rows spread over 20 table pages, that's 20 fewer random reads.
 
+What happens after the seek, in one picture:
+
+```mermaid
+flowchart TD
+    S["seek in the index<br/>customer_id = 42, status = 'paid'"] --> Q{"every needed column<br/>in the index?"}
+    Q -->|no| H["Index Scan<br/>one table page per row"]
+    Q -->|yes| V{"table page marked<br/>all-visible?"}
+    V -->|yes| R["Index Only Scan<br/>no table access"]
+    V -->|no| F["heap fetch<br/>to check visibility"]
+```
+
 ## Internal Mechanism
 
 :::depth{level=advanced}

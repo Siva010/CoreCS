@@ -47,6 +47,15 @@ What the major engines actually do:
 | Repeatable Read | **snapshot isolation**: one snapshot per transaction; no phantoms in reads; concurrent update of the same row → serialization error (no lost updates); write skew possible | **default**. One snapshot per transaction for plain SELECTs; locking reads/updates see the *latest* committed data and use next-key (gap) locks; lost updates possible with plain read-then-write |
 | Serializable | **SSI**: snapshot isolation + detection of dangerous read-write dependency patterns → abort | plain SELECTs become locking reads (shared next-key locks): strict 2PL-style blocking |
 
+Each step up the ladder removes anomalies, and adds waiting or retries:
+
+```mermaid
+flowchart TD
+    RU["Read Uncommitted"] -->|"stops dirty reads"| RC["Read Committed"]
+    RC -->|"stops non-repeatable reads<br/>(and phantoms, in PostgreSQL)"| RR["Repeatable Read / snapshot"]
+    RR -->|"stops write skew"| SZ["Serializable"]
+```
+
 ## Why It Exists
 
 **The problem.** Serializable everywhere is the easiest to reason about but historically costly (locking) or abort-prone under contention (optimistic).

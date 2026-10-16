@@ -46,6 +46,16 @@ A consistency model is a promise about which values a read may return. Lineariza
 
 ## How It Works
 
+The ladder, strongest at the top. Each arrow points to a weaker model, which allows everything above it allows, and more:
+
+```mermaid
+flowchart TD
+    L["Linearizable<br/>behaves like one copy"] --> S["Sequential<br/>one agreed order, may lag real time"]
+    S --> C["Causal<br/>causes always seen before effects"]
+    C --> G["Session guarantees<br/>read-your-writes, monotonic reads"]
+    G --> E["Eventual<br/>replicas agree once writes stop"]
+```
+
 ### Linearizability example and violation
 
 ```text

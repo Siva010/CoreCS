@@ -89,6 +89,23 @@ InnoDB gives the opposite answer to "where does the old copy go". The table keep
 | Cleanup | VACUUM removes dead tuples, index entries | purge removes undo; delete-marked records |
 | Symptom of lagging cleanup | table/index **bloat** | growing **history list length**, slower reads following long undo chains |
 
+Both designs side by side, after xid 105 changed the balance from 500 to 400:
+
+```mermaid
+flowchart TB
+    subgraph pg["PostgreSQL: both versions live in the table"]
+        direction LR
+        V1["v1: balance 500<br/>xmin 100 · xmax 105"] -->|"replaced by"| V2["v2: balance 400<br/>xmin 105 · xmax 0"]
+    end
+    subgraph inno["InnoDB: newest in place, old values in undo"]
+        direction LR
+        R["row: balance 400"] -->|"roll pointer"| U["undo record:<br/>balance was 500"]
+    end
+    pg ~~~ inno
+```
+
+A snapshot taken before 105 committed reads v1 in PostgreSQL, or rebuilds 500 from the undo record in InnoDB. A snapshot taken afterwards reads 400 directly in both.
+
 ### Vacuum
 
 Why it's needed: every update in PostgreSQL leaves the old version behind in the table. Nothing else ever deletes it, so without a cleaner a table updated 100 times per row would hold 100 copies of every row, and every scan would wade through them. VACUUM is that cleaner (autovacuum runs it in the background):

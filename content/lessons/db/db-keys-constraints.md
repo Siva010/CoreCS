@@ -121,6 +121,16 @@ A foreign key raises a question whenever a parent row goes away (deleted, or its
 
 `CASCADE` fits ownership (an order owns its items). It is dangerous across aggregates: deleting one customer silently deleting years of orders is rarely intended.
 
+The same choice as a picture, for deleting a customer who has three orders:
+
+```mermaid
+flowchart TD
+    D["DELETE customer 7<br/>3 orders reference it"] --> R{"ON DELETE"}
+    R -->|"RESTRICT / NO ACTION"| E["error:<br/>delete rejected"]
+    R -->|"CASCADE"| C["customer and its<br/>3 orders deleted"]
+    R -->|"SET NULL"| N["customer deleted<br/>orders keep customer_id = NULL"]
+```
+
 ## Internal Mechanism
 
 :::depth{level=advanced}

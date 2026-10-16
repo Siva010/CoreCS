@@ -97,6 +97,18 @@ If-Match: "7"              → 200 (saved, ETag "8")   or   412 Precondition Fai
 
 Optimistic schemes and network failures both lead to **retries**. Make operations safe to repeat: store a client-supplied idempotency key with a unique constraint, so a retried "charge ₹500" doesn't charge twice ([DML & DDL](lesson:sql-dml-ddl)).
 
+Choosing between them, in order:
+
+```mermaid
+flowchart TD
+    Q{"Can one atomic statement do<br/>both the check and the write?"} -->|yes| A["use it: no lock, no version<br/>a guarded UPDATE"]
+    Q -->|no| T{"Is the think time long,<br/>such as a user editing?"}
+    T -->|yes| O["optimistic<br/>version column or ETag"]
+    T -->|no| C{"Are conflicts frequent?"}
+    C -->|yes| P["pessimistic<br/>SELECT … FOR UPDATE"]
+    C -->|no| O
+```
+
 ## Internal Mechanism
 
 :::depth{level=advanced}

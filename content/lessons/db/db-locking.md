@@ -130,6 +130,14 @@ Prevention (the OS deadlock conditions again — [Deadlock Handling](lesson:os-d
 
 ::lab{id=db-locks}
 
+That deadlock as a waits-for graph. The detector looks for exactly this, a cycle, and aborts one transaction to break it:
+
+```mermaid
+flowchart LR
+    T1["T1<br/>holds row 1"] -->|"waits for row 2"| T2["T2<br/>holds row 2"]
+    T2 -->|"waits for row 1"| T1
+```
+
 ### Beyond these mechanics
 
 The theory behind these locks — the 2PL variants, intention locks for multiple granularity, timestamp ordering and wait-die / wound-wait — is in [Concurrency Control Protocols](lesson:db-concurrency-protocols).

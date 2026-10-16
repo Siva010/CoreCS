@@ -1,6 +1,6 @@
 # Database (DBMS + SQL) track — review and ratings
 
-*First reviewed 13 October 2026, covering all 55 database lessons, then improved in three rounds. The track now has 62 lessons.*
+*First reviewed 13 October 2026, covering all 55 database lessons, then improved in four rounds. The track now has 62 lessons.*
 
 ## Verdict
 
@@ -9,6 +9,7 @@ The database track was already **strong on mechanism and production reality** �
 - **Update 1** doubled the question bank, added three theory lessons and filled the textbook gaps. **7.5 → 8.1.**
 - **Update 2** went after practice and the missing topics: every lesson now has at least 6 practice items (half of them numericals or written exercises), the SQL Playground grows from 18 to 64 graded exercises including data changes, two new interactive labs cover the new theory, and four new lessons cover security, backups/PITR, data warehousing and PostgreSQL vs MySQL. **8.1 → 8.4.**
 - **Update 3** worked on understandability: long sentences split, a worked example with real values added wherever a mechanism was only described in prose, and hover definitions for 112 database terms. **8.4 → 8.5.**
+- **Update 4** added diagrams: 59 of 62 lessons now have one (22 before), every diagram was checked at its rendered size, and one that failed to render was fixed. Clarity 8.9 → 9.0; **overall stays 8.5.**
 
 A note on honesty: I wrote these lessons, so this is a review of my own work. I scored against what a strong interviewer would expect and what a student would need, not against the effort that went in, and recorded each round's starting scores before changing anything. Scores for unchanged dimensions were not raised just because more content exists nearby.
 
@@ -29,15 +30,15 @@ Practice was scored with a fixed rule in update 2, so it can't drift upward by i
 
 ## Track-level scores
 
-| Dimension | First review (55 lessons) | After update 1 (58) | After update 2 (62) | After update 3 (62) |
-|---|---|---|---|---|
-| Content accuracy & depth | 8.8 | 9.0 | 9.0 | **9.0** |
-| First-principles clarity | 8.6 | 8.6 | 8.6 | **8.9** |
-| Interview readiness | 6.9 | 8.6 | 8.5 | **8.5** |
-| Practice / self-testing | 5.6 | 6.4 | 8.3 | **8.3** |
-| Production relevance | 8.2 | 8.1 | 8.1 | **8.1** |
-| Syllabus coverage | 7.2 | 8.1 | 8.1 | **8.1** |
-| **Overall** | **7.5** | **8.1** | **8.4** | **8.5** |
+| Dimension | First review (55 lessons) | After update 1 (58) | After update 2 (62) | After update 3 (62) | After update 4 (62) |
+|---|---|---|---|---|---|
+| Content accuracy & depth | 8.8 | 9.0 | 9.0 | 9.0 | **9.0** |
+| First-principles clarity | 8.6 | 8.6 | 8.6 | 8.9 | **9.0** |
+| Interview readiness | 6.9 | 8.6 | 8.5 | 8.5 | **8.5** |
+| Practice / self-testing | 5.6 | 6.4 | 8.3 | 8.3 | **8.3** |
+| Production relevance | 8.2 | 8.1 | 8.1 | 8.1 | **8.1** |
+| Syllabus coverage | 7.2 | 8.1 | 8.1 | 8.1 | **8.1** |
+| **Overall** | **7.5** | **8.1** | **8.4** | **8.5** | **8.5** |
 
 Interview readiness dips by 0.1 only because the four new lessons (8 each) pull the average toward 8; no lesson lost questions.
 
@@ -111,6 +112,37 @@ What changed:
 
 First-principles clarity is estimated at the track level (8.6 → 8.9) from these measured changes; the per-lesson table below was not re-scored for this round.
 
+## Update 4: diagrams
+
+Most worked examples were text traces, and 40 of 62 lessons had no diagram at all.
+
+| Measure | Before | After |
+|---|---|---|
+| Lessons with a diagram | 22 | 59 |
+| Diagrams that failed to render | 1 | 0 |
+| Diagrams shown below 80% of their natural size (desktop column) | 7 of 22 | 0 of 59 |
+
+What changed:
+
+- **37 new diagrams**, each placed next to the text it illustrates, for example:
+  - MVCC's two ways of keeping old versions (PostgreSQL's version chain in the table vs InnoDB's undo records);
+  - which anomaly you're looking at, decided by what the other transaction did;
+  - when an index scan becomes index-only;
+  - attribute closure step by step;
+  - scan and join choice by row count;
+  - a Cassandra QUORUM write with a late replica;
+  - the layers of database security;
+  - cache-aside reads and invalidation;
+  - the plan shape that makes UNION cost more than UNION ALL;
+  - the SQL interview pattern to reach for, by what the question asks.
+- **A broken diagram fixed.** The WAL lesson's commit path failed to render: a `;` inside a sequence-diagram message ends the statement in Mermaid. It now shows UPDATE and COMMIT as separate steps, which is also more accurate (the page is dirtied before the commit). The content validator now rejects `;` in sequence diagrams.
+- **Readable at real size.** Every diagram was measured at its rendered width. Wide left-to-right chains became top-to-bottom, wide decision fans became left-to-right, and long labels got explicit line breaks. The smallest database diagram now renders at 81% of natural size; it was 31%.
+- **Renderer settings** (site-wide). Mermaid 12 re-wrapped every label line longer than 120px, breaking hand-placed lines mid-phrase; the limit is now 200px. Sequence diagrams lost their 50px side margins, which only shrank them inside an already-padded figure. Six OS and Networks diagrams that relied on the old wrapping got explicit breaks; five are now at least as large as before, and OS page faults went from 96% to 89%.
+
+Clarity is an estimate (8.9 → 9.0): a diagram helps most where a lesson had only prose, and many of these lessons already had a worked text trace.
+
+The three lessons without a Mermaid diagram already have a visual: an interactive visualization (consistent hashing, joins) or the evaluation order drawn as a text pipeline with a six-row trace (SELECT basics).
+
 ## Readiness by audience
 
 | Audience | First review | Update 1 | Update 2 | Comment |
@@ -123,7 +155,7 @@ First-principles clarity is estimated at the track level (8.6 → 8.9) from thes
 
 - **Written exercises are self-graded.** MCQs, the 113 numericals and the 64 SQL Playground exercises are checked automatically; the 80 written exercises rely on comparing your answer with the worked solution.
 - **Production relevance didn't move (8.1).** The rounds so far added practice, breadth and clarity, not more operational depth.
-- **Diagrams are still missing in many lessons.** 40 of 62 have no Mermaid diagram; most of the new worked examples are text traces. Diagrams for B+ tree splits, MVCC version chains and replication topologies would help visual learners.
+- **Diagrams are static.** They show one moment or one decision; stepping through a B+ tree split or a replication failover still needs a lab, and only some topics have one.
 - **Topics covered only as sections, not full lessons:** time-series databases, search engines (inverted indexes beyond GIN), vector databases, stream processing, and zero-downtime schema migrations at scale.
 - **No hands-on distributed drills.** Replication, failover and quorum labs are simulations; nothing replaces running Patroni or a Raft cluster and breaking it.
 - **Engine coverage** is PostgreSQL-first with a dedicated MySQL comparison; Oracle and SQL Server still get only occasional notes.

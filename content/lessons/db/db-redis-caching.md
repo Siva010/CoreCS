@@ -78,6 +78,24 @@ W1: SET cache price = 10            ← W1 was slow; cache says 10 until the TTL
 with DELETE instead: both writers delete; the next reader loads 12 from the DB
 ```
 
+The same pattern as a sequence — a read that misses, then an update that invalidates:
+
+```mermaid
+%%{init: {"sequence": {"width": 110, "actorMargin": 40}}}%%
+sequenceDiagram
+    participant App
+    participant Cache as Redis
+    participant DB as Database
+    App->>Cache: GET product 42
+    Cache-->>App: miss
+    App->>DB: SELECT product 42
+    DB-->>App: row
+    App->>Cache: SET product 42, TTL 5 min
+    Note over App,DB: later, an update
+    App->>DB: UPDATE product 42
+    App->>Cache: DEL product 42
+```
+
 ### The invalidation race (and the TTL safety net)
 
 ```text

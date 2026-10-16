@@ -66,6 +66,19 @@ A document store saves each "thing the app loads together" as one JSON document.
 
 Note the deliberate duplication: `customer.name` inside the order is a historical snapshot (like `unit_price` in a relational order_items table — [Normalization](lesson:db-normalization)). Duplicating data that *should* stay in sync (a user's avatar in every comment) creates fan-out updates.
 
+The same rules as a decision:
+
+```mermaid
+flowchart TD
+    Q["data related to a parent"] --> A{"read together<br/>with the parent?"}
+    A -->|no| R["reference it"]
+    A -->|yes| B{"bounded and small?"}
+    B -->|no| R
+    B -->|yes| C{"shared by many parents and<br/>must stay current everywhere?"}
+    C -->|yes| R
+    C -->|no| E["embed it"]
+```
+
 ### Indexing and queries
 
 ```javascript

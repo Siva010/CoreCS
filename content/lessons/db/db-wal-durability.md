@@ -59,20 +59,23 @@ Write what you're about to change to an append-only log, flush the log at COMMIT
 ### The path of a committed update
 
 ```mermaid
+%%{init: {"sequence": {"width": 100, "actorMargin": 20}}}%%
 sequenceDiagram
     participant C as Client
     participant B as Backend
-    participant BP as Buffer pool (RAM)
-    participant W as WAL buffer → WAL files
+    participant W as WAL
+    participant BP as Buffer pool
     participant D as Data files
-    C->>B: UPDATE … ; COMMIT
-    B->>BP: modify page 812 in memory (dirty), page LSN = 5000
-    B->>W: append change record (LSN 5000)
-    B->>W: append commit record (LSN 5080)
-    B->>W: flush WAL up to 5080 (write + fsync)
+    C->>B: UPDATE
+    B->>BP: dirty page 812, LSN 5000
+    B->>W: log record 5000
+    C->>B: COMMIT
+    B->>W: commit record 5080
+    B->>W: fsync to 5080
     W-->>B: durable
     B-->>C: COMMIT OK
-    Note over BP,D: later: checkpointer/background writer<br/>writes page 812 (after WAL ≥ 5000 is durable)
+    Note over BP,D: later, once WAL<br/>up to 5000 is durable
+    BP->>D: write page 812
 ```
 
 The client's commit waited for **one sequential log flush**. The data page was written seconds or minutes later.

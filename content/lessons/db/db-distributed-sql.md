@@ -65,6 +65,19 @@ secondary index orders_by_customer     → its own ranges and Raft groups
 
 Ranges split when they grow or get hot and are rebalanced across nodes automatically. A SQL layer on every node plans queries and routes key lookups to the right leaseholders.
 
+The same layout as a picture: every node can accept SQL, and each range is its own small replicated database.
+
+```mermaid
+flowchart TD
+    C["client"] --> G["any node: SQL layer<br/>parse, plan, route by key"]
+    G --> R1["range A<br/>Raft group on n1, n4, n7"]
+    G --> R2["range B<br/>Raft group on n2, n5, n8"]
+    G --> R3["range C<br/>Raft group on n3, n6, n9"]
+    R1 --> S[("LSM storage<br/>on every node")]
+    R2 --> S
+    R3 --> S
+```
+
 ### A write transaction
 
 1. The gateway node starts a transaction with a timestamp.

@@ -47,10 +47,10 @@ The page cache keeps file contents in spare RAM. Reads that hit it skip the disk
 
 ```mermaid
 flowchart LR
-    A["read(fd, buf, 4096)"] --> B{"page in page cache?"}
-    B -->|yes: cache hit| C["copy page to user buffer"]
-    B -->|no: miss| D["allocate page, submit block I/O (+ read-ahead)"]
-    D --> E["sleep until I/O completes"]
+    A["read(fd, buf, 4096)"] --> B{"page in<br/>page cache?"}
+    B -->|yes: cache hit| C["copy page to<br/>user buffer"]
+    B -->|no: miss| D["allocate page,<br/>submit block I/O<br/>(+ read-ahead)"]
+    D --> E["sleep until<br/>I/O completes"]
     E --> C
 ```
 

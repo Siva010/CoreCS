@@ -39,6 +39,18 @@ A graph database stores relationships as direct pointers between records, so eac
 
 ## How It Works
 
+A tiny social graph. Alice's friends-of-friends are the people two FRIEND hops away: Carol, reachable through both Bob and Dev (two mutual friends).
+
+```mermaid
+flowchart TD
+    Alice(["Alice"]) ---|FRIEND| Bob(["Bob"])
+    Alice ---|FRIEND| Dev(["Dev"])
+    Bob ---|FRIEND| Carol(["Carol"])
+    Dev ---|FRIEND| Carol
+    Alice ---|LIKES| Band["band: Indian Ocean"]
+    Carol ---|LIKES| Band
+```
+
 ### Pattern matching in Cypher
 
 ```cypher

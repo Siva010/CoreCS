@@ -62,6 +62,16 @@ NULL means "I don't know". Anything compared with "I don't know" is also "I don'
 
 ## How It Works
 
+That rule in one picture — UNKNOWN goes the same way as FALSE:
+
+```mermaid
+flowchart LR
+    C["condition, for one row"] --> T{"result"}
+    T -->|TRUE| K["row kept"]
+    T -->|FALSE| D["row dropped"]
+    T -->|UNKNOWN| D
+```
+
 ### Comparisons
 
 ```sql

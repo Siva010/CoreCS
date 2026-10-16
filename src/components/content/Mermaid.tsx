@@ -28,6 +28,10 @@ export function Mermaid({ chart }: { chart: string }) {
           theme: "base",
           // Mermaid measures label widths with this font, so it must be a real family name, not a CSS variable.
           fontFamily: `${cssVar("--font-geist") || "Geist"}, ui-sans-serif, system-ui`,
+          // Lessons break long labels with <br/>; Mermaid's default (120px) would re-wrap lines mid-phrase.
+          flowchart: { wrappingWidth: 200 },
+          // The figure already pads the diagram; the default 50px side margin just shrinks it.
+          sequence: { diagramMarginX: 10 },
           themeVariables: {
             darkMode: dark,
             background: cssVar("--surface"),

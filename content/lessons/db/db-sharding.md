@@ -72,6 +72,19 @@ For multi-tenant SaaS, `tenant_id` usually satisfies all four — until one tena
 - **Proxy/middleware**: Vitess (MySQL), Citus (PostgreSQL extension), ProxySQL, custom gateways — the app sees one logical database.
 - **Built-in distributed databases**: range-sharded storage with automatic splitting and rebalancing (CockroachDB, TiDB, Spanner, YugabyteDB) — [Distributed SQL](lesson:db-distributed-sql).
 
+A routed setup in one picture. Each shard is a complete database with its own replicas:
+
+```mermaid
+flowchart TD
+    App["application"] --> Router["router<br/>shard = f(customer_id)"]
+    Router --> S1["shard 1<br/>customers A–F"]
+    Router --> S2["shard 2<br/>customers G–M"]
+    Router --> S3["shard 3<br/>customers N–Z"]
+    S1 --- R1["replicas"]
+    S2 --- R2["replicas"]
+    S3 --- R3["replicas"]
+```
+
 ### What gets hard
 
 | Operation | Single DB | Sharded |

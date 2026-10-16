@@ -100,6 +100,17 @@ SELECT * FROM customers WHERE name ILIKE '%sharma%';
 
 GIN lookups intersect posting lists; they're fast to query but **expensive to update** (one row touches many posting lists). PostgreSQL buffers new entries in a "pending list" (`fastupdate`) and merges them later.
 
+An inverted index in miniature. A query for "latency" AND "index" intersects the two lists: only doc 3 contains both.
+
+```mermaid
+flowchart LR
+    W1["'latency'"] --> D3["doc 3"]
+    W1 --> D9["doc 9"]
+    W2["'index'"] --> D1["doc 1"]
+    W2 --> D3
+    W3["'replica'"] --> D9
+```
+
 ### GiST: overlap and nearest-neighbour
 
 GiST generalizes the B-tree: each internal entry is a *predicate covering its subtree* (e.g., a bounding box). Search descends into every child whose predicate might match. Uses: PostGIS geometry, range types, `ORDER BY location <-> point LIMIT 10` (k-nearest-neighbour), and **exclusion constraints**:

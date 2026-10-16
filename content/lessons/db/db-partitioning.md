@@ -75,6 +75,16 @@ WHERE created_at >= '2024-07-10' AND created_at < '2024-07-11';
 
 A query **without** the partition key in its predicate scans every partition (an Append over all of them) — often slower than an unpartitioned table with one good index.
 
+Pruning in one picture: the planner reads the partition bounds and touches only the partition that can match.
+
+```mermaid
+flowchart TD
+    Q["SELECT … FROM events<br/>WHERE created_at in July 2024"] --> P["events (parent table)"]
+    P -.->|"pruned"| J["events_2024_06"]
+    P -->|"scanned"| JL["events_2024_07"]
+    P -.->|"pruned"| A["events_2024_08"]
+```
+
 ### Retention in milliseconds
 
 ```sql

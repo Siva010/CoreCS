@@ -76,6 +76,15 @@ after:   the page moves the row into free space and sets slot 2 → offset 7900,
 
 (PostgreSQL's MVCC usually writes a *new* row version instead of growing the old one, but compaction moves rows the same way.)
 
+Following one index entry to its row:
+
+```mermaid
+flowchart TD
+    I["index entry<br/>key 42 → (page 7, slot 2)"] --> P["read page 7<br/>one 8 KB I/O"]
+    P --> S["slot array: slot 2<br/>→ offset 7900"]
+    S --> T["tuple at offset 7900<br/>header + column data"]
+```
+
 ### Inside a tuple
 
 PostgreSQL heap tuple ≈ 23-byte header + null bitmap + aligned column data:

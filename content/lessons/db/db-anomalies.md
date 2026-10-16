@@ -118,6 +118,18 @@ Other write-skew bugs: double-booking a meeting room (each checks "no overlappin
 
 ::viz{id=isolation}
 
+All six in one picture — name the anomaly by asking what the *other* transaction did:
+
+```mermaid
+flowchart LR
+    Q{"What did the other<br/>transaction do?"} -->|"wrote a row I read,<br/>not yet committed"| DR["dirty read"]
+    Q -->|"committed a change to a row<br/>I read twice"| NR["non-repeatable read"]
+    Q -->|"inserted or deleted rows<br/>matching my range query"| PH["phantom"]
+    Q -->|"committed changes to two rows<br/>I read at different times"| RS["read skew"]
+    Q -->|"overwrote the row<br/>I read and then wrote"| LU["lost update"]
+    Q -->|"wrote a different row that<br/>my decision depended on"| WS["write skew"]
+```
+
 ## Internal Mechanism
 
 :::depth{level=advanced}

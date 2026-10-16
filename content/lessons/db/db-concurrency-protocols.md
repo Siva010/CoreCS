@@ -133,6 +133,15 @@ Lock-based protocols can deadlock. Besides detection (find a cycle in the wait-f
 
 In both, waits only ever go in one age direction, so the wait-for graph can't have a cycle. Keeping the original timestamp on restart means a transaction eventually becomes the oldest and can't starve. Wound-wait tends to restart fewer transactions (an old transaction is rarely blocked for long); Google Spanner uses it.
 
+Both prevention rules in one picture. Waits only ever point one way by age, so no cycle can form:
+
+```mermaid
+flowchart TD
+    R["T requests a lock<br/>that U holds"] --> O{"Is T older than U?"}
+    O -->|"yes: T is older"| A["wait-die: T waits<br/>wound-wait: U is aborted"]
+    O -->|"no: T is younger"| B["wait-die: T aborts and retries later<br/>wound-wait: T waits"]
+```
+
 ## Internal Mechanism
 
 :::depth{level=advanced}

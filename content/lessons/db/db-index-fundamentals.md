@@ -79,12 +79,12 @@ An index is a sorted copy of some columns with pointers to the rows. It helps wh
 For a secondary index in PostgreSQL:
 
 ```mermaid
-flowchart LR
-    Q["WHERE customer_id = 42"] --> I["B+ tree: find leaf for 42"]
-    I --> E["leaf entries: (42, TID 812/3), (42, TID 5120/7), …"]
+flowchart TD
+    Q["WHERE customer_id = 42"] --> I["B+ tree:<br/>find the leaf for 42"]
+    I --> E["leaf entries for 42:<br/>TID 812/3, TID 5120/7, …"]
     E --> H1["heap page 812, slot 3"]
     E --> H2["heap page 5120, slot 7"]
-    H1 --> R["check visibility (MVCC), return row"]
+    H1 --> R["check visibility (MVCC),<br/>return the row"]
     H2 --> R
 ```
 

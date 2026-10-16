@@ -271,6 +271,14 @@ function loadLesson(file: string, subjectDir: SubjectId, diag: Diagnostic[]): Le
       else if (!w.kinds.includes(node.name)) diag.push({ level: "error", file: f, message: `Inline ::${node.name}{id=${wid}} but the widget is registered as ${w.kinds.join("/")}` });
     }
   });
+  // Mermaid needs a DOM, so diagrams aren't parsed here. In a sequence diagram ";" ends the statement,
+  // and the rest of the line makes the whole diagram fail to render (write #59; for a literal one).
+  visit(tree, "code", (node: { lang?: string | null; value: string }) => {
+    if (node.lang !== "mermaid" || !/^(\s*%%.*\n)*\s*sequenceDiagram/.test(node.value)) return;
+    for (const line of node.value.split("\n")) {
+      if (line.replace(/#\d+;/g, "").includes(";")) diag.push({ level: "error", file: f, message: `";" in a sequence diagram breaks it: ${line.trim()}` });
+    }
+  });
   const { intro, parts } = splitByHeading(tree.children as RootContent[], 2);
   const sections: { key: SectionKey; nodes: RootContent[] }[] = [];
   let questions: RawQuestion[] = [];

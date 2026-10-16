@@ -63,9 +63,9 @@ The kernel finishes handshakes on its own so that a busy application doesn't mak
 
 ```mermaid
 flowchart LR
-    SYN["incoming SYN"] --> SQ["SYN queue (half-open, SYN_RECV)"]
-    SQ -->|"final ACK of handshake"| AQ["accept queue (ESTABLISHED, not yet accepted)"]
-    AQ -->|"accept()"| APP["application gets a new fd"]
+    SYN["incoming SYN"] --> SQ["SYN queue<br/>(half-open, SYN_RECV)"]
+    SQ -->|"final ACK<br/>of handshake"| AQ["accept queue<br/>(ESTABLISHED,<br/>not yet accepted)"]
+    AQ -->|"accept()"| APP["application gets<br/>a new fd"]
 ```
 
 The kernel completes handshakes **without the application**. Completed connections wait in the **accept queue** until `accept()` takes them; its size is `min(backlog, net.core.somaxconn)`. If the application accepts too slowly (overloaded event loop, too few acceptor threads), the accept queue fills; new handshakes then stall or are dropped — clients see connection timeouts even though the port is "open". Visible as `ListenOverflows`/`ListenDrops` in `netstat -s` / `nstat`, and `Recv-Q` on listening sockets in `ss -lnt`.

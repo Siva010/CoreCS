@@ -64,6 +64,7 @@ The leader streams its change log to followers, which replay it. Synchronous = c
 ### Single-leader replication
 
 ```mermaid
+%%{init: {"sequence": {"width": 110, "actorMargin": 30}}}%%
 sequenceDiagram
     participant App
     participant L as Leader
@@ -73,9 +74,9 @@ sequenceDiagram
     L->>L: flush WAL locally
     L->>F1: stream WAL
     L->>F2: stream WAL
-    F1-->>L: flushed up to LSN X
-    L-->>App: COMMIT OK (after F1's ack)
-    F2-->>L: (acks later — may lag)
+    F1-->>L: flushed to LSN X
+    L-->>App: COMMIT OK
+    F2-->>L: ack, later (may lag)
 ```
 
 Each follower requests the log from a position (LSN), receives a continuous stream, writes it locally, and replays it — continuous crash recovery ([Crash Recovery](lesson:db-crash-recovery)).

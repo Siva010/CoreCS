@@ -105,7 +105,7 @@ recovery_target_action = 'promote'
 Create an empty `recovery.signal` file in the data directory and start the server. It replays archived WAL from the base backup's start point and stops at the target. Then it starts a new **timeline**: a new history branch with its own WAL file names. That way the abandoned future after 14:37:14 can never be confused with the new one.
 
 ```mermaid
-flowchart LR
+flowchart TD
   B["Base backup<br/>Sun 02:00"] --> W1["archived WAL<br/>Sun → Wed morning"] --> W3["WAL Wed until 14:37:14"]
   W3 --> S(["stop & promote"])
   W3 -.-> X["14:37:15 DELETE<br/>(never replayed)"]

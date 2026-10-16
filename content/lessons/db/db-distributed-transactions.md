@@ -61,15 +61,16 @@ Two families of answers:
 ### Two-phase commit
 
 ```mermaid
+%%{init: {"sequence": {"width": 110, "actorMargin": 40}}}%%
 sequenceDiagram
     participant C as Coordinator
     participant A as Shard A
     participant B as Shard B
     C->>A: PREPARE
     C->>B: PREPARE
-    A-->>C: YES (durably prepared, locks held)
+    A-->>C: YES (prepared, locks held)
     B-->>C: YES
-    Note over C: log decision COMMIT (durable)
+    Note over C: log the COMMIT<br/>decision durably
     C->>A: COMMIT
     C->>B: COMMIT
     A-->>C: done

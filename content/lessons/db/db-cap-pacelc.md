@@ -76,6 +76,18 @@ And systems choose per operation, not globally: many databases let you choose co
 
 Labels are simplifications; real systems mix behaviors per operation and failure type.
 
+PACELC as a decision every replicated system makes, twice:
+
+```mermaid
+flowchart TD
+    Q{"Is the network<br/>partitioned?"} -->|yes| P{"choose"}
+    Q -->|no| E{"choose"}
+    P -->|"answer anyway"| PA["PA: available<br/>may be stale<br/>or diverge"]
+    P -->|"refuse or wait"| PC["PC: consistent<br/>minority side<br/>returns errors"]
+    E -->|"don't wait<br/>for replicas"| EL["EL: low latency<br/>reads may be stale"]
+    E -->|"wait for a quorum"| EC["EC: consistent<br/>pays a round trip<br/>every time"]
+```
+
 ### PACELC in numbers
 
 Partitions are rare; the latency of coordination is paid all the time. A write acknowledged after a majority of three replicas in three availability zones pays one inter-zone round trip (~1–2 ms). Across three continents it pays ~100+ ms. Asynchronous replication pays nothing — but a region failure can lose acknowledged writes, and remote reads are stale. That latency-vs-consistency decision is made on **every request**, not just during rare partitions — which is why PACELC is the more practical lens.

@@ -53,6 +53,20 @@ A view is a named query, re-run on every use. A materialized view is a stored re
 
 ## How It Works
 
+When each one runs:
+
+```mermaid
+flowchart LR
+    subgraph reads["at read time"]
+        V["view: its query runs<br/>inside yours, every time"]
+        M["materialized view:<br/>read the stored result"]
+    end
+    subgraph writes["at write time"]
+        T["trigger: runs on each<br/>INSERT, UPDATE or DELETE"]
+    end
+    R["REFRESH, on a schedule"] --> M
+```
+
 ### Views are expanded into the query
 
 ```sql

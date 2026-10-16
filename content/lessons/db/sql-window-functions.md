@@ -70,6 +70,16 @@ A window function is an aggregate that doesn't collapse rows. PARTITION BY picks
 
 ## How It Works
 
+What happens for each row, in order:
+
+```mermaid
+flowchart TD
+    R["rows left after<br/>WHERE and GROUP BY"] --> P["PARTITION BY dept<br/>split into groups"]
+    P --> O["ORDER BY salary<br/>line each group up"]
+    O --> F["frame<br/>which rows each row sees"]
+    F --> V["function value written<br/>next to every row"]
+```
+
 ### Ranking: ROW_NUMBER vs RANK vs DENSE_RANK
 
 Salaries in one department: 200, 150, 150, 100.

@@ -104,6 +104,26 @@ Why W + R > RF works, and its caveats, are in [Quorums & Consensus](lesson:db-qu
 
 ::viz{id=quorum}
 
+A QUORUM write with RF = 3: the coordinator sends the write to all three replicas and answers as soon as two acknowledge.
+
+```mermaid
+%%{init: {"sequence": {"width": 90, "actorMargin": 12}}}%%
+sequenceDiagram
+    participant C as Client
+    participant Co as Coordinator
+    participant R1 as Replica 1
+    participant R2 as Replica 2
+    participant R3 as Replica 3
+    C->>Co: write at QUORUM
+    Co->>R1: write
+    Co->>R2: write
+    Co->>R3: write
+    R1-->>Co: ack
+    R2-->>Co: ack
+    Co-->>C: OK (2 of 3)
+    R3-->>Co: ack, late
+```
+
 ## Internal Mechanism
 
 :::depth{level=advanced}

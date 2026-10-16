@@ -97,6 +97,17 @@ Departments(dept_id, dept_name)
 
 Final: Students, Courses, Departments, Enrollment — each non-key attribute depends on the key, the whole key and nothing but the key.
 
+The same decomposition as a picture:
+
+```mermaid
+flowchart TD
+    E["Enrollment<br/>student_id, course_id,<br/>student_name, course_title,<br/>dept_id, dept_name, grade"] -->|"2NF: split off<br/>partial dependencies"| S["Students<br/>student_id, student_name"]
+    E -->|"2NF"| N["Enrollment<br/>student_id, course_id, grade"]
+    E -->|"2NF"| C["Courses<br/>course_id, course_title,<br/>dept_id, dept_name"]
+    C -->|"3NF: split off<br/>dept_id → dept_name"| C2["Courses<br/>course_id, course_title,<br/>dept_id"]
+    C -->|"3NF"| D["Departments<br/>dept_id, dept_name"]
+```
+
 ### 3NF vs BCNF: the one case where they differ
 
 Usually 3NF and BCNF give the same tables. They disagree only when a non-key column determines part of a key — and then you must choose between removing all redundancy and keeping every rule enforceable in one table. `Teaching(student, subject, teacher)`: each teacher teaches one subject (teacher → subject); for each subject, a student has one teacher ((student, subject) → teacher).

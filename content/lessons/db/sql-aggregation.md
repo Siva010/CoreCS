@@ -68,7 +68,7 @@ ORDER BY avg_salary DESC;
 ```
 
 ```mermaid
-flowchart LR
+flowchart TD
     A["all employees"] -->|"WHERE hired_at < 2025"| B["filtered rows"]
     B -->|"GROUP BY department_id"| C["one bucket per department"]
     C -->|"aggregate each bucket"| D["dept, count, avg, max"]

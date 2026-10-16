@@ -67,6 +67,19 @@ Consequences:
 - **Range scans by primary key** are very efficient in InnoDB (rows are physically ordered); PostgreSQL's heap is ordered only by insertion unless you `CLUSTER` (one-off) or use BRIN-friendly append patterns.
 - If you don't declare a primary key, InnoDB uses the first `UNIQUE NOT NULL` index or generates a hidden 6-byte row id — declare one.
 
+The two layouts side by side — what an index entry points to decides how many trees a lookup walks:
+
+```mermaid
+flowchart LR
+    subgraph pg["PostgreSQL"]
+        PI["index on email"] -->|"ctid (page, slot)"| PH["heap page<br/>full row"]
+        PK["primary key index"] -->|"ctid"| PH
+    end
+    subgraph my["InnoDB"]
+        MI["secondary index on email"] -->|"primary key value"| MC["clustered index: PK B+ tree<br/>leaf holds the full row"]
+    end
+```
+
 ### MVCC: versions in the table vs versions in undo
 
 **PostgreSQL**: an `UPDATE` writes a **new tuple** and marks the old one with `xmax`; readers pick the version their snapshot can see ([MVCC](lesson:db-mvcc)). Unless the update is HOT, each index also gets a new entry pointing to the new tuple — **write amplification** for tables with many indexes. Dead tuples stay until `VACUUM` (normally autovacuum) marks the space reusable. Long-running transactions or forgotten replication slots stop vacuum from removing anything newer than them, and tables bloat. VACUUM also freezes old transaction ids to prevent **transaction-id wraparound**.

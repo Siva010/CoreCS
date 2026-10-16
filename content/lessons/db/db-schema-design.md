@@ -108,6 +108,23 @@ Rule: if you filter, join, aggregate or constrain on it regularly, it deserves a
 
 With shared tables, put `tenant_id` **first** in composite indexes and keys, so each tenant's data is clustered in index order and queries never cross tenants; it's also the natural shard key later ([Sharding](lesson:db-sharding)).
 
+The three models side by side. Isolation grows from left to right, and so does the operational cost:
+
+```mermaid
+flowchart LR
+    subgraph shared["shared tables"]
+        T1["orders<br/>tenant_id 1, 2, 3 …"]
+    end
+    subgraph schemas["schema per tenant"]
+        S1["tenant_1.orders"]
+        S2["tenant_2.orders"]
+    end
+    subgraph dbs["database per tenant"]
+        D1[("db_tenant_1")]
+        D2[("db_tenant_2")]
+    end
+```
+
 ## Internal Mechanism
 
 :::depth{level=advanced}

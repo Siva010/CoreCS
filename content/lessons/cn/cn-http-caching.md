@@ -67,14 +67,14 @@ The most common confusion: **`no-cache` does not mean "don't cache"** — it mea
 ```mermaid
 flowchart TD
     R["request for URL"] --> H{"stored response?"}
-    H -->|no| F["fetch from origin (200)"]
-    H -->|yes| FR{"fresh? age < max-age and not no-cache"}
-    FR -->|yes| S["serve from cache — no network"]
-    FR -->|no| V{"has validator (ETag / Last-Modified)?"}
+    H -->|no| F["fetch from origin<br/>(200)"]
+    H -->|yes| FR{"fresh? age < max-age<br/>and not no-cache"}
+    FR -->|yes| S["serve from cache —<br/>no network"]
+    FR -->|no| V{"has validator<br/>(ETag / Last-Modified)?"}
     V -->|no| F
-    V -->|yes| C["conditional request If-None-Match / If-Modified-Since"]
-    C -->|"304 Not Modified"| U["refresh stored headers, serve cached body"]
-    C -->|"200 with new body"| N["store and serve new response"]
+    V -->|yes| C["conditional request<br/>If-None-Match /<br/>If-Modified-Since"]
+    C -->|"304 Not Modified"| U["refresh stored headers,<br/>serve cached body"]
+    C -->|"200 with new body"| N["store and serve<br/>new response"]
 ```
 
 ### Worked example

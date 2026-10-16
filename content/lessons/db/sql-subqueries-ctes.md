@@ -111,10 +111,10 @@ SELECT * FROM reports ORDER BY depth, name;
 ```
 
 ```mermaid
-flowchart LR
+flowchart TD
     A["anchor rows<br/>(CEO)"] --> W["working table"]
-    W -->|"join employees ON manager_id = id"| N["new rows (direct reports)"]
-    N -->|"append to result, become working table"| W
+    W -->|"join employees<br/>ON manager_id = id"| N["new rows<br/>(direct reports)"]
+    N -->|"append to result,<br/>become working table"| W
     N -->|"no new rows"| S["stop"]
 ```
 
