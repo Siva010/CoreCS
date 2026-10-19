@@ -185,6 +185,48 @@ export const WIDGETS: WidgetDef[] = [
     ],
     lessons: ["os-java-memory-model", "os-race-conditions"],
   },
+  {
+    id: "speedup-queueing",
+    title: "Speedup & Queueing",
+    subject: "os",
+    kinds: ["lab"],
+    description:
+      "Amdahl, Gustafson and the Universal Scalability Law on one chart; Little's law solved for any term; and M/M/1 and M/M/c queues showing how response time explodes as a server, thread pool or connection pool nears 100% busy.",
+    tryThis: [
+      "With 95% of the work parallel, how many cores get you 90% of Amdahl's ceiling?",
+      "Raise the USL coherence term until adding cores makes throughput fall.",
+      "Load the pool of 20 at 1,500/s, then find the smallest pool that keeps mean response under 16 ms.",
+    ],
+    lessons: ["os-concurrency-vs-parallelism", "os-performance-method", "os-thread-pools"],
+  },
+  {
+    id: "memory-hierarchy",
+    title: "Memory Hierarchy Calculator",
+    subject: "os",
+    kinds: ["lab"],
+    description:
+      "Average access time through L1, L2, L3 and memory; effective access time with a TLB and multi-level page walks; and TLB reach, miss rate and page-table size with 4 KB, 2 MB and 1 GB pages.",
+    tryThis: [
+      "Lower L1's hit rate from 95% to 90%: how much slower does memory feel?",
+      "With a 4-level walk, what TLB hit ratio keeps the slowdown under 5%?",
+      "How large a working set does 1,536 TLB entries cover with 4 KB pages, and with 2 MB pages?",
+    ],
+    lessons: ["os-hardware-model", "os-hugepages-numa", "os-tlb"],
+  },
+  {
+    id: "cache-coherence",
+    title: "Cache Coherence & False Sharing",
+    subject: "os",
+    kinds: ["lab"],
+    description:
+      "Step two cores through reads and writes and watch each cache line's MESI state, the invalidations and the cache-to-cache transfers. Compare two counters on one 64-byte line with the same counters padded apart.",
+    tryThis: [
+      "Run False sharing on one line, then padded: count the misses each way.",
+      "True sharing: why doesn't padding help?",
+      "Read-mostly: which single access causes all the coherence traffic?",
+    ],
+    lessons: ["os-cpu-caches-contention", "os-hardware-model"],
+  },
   // ───────────────────────────── Computer Networks ─────────────────────────────
   {
     id: "encapsulation",

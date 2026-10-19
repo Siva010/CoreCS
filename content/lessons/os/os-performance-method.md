@@ -11,6 +11,7 @@ relevance: high
 stage: 3
 prerequisites: [os-scheduling-basics, os-thread-pools, os-page-cache]
 related: [os-profiling-observability, os-cpu-caches-contention, cn-tail-latency, x-overloaded-server, x-slow-query]
+labs: [speedup-queueing]
 tags: [performance, latency, throughput, utilization, saturation, use method, little's law, queueing theory, load average, bottleneck, iowait, psi]
 ---
 
@@ -91,6 +92,8 @@ W = S / (1 − ρ)        S = service time, ρ = utilization
 | 99% | 100× |
 
 Real systems differ in detail, but the shape — a "hockey stick" — is universal. That's why capacity planners target 60–75% utilization for latency-sensitive resources, and why **tail latency** explodes long before average utilization reaches 100% ([Tail Latency](lesson:cn-tail-latency)).
+
+::lab{id=speedup-queueing}
 
 ### Load average, precisely
 
@@ -253,6 +256,18 @@ Saturation is queued work. For a pool, that's the number of threads waiting to b
 - **Tomcat threads**: if nothing queued, 800 × 0.060 = 48 threads would be busy, well under 200. But each thread waiting for a DB connection is still occupied. As the DB wait grows, W grows, so busy threads = 800 × W grows too. It can reach 200, after which Tomcat queues new connections as well.
 
 The first bottleneck is the 10-connection pool. Raise it above the need with headroom (about 20) **if the database can handle 20 concurrent queries**, or cut the time each request holds a connection (faster queries, no remote calls inside a transaction). Then re-check: at 20 connections, utilization = 16 / 20 = 80%, which already means noticeable queueing at peak, so 24 or a shorter hold time is safer.
+:::
+
+### [numeric 27] A service handles 1,500 requests per second, and each request holds a database connection for 15 ms. Modelling the pool as an M/M/c queue, what is the smallest pool size that keeps the mean response time under 16 ms? Use the queueing tab of the [speedup & queueing lab](lab:speedup-queueing).
+
+:::answer
+**27** connections. Little's law says 1,500 × 0.015 = 22.5 connections are busy on average, so 22 can't keep up at all. Just above that, requests queue heavily:
+- 23 connections: 41.4 ms (97.8% utilization);
+- 25: 18.1 ms;
+- 26: 16.6 ms;
+- 27: 15.9 ms, at 83% utilization, with 27% of requests briefly waiting.
+
+Sizing a pool at the average (22.5) guarantees queueing. Headroom of 20% or so is what absorbs bursts.
 :::
 
 ## Quick Revision

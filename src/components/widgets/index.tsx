@@ -28,6 +28,9 @@ const WIDGETS: Record<string, ComponentType> = {
   raid: lazy(() => import("./os/Raid")),
   journaling: lazy(() => import("./os/Journaling")),
   "memory-model": lazy(() => import("./os/MemoryModel")),
+  "speedup-queueing": lazy(() => import("./os/SpeedupQueueing")),
+  "memory-hierarchy": lazy(() => import("./os/MemoryHierarchy")),
+  "cache-coherence": lazy(() => import("./os/CacheCoherence")),
   // Computer networks
   encapsulation: lazy(() => import("./cn/Encapsulation")),
   "tcp-handshake": lazy(() => import("./cn/TcpHandshake")),

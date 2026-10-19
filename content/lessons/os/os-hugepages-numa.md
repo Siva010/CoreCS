@@ -11,6 +11,7 @@ relevance: medium
 stage: 4
 prerequisites: [os-tlb, os-thrashing-working-set]
 related: [os-paging, os-cpu-caches-contention, os-mlfq-real-schedulers, db-buffer-pool]
+labs: [memory-hierarchy]
 tags: [huge pages, transparent huge pages, thp, hugetlbfs, numa, numa node, local memory, remote memory, first touch, numactl, interleave, khugepaged, UseNUMA, UseLargePages]
 ---
 
@@ -252,6 +253,12 @@ Most objects die young, so keeping their allocation local avoids most remote acc
 **NUMA**: 300 GB doesn't fit on one node's 256 GB, so a single JVM must span both. Use `-XX:+UseNUMA` (G1 or Parallel GC) so young objects stay node-local. The long-lived cache data will be spread across nodes, so either interleave it (`numactl --interleave=all`) for even bandwidth, or, better if the keyspace can be split, run **two** JVMs of about 150 GB each, bound with `numactl --cpunodebind=N --membind=N`, with clients routing keys by hash. Two JVMs keep every access local and also halve GC pause scope.
 
 Verify with `numastat -p <pid>` (memory per node), `grep Huge /proc/meminfo` (huge pages used), and TLB miss counters.
+:::
+
+### [numeric 81.25 unit=%] A TLB has 1,536 entries. A program touches a 16 GB working set uniformly at random, and the TLB always holds 1,536 of its pages. With 2 MB pages, what fraction of accesses miss the TLB? Compare 4 KB and 1 GB pages in the [memory hierarchy lab](lab:memory-hierarchy).
+
+:::answer
+TLB reach = 1,536 × 2 MB = 3 GB, which covers 3 / 16 = 18.75% of the working set, so **81.25**% of random accesses miss. With 4 KB pages the reach is only 6 MB and nearly every access misses (99.96%). With 1 GB pages, 16 entries cover everything, though real CPUs have far fewer 1 GB TLB entries than 4 KB ones.
 :::
 
 ## Quick Revision

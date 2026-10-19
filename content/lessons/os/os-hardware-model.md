@@ -11,6 +11,7 @@ relevance: high
 stage: 1
 prerequisites: [os-what-an-os-does]
 related: [os-program-execution, os-cpu-caches-contention, os-storage-devices, os-syscalls-interrupts]
+labs: [memory-hierarchy, cache-coherence]
 tags: [cpu, registers, cache, ram, memory hierarchy, latency numbers, interrupts, dma, bus, average memory access time, hit ratio, programmed I/O]
 ---
 
@@ -109,6 +110,8 @@ average = 1 ns + 0.05 × 100 ns = 1 + 5 = 6 ns
 Only 5% of accesses miss, yet memory feels six times slower than L1. A 99% hit rate gives 1 + 0.01 × 100 = 2 ns. Small changes in hit rate matter a lot, which is why cache-friendly code wins.
 
 Exam questions sometimes state the hit ratio *h*, cache time *c* and memory time *m* instead. If a miss checks the cache first and then goes to memory, the average is h × c + (1 − h) × (c + m). If both are searched in parallel, a miss costs only m. Read which one the question assumes.
+
+::lab{id=memory-hierarchy}
 
 ### Cache coherence
 
@@ -287,6 +290,12 @@ An `ArrayList<Long>` is an array of references: each element needs a second load
 - **Programmed I/O with polling**: the CPU checks the device's status register in a loop until data is ready, then copies each word itself: 4096 / 8 = 512 transfers, plus all the time spent polling. The CPU is busy for the whole transfer.
 - **Interrupt-driven I/O**: the CPU runs other work until the device interrupts, but it still copies the data: 512 interrupts, each paying the cost of entering and leaving a handler. Fine for slow devices like keyboards, wasteful for disks.
 - **DMA**: the CPU writes one command (where the data should go in RAM, how much) and the device copies all 4 KB on its own, then raises **one** interrupt. CPU work is one setup and one interrupt, no matter how large the block.
+:::
+
+### [numeric 2.44 unit=ns] L1 takes 1 ns and hits 95% of the time. L2 takes 4 ns and hits 60% of the accesses that reach it. L3 takes 12 ns and hits 50% of what reaches it. Memory takes 100 ns. What is the average access time? Check it in the [memory hierarchy lab](lab:memory-hierarchy).
+
+:::answer
+Work from the bottom up: L3 costs 12 + 0.5 × 100 = 62 ns on average, L2 costs 4 + 0.4 × 62 = 28.8 ns, and L1 gives 1 + 0.05 × 28.8 = **2.44** ns. Only 1% of accesses reach memory (0.05 × 0.4 × 0.5), but they still account for 1 ns of the 2.44.
 :::
 
 ## Quick Revision

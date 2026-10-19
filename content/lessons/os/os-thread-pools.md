@@ -11,6 +11,7 @@ relevance: high
 stage: 3
 prerequisites: [os-concurrency-vs-parallelism, os-sync-primitives]
 related: [os-io-models, os-performance-method, x-overloaded-server, x-connection-management]
+labs: [speedup-queueing]
 tags: [thread pool, executor, work queue, backpressure, bounded queue, rejection policy, work stealing, pool sizing, bulkhead]
 ---
 

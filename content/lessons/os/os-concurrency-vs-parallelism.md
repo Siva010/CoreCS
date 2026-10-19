@@ -11,6 +11,7 @@ relevance: high
 stage: 2
 prerequisites: [os-threads]
 related: [os-thread-pools, os-cpu-caches-contention, os-performance-method, os-io-models]
+labs: [speedup-queueing]
 tags: [concurrency, parallelism, amdahl's law, gustafson, cpu-bound, io-bound, scalability, little's law, parallel streams, ForkJoinPool]
 ---
 
@@ -96,6 +97,8 @@ Amdahl fixes the problem size. In practice, bigger machines are used for bigger 
 
 Real systems do worse than Amdahl because of **contention** (waiting for shared resources) and **coherence** costs (keeping shared data consistent across cores — cache-line bouncing, cross-node chatter). Neil Gunther's **Universal Scalability Law** adds a term that grows with N²: past some point, adding workers makes throughput **go down**. This is what you see when a thread pool or cluster is "scaled up" past its optimum.
 :::
+
+::lab{id=speedup-queueing}
 
 ## Internal Mechanism
 
@@ -239,6 +242,12 @@ Transform: 270 s / 8 cores ≈ 33.75 s. Total ≈ 30 + 33.75 + 60 = **123.75 s**
 With 4 write connections: writes ≈ 60 / 4 = 15 s, so total ≈ 30 + 33.75 + 15 = **78.75 s**.
 
 The biggest remaining serial stage is the 30 s read. Reading files in parallel (one task per file, or split large files by byte range) would attack it next. More cores barely help now: even infinitely fast transforms would save only 33.75 s.
+:::
+
+### [numeric 171] 95% of a job parallelizes perfectly. Amdahl's law caps its speedup at 20×. How many cores does it take to reach 90% of that ceiling (18×)? Check it on the chart in the [speedup & queueing lab](lab:speedup-queueing).
+
+:::answer
+**171** cores. Solve 1 / (0.05 + 0.95 / N) = 18: then 0.05 + 0.95 / N = 1/18 ≈ 0.05556, so 0.95 / N ≈ 0.00556 and N ≈ 171. The first 16 cores already give 9.1×; the next 155 add less than another 9×. Shrinking the serial 5% (often a lock or a single-threaded stage) would pay far more than buying cores.
 :::
 
 ## Quick Revision

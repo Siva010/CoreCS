@@ -11,6 +11,7 @@ relevance: medium
 stage: 3
 prerequisites: [os-hardware-model, os-atomic-instructions, os-performance-method]
 related: [os-race-conditions, os-context-switch, os-hugepages-numa, os-profiling-observability]
+labs: [cache-coherence]
 tags: [cpu cache, cache line, mesi, cache coherence, false sharing, true sharing, lock contention, cache miss, locality, ipc, memory bound, context switch overhead, Contended, LongAdder]
 ---
 
@@ -52,6 +53,8 @@ Cores keep private copies of 64-byte lines; a write by one core invalidates ever
 | Invalid | Not present / stale | Must fetch with ownership | — |
 
 A write to a line in Shared state requires a **read-for-ownership**/invalidate round-trip to all other holders: tens to hundreds of cycles — far more across sockets ([NUMA](lesson:os-hugepages-numa)).
+
+::lab{id=cache-coherence}
 
 ### False sharing, concretely
 
@@ -270,6 +273,18 @@ static long run(Runnable r1, Runnable r2) throws InterruptedException {
 **Prediction**: the shared version is several times slower, often 3–10×, because every increment of a volatile field must own the line, and the other core keeps taking it away. In the padded version each core keeps its line in its own cache.
 
 **What can mislead you**: JIT warm-up (run each version several times and ignore the first runs, or use JMH); both threads landing on the same physical core's hyperthreads, which share L1 so the effect shrinks (pin them, or run on an idle machine); and forgetting `-XX:-RestrictContended`, which makes both versions identical. Confirm with `perf c2c`, which should show heavy cross-core "HITM" traffic on one line in the shared version only.
+:::
+
+### [exercise] In the [cache coherence lab](lab:cache-coherence), run *False sharing* with a and b on one line, then padded. Compare the misses and cache-to-cache transfers. Then run *True sharing* both ways. Why does padding fix the first program but not the second, and what does fix the second in Java?
+
+:::solution
+**False sharing.** Core 0 writes a, core 1 writes b, four times each.
+- On one line, every write finds the line Modified in the other core's cache. Each write is a read-for-ownership: 8 misses, 7 cache-to-cache transfers and 7 invalidations.
+- Padded, each core keeps its own line Modified after the first write: 2 misses, then 6 hits, and no coherence traffic at all.
+
+**True sharing.** Both cores write a, the same variable, so they need the same line no matter how it's laid out. Padding changes nothing: 8 misses and 7 transfers either way.
+
+**The fix in Java** is to stop sharing the hot variable. `LongAdder` gives each thread its own padded cell and sums them only when you read the total. A per-thread counter merged at the end works the same way. `@Contended` only helps the false-sharing case.
 :::
 
 ## Quick Revision

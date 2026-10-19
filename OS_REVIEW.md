@@ -1,6 +1,6 @@
 # Operating Systems track — review and ratings
 
-*Reviewed 16 October 2026, covering all 45 operating-systems lessons. They were then improved in the same five rounds as the [database track](DBMS_REVIEW.md), with every code example moved to Java, and two more rounds added four labs and a repeatable Java check. The track now has 48 lessons.*
+*Reviewed 16 October 2026, covering all 45 operating-systems lessons. They were then improved in the same five rounds as the [database track](DBMS_REVIEW.md), with every code example moved to Java, and three more rounds added seven labs and a repeatable Java check. The track now has 48 lessons.*
 
 ## Verdict
 
@@ -17,9 +17,9 @@ The rounds:
 - **Understandability:** long sentences split, more worked traces, and hover definitions for 115 OS terms.
 - **Diagrams:** every lesson has one (14 of 45 did before).
 - **Java:** 94 Java blocks, up from 7, all compile-checked with JDK 21. One C block is left on purpose.
-- **Labs and a Java check:** four new labs (*File Allocation & Inodes*, *RAID Layout & Rebuild*, *Journaling: Crash & Recover* and *Memory Model Litmus Tests*) and a script that compiles every Java block.
+- **Labs and a Java check:** seven new labs (*File Allocation & Inodes*, *RAID Layout & Rebuild*, *Journaling: Crash & Recover*, *Memory Model Litmus Tests*, *Speedup & Queueing*, *Memory Hierarchy Calculator* and *Cache Coherence & False Sharing*) and a script that compiles every Java block.
 
-**Overall 7.9 → 8.9.** Most of the gain is practice (3.5 → 8.7), which started very low.
+**Overall 7.9 → 8.9.** Most of the gain is practice (3.5 → 8.8), which started very low.
 
 A note on honesty: I wrote these lessons, so this is a review of my own work. I recorded each lesson's starting scores before editing it, and practice is scored by a fixed rule, not by impression. In hindsight, the 9s for content and clarity at the start were generous. The lessons then had 22 sentences over 45 words and only 14 diagrams. I didn't lower those scores after the fact, and I didn't raise them for this round's clarity work either. This also means the OS track's 8.9 shouldn't be read as "better than the database track's 8.5". The two were scored in separate passes, and the OS starting scores were kinder.
 
@@ -57,7 +57,7 @@ Nothing got a 10.
 | Content accuracy & depth | 9.0 | 9.0 | **9.0** |
 | First-principles clarity | 9.0 | 9.0 | **9.0** |
 | Interview readiness | 8.6 | 8.9 | **8.9** |
-| Practice / self-testing | 3.5 | 8.7 | **8.7** |
+| Practice / self-testing | 3.5 | 8.8 | **8.8** |
 | Production relevance | 8.8 | 8.9 | **8.9** |
 | Syllabus coverage | 8.6 | 8.9 | **8.9** |
 | **Overall** | **7.9** | **8.9** | **8.9** |
@@ -321,20 +321,40 @@ Two more labs, for the two topics where a wrong mental model does the most damag
   - Totals: practice 310 → 312 items, and lessons whose practice uses a lab 32 → 33.
   - Journaling's practice score goes from 8 to 9. Track averages don't move at one decimal.
 
+## Update 8: performance, memory-hierarchy and coherence labs
+
+Three labs for the lessons whose numericals had nothing to practise on. Each formula is the one its lesson already teaches.
+
+- **Speedup & Queueing** (`/labs/speedup-queueing`) has three tabs.
+  - **Amdahl, Gustafson and the Universal Scalability Law** on one chart. The contention and coherence terms show throughput falling past a peak, as an over-sized thread pool does.
+  - **Little's law**, solved for any of its three terms.
+  - **M/M/1 and M/M/c queues**, showing utilization, the chance of waiting, mean wait and response time, with the hockey-stick curve for the chosen pool. The Erlang C arithmetic matches textbook cases.
+- **Memory Hierarchy Calculator** (`/labs/memory-hierarchy`) has three tabs.
+  - **Average access time** through one to three cache levels, with the formula written out and the share of accesses each level serves.
+  - **Effective access time** with a TLB and multi-level page walks.
+  - **TLB reach**, random-access miss rate and page-table size with 4 KB, 2 MB and 1 GB pages.
+
+  Presets reproduce the hardware-model and TLB lessons' examples: 6 ns, and 140 ns.
+- **Cache Coherence & False Sharing** (`/labs/cache-coherence`) steps two cores through reads and writes. It follows the MESI table in the CPU-caches lesson, showing each line's state, every invalidation and cache-to-cache transfer. The same program runs with two counters on one 64-byte line and padded apart. With false sharing, 8 writes become 8 misses and 7 transfers; padded, they become 2 misses and 6 hits.
+- **Practice:** five lessons gained a lab-based item: concurrency vs parallelism, the performance method, the hardware model, huge pages and CPU caches. Their answers were worked out with the same code the labs run. For example, Amdahl reaches 90% of its 20× ceiling at 171 cores, and the smallest pool keeping mean response under 16 ms at 1,500 requests/s is 27 connections. The thread-pool and TLB lessons link the new labs too.
+  - Totals: practice 312 → 317 items, and lessons whose practice uses a lab 33 → 38.
+  - Track practice goes from 8.7 to 8.8; the overall stays 8.9.
+
 ## Readiness by audience
 
 | Audience | Before | After | Comment |
 |---|---|---|---|
 | **Freshers / campus placements / GATE-style theory** | 7.5 | **8.9** | Every lesson has at least two numericals or worked exercises. Numericals cover scheduling, page replacement, EAT/AMAT, Banker's, disk scheduling, working set, RAID capacity and permission bits. They are checked against the site's simulators, and inode and RAID questions now have labs of their own. The textbook gaps are filled. |
 | **1–3 YOE Java backend** | 7.0 | **9.0** | Every concept is shown in the code the reader writes. The JMM and JVM-on-Linux lessons cover what Java interviews and incidents actually ask: volatile and safe publication, RSS vs heap, OOMKilled vs `OutOfMemoryError`, thread dumps. A litmus-test lab shows which outcomes volatile, final and release/acquire rule out. |
-| **3–5+ YOE / performance and systems rounds** | 8.0 | **8.6** | Covers JFR, async-profiler and `jcmd`, epoll and virtual threads, NUMA and hugepage flags, and CPU quotas. It is still conceptual: there are no hands-on performance labs. |
+| **3–5+ YOE / performance and systems rounds** | 8.0 | **8.7** | Covers JFR, async-profiler and `jcmd`, epoll and virtual threads, NUMA and hugepage flags, and CPU quotas. Labs now cover the performance arithmetic (Amdahl, USL, Little's law, queueing) and cache coherence. Profiling itself is still read about, not practised. |
 
 ## What is still missing (honest gaps)
 
-- **Written exercises are self-graded.** MCQs and the 130 numericals are checked automatically. The 62 written exercises rely on comparing your answer with the worked solution.
-- **15 lessons have no lab to practise against.** The ones that would most benefit are the page cache, profiling, protection and the JVM on Linux. Labs that would help:
+- **Written exercises are self-graded.** MCQs and the 134 numericals are checked automatically. The 64 written exercises rely on comparing your answer with the worked solution.
+- **10 lessons have no lab to practise against.** The ones that would most benefit are the page cache, copy-on-write and mmap, and file descriptors. Labs that would help:
   - a page-cache lab showing read-ahead, dirty pages and writeback;
-  - an AMAT/EAT calculator.
+  - a fork and copy-on-write lab that shows page tables before and after a write;
+  - a file-descriptor table lab for `fork`, `dup2` and close-on-exec.
 - **The Java check isn't part of the build.** `scripts/_verify-java.mts` needs a local JDK, so it runs by hand, not in `npm run check` or the Cloudflare build. 39 blocks are fragments that only compile with the lesson's surrounding names, and none of the code is executed.
 - **Linux-first.** Windows gets only occasional notes (NT scheduling, handles, IOCP), and macOS almost none.
 - **112 theory sentences are still over 30 words.** The readability work targeted the longest ones first.
@@ -349,10 +369,10 @@ Arrows show before → after where something changed. Questions and practice ite
 | `os-address-spaces` | 7 → 8 | 2 → 7 | 9 | 9 | 9 | 3 → **9** | 9 | 8 → **9** | 7.8 → **9.0** |
 | `os-atomic-instructions` | 6 | 2 → 7 | 9 | 9 | 9 | 3 → **9** | 9 | 9 | 8.0 → **9.0** |
 | `os-classic-sync-problems` | 7 | 2 → 6 | 9 | 9 | 9 | 3 → **9** | 9 | 8 → **9** | 7.8 → **9.0** |
-| `os-concurrency-vs-parallelism` | 6 → 7 | 3 → 7 | 9 | 9 | 8 → **9** | 4 → **8** | 9 | 9 | 8.0 → **8.8** |
+| `os-concurrency-vs-parallelism` | 6 → 7 | 3 → 8 | 9 | 9 | 8 → **9** | 4 → **9** | 9 | 9 | 8.0 → **9.0** |
 | `os-context-switch` | 7 → 8 | 2 → 6 | 9 | 9 | 9 | 3 → **9** | 9 | 8 → **9** | 7.8 → **9.0** |
 | `os-cow-mmap` | 5 → 6 | 2 → 6 | 9 | 9 | 8 → **9** | 3 → **8** | 9 | 9 | 7.8 → **8.8** |
-| `os-cpu-caches-contention` | 5 → 6 | 2 → 6 | 9 | 9 | 8 → **9** | 3 → **8** | 9 | 9 | 7.8 → **8.8** |
+| `os-cpu-caches-contention` | 5 → 6 | 2 → 7 | 9 | 9 | 8 → **9** | 3 → **9** | 9 | 9 | 7.8 → **9.0** |
 | `os-critical-section-problem` | 6 | 2 → 6 | 9 | 9 | 9 | 3 → **9** | 8 | 9 | 7.8 → **8.8** |
 | `os-deadlock-handling` | 8 | 3 → 6 | 9 | 9 | 9 | 4 → **9** | 9 | 9 | 8.2 → **9.0** |
 | `os-deadlocks` | 7 | 2 → 6 | 9 | 9 | 9 | 3 → **9** | 9 | 9 | 8.0 → **9.0** |
@@ -360,8 +380,8 @@ Arrows show before → after where something changed. Questions and practice ite
 | `os-epoll-event-loops` | 6 → 7 | 2 → 6 | 9 | 9 | 8 → **9** | 3 → **9** | 9 | 9 | 7.8 → **9.0** |
 | `os-file-descriptors` | 5 → 6 | 2 → 6 | 9 | 9 | 8 → **9** | 3 → **8** | 9 | 9 | 7.8 → **8.8** |
 | `os-filesystem-internals` | 6 → 7 | 2 → 9 | 9 | 9 | 8 → **9** | 3 → **9** | 9 | 7 → **9** | 7.5 → **9.0** |
-| `os-hardware-model` | 7 → 8 | 2 → 6 | 9 | 9 | 8 → **9** | 4 → **8** | 8 → **9** | 7 → **8** | 7.5 → **8.7** |
-| `os-hugepages-numa` | 4 → 6 | 2 → 7 | 9 | 9 | 7 → **8** | 4 → **8** | 9 | 9 | 7.8 → **8.7** |
+| `os-hardware-model` | 7 → 8 | 2 → 7 | 9 | 9 | 8 → **9** | 4 → **9** | 8 → **9** | 7 → **8** | 7.5 → **8.8** |
+| `os-hugepages-numa` | 4 → 6 | 2 → 8 | 9 | 9 | 7 → **8** | 4 → **9** | 9 | 9 | 7.8 → **8.8** |
 | `os-io-models` | 6 → 7 | 2 → 6 | 9 | 9 | 8 → **9** | 3 → **9** | 9 | 9 | 7.8 → **9.0** |
 | `os-ipc` | 7 → 8 | 2 → 7 | 9 | 9 | 8 → **9** | 3 → **9** | 8 → **9** | 8 → **9** | 7.5 → **9.0** |
 | `os-java-memory-model` | 8 (new) | 7 (new) | 9 | 9 | 9 | 9 | 9 | 9 | **9.0** (new) |
@@ -372,7 +392,7 @@ Arrows show before → after where something changed. Questions and practice ite
 | `os-page-faults` | 7 | 2 → 6 | 9 | 9 | 9 | 4 → **9** | 9 | 9 | 8.2 → **9.0** |
 | `os-page-replacement` | 8 | 4 → 6 | 9 | 9 | 9 | 6 → **9** | 9 | 9 | 8.5 → **9.0** |
 | `os-paging` | 8 | 3 → 8 | 9 | 9 | 9 | 4 → **9** | 9 | 9 | 8.2 → **9.0** |
-| `os-performance-method` | 7 | 3 → 7 | 9 | 9 | 9 | 4 → **8** | 9 | 9 | 8.2 → **8.8** |
+| `os-performance-method` | 7 | 3 → 8 | 9 | 9 | 9 | 4 → **9** | 9 | 9 | 8.2 → **9.0** |
 | `os-process-creation` | 8 → 9 | 3 → 6 | 9 | 9 | 9 | 4 → **9** | 9 | 8 → **9** | 8.0 → **9.0** |
 | `os-processes` | 9 → 10 | 3 → 6 | 9 | 9 | 9 | 4 → **9** | 9 | 8 → **9** | 8.0 → **9.0** |
 | `os-profiling-observability` | 5 → 6 | 2 → 6 | 9 | 9 | 8 → **9** | 3 → **8** | 9 | 9 | 7.8 → **8.8** |

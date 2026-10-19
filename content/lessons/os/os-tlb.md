@@ -11,6 +11,7 @@ relevance: high
 stage: 2
 prerequisites: [os-paging]
 related: [os-context-switch, os-hugepages-numa, os-page-faults, os-cpu-caches-contention]
+labs: [memory-hierarchy]
 visualizations: [address-translation]
 tags: [tlb, translation lookaside buffer, effective access time, hit ratio, asid, pcid, tlb shootdown, tlb reach, tlb flush]
 ---
