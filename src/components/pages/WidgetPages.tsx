@@ -9,7 +9,7 @@ import { cn, SUBJECT_STYLE } from "@/lib/utils";
 
 export function WidgetIndex({ kind }: { kind: WidgetKind }) {
   const items = WIDGETS.filter((w) => w.kinds.includes(kind));
-  const groups = (["os", "cn", "db"] as const).map((s) => ({ s, items: items.filter((w) => w.subject === s) }));
+  const groups = (["os", "cn", "db", "x"] as const).map((s) => ({ s, items: items.filter((w) => w.subject === s) }));
   const Icon = kind === "lab" ? FlaskConical : Activity;
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:px-10">
@@ -18,7 +18,7 @@ export function WidgetIndex({ kind }: { kind: WidgetKind }) {
         title={kind === "lab" ? "Hands-on labs and simulators" : "See the state transitions"}
         description={
           kind === "lab"
-            ? "Simulators you can break on purpose: schedulers, page replacement, Banker's algorithm, TCP, DNS, subnetting, a real PostgreSQL, query plans, MVCC isolation, WAL recovery, replication and sharding. Every lab links back to the lessons that explain it."
+            ? "Simulators you can break on purpose: schedulers, page replacement, Banker's algorithm, TCP, DNS, subnetting, a real PostgreSQL, query plans, MVCC isolation, WAL recovery, replication, sharding, and a server collapsing under retries. Every lab links back to the lessons that explain it."
             : "Interactive diagrams that show how state changes step by step — not decorative animation. Each one is embedded in the lessons it supports and available here on its own."
         }
       />

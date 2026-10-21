@@ -11,6 +11,7 @@ relevance: high
 stage: 3
 prerequisites: [db-wal-durability, os-page-cache, os-storage-devices, db-replication]
 related: [os-journaling, os-filesystem-internals, db-crash-recovery, db-failover, db-transactions-acid, db-lsm-trees, db-quorums-consensus]
+labs: [journaling, replication]
 tags: [durability, fsync, fdatasync, o_direct, page cache, write cache, power loss protection, filesystem journal, wal, group commit, synchronous_commit, replication, backups, rpo, failure domains]
 ---
 
@@ -46,6 +47,17 @@ A write is only as durable as the **last link it has reached** when you acknowle
 
 ## How It Works
 
+Each step down the chain makes a copy that survives a bigger failure:
+
+```mermaid
+flowchart TD
+    A["app memory<br/>survives nothing"] --> B["WAL buffer in shared memory<br/>survives nothing yet"]
+    B -->|"write()"| C["OS page cache<br/>survives a database crash"]
+    C -->|"fdatasync()"| D["SSD with power-loss protection<br/>survives power loss"]
+    D -->|"streaming replication"| E["synchronous standby in another zone<br/>survives losing the machine or the zone"]
+    E -->|"WAL archive"| F["backup + WAL archive<br/>survives a mistaken DELETE"]
+```
+
 ### Walking the chain for one COMMIT
 
 | Link | What happens | Survives |
@@ -75,6 +87,26 @@ A default PostgreSQL COMMIT waits for link 4 (and 6 if synchronous replication i
 
 An fsync costs ~0.05–2 ms on NVMe (more on network block storage, ~5–10 ms on HDDs). If each commit needed its own fsync, a device doing 1,000 flushes/s would cap you at 1,000 commits/s. Group commit makes one flush cover every commit waiting at that moment, so throughput grows with concurrency ([WAL](lesson:db-wal-durability)).
 
+### The same chain from Java
+
+Your own files go through the same links. Each call below moves the data one link further:
+
+```java
+try (FileChannel log = FileChannel.open(Path.of("orders.log"),
+        StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND)) {
+    log.write(ByteBuffer.wrap(record));   // page cache: survives a JVM crash, not a power loss
+    log.force(false);                     // fdatasync: survives a power loss, if the device honours flushes
+}
+// A newly created file also needs its directory entry flushed
+try (FileChannel dir = FileChannel.open(Path.of("."), StandardOpenOption.READ)) {
+    dir.force(true);                      // fsync on the directory (Linux; Windows doesn't allow it)
+}
+```
+
+`force(false)` flushes the data and only the metadata needed to read it back, like `fdatasync`; `force(true)` flushes all metadata too, like `fsync`. Writing through a `BufferedWriter` without `flush()` stays at the first link: still inside the JVM.
+
+Message queues have chains too. A Kafka producer with `acks=all` gets its acknowledgement when every in-sync replica has the record, and `min.insync.replicas=2` refuses writes when fewer than two replicas are in sync. But Kafka doesn't fsync each message by default: "acknowledged" means "in the memory of two or more machines". That survives losing a broker, but not a power cut that takes every replica down at once. Durable against what, again.
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
@@ -83,6 +115,22 @@ An fsync costs ~0.05–2 ms on NVMe (more on network block storage, ~5–10 ms o
 - `fsync` on a file doesn't make a newly created file's **directory entry** durable — you must also fsync the directory (databases and careful applications do).
 - After an fsync **error**, Linux may have already dropped the dirty pages; retrying fsync can report success while data is gone. PostgreSQL now treats fsync failure as a PANIC and recovers from WAL ("fsyncgate", 2018).
 - `O_DIRECT` bypasses the page cache but does **not** imply durability; you still need `O_DSYNC`/fsync or FUA semantics.
+
+### Measuring the flush link
+
+PostgreSQL ships `pg_test_fsync`, which times the flush methods on the disk you point it at. On a data-center NVMe drive with power-loss protection, the output looks like this (abridged):
+
+```text
+Compare file sync methods using one 8kB write:
+(in wal_sync_method preference order, except fdatasync is Linux's default)
+        open_datasync                     27891.204 ops/sec      36 usecs/op
+        fdatasync                         27540.330 ops/sec      36 usecs/op
+        fsync                             26102.877 ops/sec      38 usecs/op
+        fsync_writethrough                              n/a
+        open_sync                         25987.115 ops/sec      38 usecs/op
+```
+
+About 36 µs per flush means at most about 27,500 flushes per second, before group commit multiplies the commits per flush. A drive *without* power-loss protection that honours flushes typically shows 1–2 ms per operation here. If such a drive shows tens of microseconds, it is probably acknowledging flushes from its volatile cache, which is exactly the "device lies" row of the table above.
 
 ### Atomicity at the device level
 
@@ -155,6 +203,22 @@ The commit record and all preceding WAL records are written and flushed to stabl
 
 The storage stack acknowledged flushes without persisting data: a volatile write cache without power-loss protection, a RAID controller cache without battery, or a virtualization/storage layer ignoring flush requests. Alternatively, durability settings were relaxed (synchronous_commit off, innodb_flush_log_at_trx_commit = 2). Verify hardware PLP, controller/virtual disk cache settings and database configuration; test with pull-the-plug experiments.
 
+### [L2 · how] How do you write a file durably from Java, so that a crash leaves either the old version or the new one?
+
+Write the new contents to a temporary file in the same directory, and call `FileChannel.force(true)` on it. Then rename it over the old file with `Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE)`, and finally fsync the directory (`FileChannel.open(dir, READ).force(true)` on Linux) so the rename itself is durable. A crash before the rename leaves the old file; a crash after it leaves the new one, complete. Writing the file in place could leave a mix of old and new bytes, because a crash can interrupt a multi-block write anywhere.
+
+### [L2 · compare] What are RPO and RTO, and which links of the chain set each?
+
+RPO (recovery point objective) is how much recent data you can afford to lose; RTO (recovery time objective) is how long you can afford to be down. RPO is set by how far down the chain a write must get before it's acknowledged. A synchronous standby gives an RPO of zero for losing a machine; asynchronous replication gives an RPO of the replication lag; WAL archiving every minute gives an RPO of up to a minute for a restore. RTO is set by how recovery happens: automatic failover to a standby takes seconds to a minute, while restoring a large base backup and replaying WAL can take hours.
+
+### [L3 · why] A Kafka producer uses `acks=all`. Is a message durable once it is acknowledged?
+
+Durable against losing one broker, yes; against everything, no. `acks=all` means every in-sync replica has appended the record, but by default Kafka writes to the page cache and lets the OS flush later, relying on replication instead of fsync. A power cut that takes down all replicas at once can lose acknowledged messages. `min.insync.replicas=2` (with a replication factor of 3) ensures at least two machines have each acknowledged record, and putting replicas in different racks or zones makes a simultaneous loss unlikely. Forcing fsync per message (`flush.messages=1`) exists but costs a lot of throughput.
+
+### [L2 · why] Why does group commit raise throughput without weakening durability?
+
+Every transaction still gets its COMMIT acknowledged only after its commit record is on stable storage. Group commit just lets one flush cover all the commit records that are waiting at that moment. A device that completes 500 flushes per second can then commit 500 × (commits per flush) transactions per second, instead of 500. The price is a little latency, since a commit may wait for the flush that is already in progress, which is why the gain appears only when many transactions commit concurrently.
+
 ## Practice
 
 ### [numeric 25000] An SSD completes one WAL flush every 2 ms. With group commit, each flush covers 50 transactions on average. What is the maximum commit throughput per second?
@@ -172,6 +236,45 @@ The storage stack acknowledged flushes without persisting data: a volatile write
 
 Without fsync, data pages and WAL can reach disk in any order, violating the write-ahead rule; async commit only shortens the durability window.
 
+### [numeric 15 unit=ms] A synchronous standby is 1,500 km from the primary, and light in fiber covers about 200 km per millisecond. Ignoring all processing, what is the minimum time a COMMIT must wait for the standby?
+
+:::answer
+A round trip covers 3,000 km: 3,000 / 200 = **15** ms. Physics alone puts every synchronous commit at 15 ms or more, so synchronous replicas usually live in another zone of the same region, a few milliseconds away, and cross-region copies stay asynchronous.
+:::
+
+### [numeric 3000] With `synchronous_commit = off`, PostgreSQL acknowledges commits before flushing them; the WAL writer flushes every `wal_writer_delay` (200 ms), and the documented worst-case window is three times that. At 5,000 commits per second, at most how many acknowledged commits can a power loss erase?
+
+:::answer
+3 × 0.2 s × 5,000 per second = **3000** commits. Nothing is corrupted (the WAL rule still holds), but those transactions were reported as committed and are gone. That is acceptable for some data, such as analytics events, and not for payments.
+:::
+
+### [exercise] In the [journaling lab](lab:journaling), use ordered mode and crash after the journal commit but before the checkpoint. What does recovery do? Then switch to writeback mode and find the crash point that leaves stale data in the file. Relate both to the durability chain.
+
+:::solution
+Ordered mode writes the data block first and commits the metadata (inode and bitmap) to the journal after it. Crashing after the commit but before the checkpoint is safe: the journal holds a complete transaction, so replay copies the metadata to its home locations, and it points at a data block that was already written. The append survives.
+
+Writeback mode doesn't order the data before the metadata. If the journal commit (and replay) makes the inode point at the new block before the data reaches that block, the file ends with the block's old contents. The filesystem is consistent, but the file holds stale data, and fsck can't notice.
+
+In chain terms, the journal is a log-first link, like a database WAL. The ordering rule decides which copy a "saved" write can depend on: a pointer must never become durable before the data it points to.
+:::
+
+### [exercise] In the [replication lab](lab:replication), load "Async failover loses writes", then "Synchronous replication: RPO 0". Which acknowledged writes survive the primary's death in each, and what does the synchronous setup cost?
+
+:::solution
+With async replication, five writes were acknowledged but replica A had only three when the primary died. Promoting A loses the last two acknowledged writes: they existed only on the dead node. That is an RPO equal to the replication lag.
+
+With semi-synchronous replication, every commit waited until at least one replica had flushed it, so the promoted replica has every acknowledged write: an RPO of zero for this failure. The cost is a network round trip on every commit. Also, if no replica can confirm, commits stall: the primary refuses to acknowledge rather than risk losing writes.
+:::
+
+### [mcq] A Kafka producer with `acks=all` gets an acknowledgement. Which failure can still lose that message with default settings?
+
+- [ ] The leader broker crashing right after the acknowledgement
+- [ ] One follower falling out of the in-sync replica set
+- [x] A power cut that takes down every in-sync replica at the same moment
+- [ ] The producer crashing after it received the acknowledgement
+
+The record is in the memory of all in-sync replicas, so losing any one machine is survivable. Kafka doesn't fsync each message by default, so losing them all at once can drop it. Spreading replicas across racks or zones makes that unlikely.
+
 ## Quick Revision
 
 - Durability is a chain: WAL buffer → page cache (write) → device (fsync) → persistent media → replicas → other zones → backups.
@@ -179,3 +282,6 @@ Without fsync, data pages and WAL can reach disk in any order, violating the wri
 - Weak links: async commit (lose recent), fsync off (corrupt), lying caches, async replication (lose lag), no tested backups.
 - Group commit makes fsync-per-commit affordable.
 - Always ask: durable against what?
+- Java: `write()` → page cache; `FileChannel.force(false)` ≈ fdatasync; fsync the directory for new files; temp file + `ATOMIC_MOVE` for atomic replacement.
+- Kafka `acks=all` + `min.insync.replicas=2`: replicated in memory, not fsync'd; survives losing a broker, not losing all replicas at once.
+- RPO = how far down the chain before the ack; RTO = how recovery happens. Synchronous replicas pay a round trip (15 ms per 1,500 km).

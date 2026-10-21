@@ -45,6 +45,8 @@ const IMPORTS = [
   "javax.crypto.spec.*",
   "javax.net.ssl.*",
   "java.util.zip.*",
+  "java.sql.*",
+  "javax.sql.*",
 ]
   .map((p) => `import ${p};`)
   .join(" ");

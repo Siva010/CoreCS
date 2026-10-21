@@ -11,12 +11,19 @@ relevance: essential
 stage: 3
 prerequisites: [os-thread-pools, os-epoll-event-loops, cn-tail-latency, os-performance-method]
 related: [x-connection-management, x-slow-query, os-scheduling-basics, cn-proxies-load-balancers, db-redis-caching, db-failover, os-classic-sync-problems]
+labs: [speedup-queueing, producer-consumer, overload-retries]
 tags: [overload, queueing theory, utilization, littles law, backpressure, bounded queue, load shedding, admission control, timeouts, retries, exponential backoff, jitter, retry storm, circuit breaker, bulkhead, cascading failure, thundering herd, autoscaling, graceful degradation]
 ---
 
 ## Mental Model
 
-Every server is a **queue in front of a limited set of workers** (threads, event-loop time, DB connections, CPU cores). While work arrives slower than it's completed, queues stay short and latency is just service time. As arrival rate approaches capacity, queues grow **non-linearly**: at 50% utilization a request waits about as long as it's served; at 90% it waits ~9× longer; at 99%, ~99× longer. Past 100%, the queue grows without bound — every request times out, and the work spent on them is wasted.
+Every server is a **queue in front of a limited set of workers**: threads, event-loop time, DB connections, CPU cores. While work arrives slower than it's completed, queues stay short and latency is just the service time. As the arrival rate approaches capacity, queues grow **non-linearly**:
+
+- at 50% utilization, a request waits about as long as it is served;
+- at 90%, it waits about 9 times longer;
+- at 99%, about 99 times longer.
+
+Past 100%, the queue grows without bound. Every request times out, and the work spent on them is wasted.
 
 Overload is dangerous because it **feeds itself**: slow responses cause timeouts, timeouts cause retries, retries add load. The defenses are about keeping queues bounded and refusing work early.
 
@@ -33,9 +40,9 @@ Overload is dangerous because it **feeds itself**: slow responses cause timeouts
 
 ## Why It Exists
 
-**The problem.** Capacity is always finite, and traffic spikes, slow dependencies, bad deploys and failovers regularly push some component past it. Systems that degrade gracefully (serve fewer requests, but serve them) stay up; systems that queue unboundedly and retry blindly collapse — often long after the original trigger is gone (metastable failure).
+**The problem.** Capacity is always finite, and traffic spikes, slow dependencies, bad deploys and failovers regularly push some component past it. Systems that degrade gracefully (serve fewer requests, but serve them) stay up. Systems that queue without limit and retry blindly collapse, often long after the original trigger is gone (metastable failure).
 
-**The idea.** When you can't do all the work, decide *which* work not to do — early, cheaply and on purpose — instead of letting queues and retries decide for you. Every defense below (bounded queues, shedding, rate limits, timeouts, circuit breakers) is a different place to make that decision.
+**The idea.** When you can't do all the work, decide *which* work not to do: early, cheaply and on purpose. Don't let queues and retries decide for you. Every defense below (bounded queues, shedding, rate limits, timeouts, circuit breakers) is a different place to make that decision.
 
 :::callout[That's all it is]{type=insight}
 An overloaded server is a queue growing faster than it drains. Keep queues bounded, reject excess early, time out and retry sparingly, and cut off failing dependencies — so the server keeps doing *some* work well instead of all work badly.
@@ -67,11 +74,11 @@ An unbounded queue converts overload into unbounded latency and memory growth (a
 
 ### Load shedding
 
-Once a request is going to time out anyway, every bit of work spent on it is wasted — and that wasted work is what slows the requests that could have succeeded. Reject early and cheaply — at the edge, before doing expensive work:
+Once a request is going to time out anyway, every bit of work spent on it is wasted. And that wasted work is what slows the requests that could have succeeded. Reject early and cheaply, at the edge, before doing expensive work:
 
 - Return 503/429 when queue length or in-flight count exceeds a threshold (concurrency limits, adaptive limits that track latency).
 - Prioritize: shed low-value traffic (analytics beacons, prefetches) before checkout requests.
-- Drop requests whose client has already given up (deadline propagation: don't process a request whose 2 s client timeout already passed).
+- Drop requests whose client has already given up (deadline propagation: don't start work on a request whose 2 s client timeout already passed).
 
 ### Rate limiting: saying no precisely
 
@@ -115,6 +122,44 @@ stateDiagram-v2
 - **Circuit breaker**: while open, calls fail instantly (or use a fallback — cached data, default response), protecting both the caller's resources and the struggling dependency.
 - **Bulkheads**: separate thread/connection pools per dependency, so the slow recommendations service can exhaust *its* pool but not the checkout path's.
 
+### In a Java service
+
+Most Java overload problems start with an unbounded queue nobody chose. `Executors.newFixedThreadPool(32)` puts tasks in an unbounded `LinkedBlockingQueue`. Under overload it accepts everything, latency grows without limit, and the heap eventually fills. Build the executor yourself, with a bounded queue and a rejection policy, and turn rejection into a fast 503:
+
+```java
+ThreadPoolExecutor workers = new ThreadPoolExecutor(
+        32, 32, 0, TimeUnit.SECONDS,
+        new ArrayBlockingQueue<>(100),               // at most 100 tasks waiting
+        new ThreadPoolExecutor.AbortPolicy());       // queue full: throw at once
+
+void submit(Runnable handleRequest, Runnable reject503) {
+    try {
+        workers.execute(handleRequest);
+    } catch (RejectedExecutionException full) {
+        reject503.run();                             // shed load early and cheaply
+    }
+}
+```
+
+`CallerRunsPolicy` is the backpressure alternative: the submitting thread runs the task itself, which slows down whoever is producing work. Tomcat has the same knobs: `server.tomcat.threads.max` (200 worker threads) and `server.tomcat.accept-count` (100 connections waiting in the kernel's backlog).
+
+Timeouts, retries, circuit breakers and bulkheads usually come from Resilience4j, configured per dependency:
+
+```properties
+resilience4j.circuitbreaker.instances.recommendations.failure-rate-threshold=50
+resilience4j.circuitbreaker.instances.recommendations.sliding-window-size=20
+resilience4j.circuitbreaker.instances.recommendations.wait-duration-in-open-state=10s
+resilience4j.bulkhead.instances.recommendations.max-concurrent-calls=20
+resilience4j.retry.instances.recommendations.max-attempts=2
+resilience4j.timelimiter.instances.recommendations.timeout-duration=300ms
+```
+
+Read it as: open the breaker when half of the last 20 calls fail, and try again after 10 s. Let at most 20 calls run at once. Make at most 2 attempts in total, and give each call 300 ms.
+
+Watch these defenses work, or fail, on a simulated server: send it a traffic spike with and without retries, a bounded queue and a retry budget.
+
+::lab{id=overload-retries}
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
@@ -127,7 +172,41 @@ stateDiagram-v2
 5. Autoscaling adds instances → each opens new DB connections → the database gets *more* overloaded (connection storm).
 6. Even after the bad query is fixed, the retry backlog and cold caches keep the system overloaded — a **metastable** state that needs load to be shed to recover.
 
-Defenses map to each step: query timeouts (1), bounded pools + load shedding (2), health checks that test the instance itself not its dependencies (3), retry budgets + jitter (4), pooled DB access and scaling limits (5), and the ability to shed traffic to recover (6).
+The loop that keeps it going:
+
+```mermaid
+flowchart TD
+    S["slow dependency"] --> L["latency rises"]
+    L --> F["more requests in flight<br/>(Little's law)"]
+    F --> P["thread and connection<br/>pools run out"]
+    P --> T["callers time out"]
+    T --> R["callers retry"]
+    R -->|"more load"| L
+```
+
+Each defense breaks one link:
+
+1. query timeouts stop the slow step from holding resources forever;
+2. bounded pools and load shedding cap what is in flight;
+3. health checks that test only the instance itself keep healthy instances in rotation;
+4. retry budgets and jitter stop retries from multiplying the load;
+5. pooled database access and scaling limits protect the database from connection storms;
+6. the ability to shed traffic lets the system leave the metastable state.
+
+### Seeing the kernel's queue
+
+The first queue a request meets is in the kernel: the listen socket's accept queue, sized by the backlog (Tomcat's `accept-count`, 100 by default). For a listening socket, `ss` shows the queue's current length as Recv-Q and its limit as Send-Q:
+
+```text
+$ ss -ltn 'sport = :8080'
+State   Recv-Q  Send-Q   Local Address:Port   Peer Address:Port
+LISTEN  101     100                  *:8080              *:*
+
+$ nstat -az TcpExtListenOverflows
+TcpExtListenOverflows           18342              0.0
+```
+
+Recv-Q has passed the backlog of 100, so the queue is full, and the counter shows 18,342 connections dropped because of it. Linux drops those SYNs silently instead of refusing them, so clients see connection *timeouts*, not errors. A growing `ListenOverflows` count means the application isn't accepting connections as fast as they arrive: its threads are all busy, or it is stuck.
 
 ### Event loops under overload
 
@@ -135,7 +214,7 @@ A single-threaded event loop's "queue" is its backlog of ready events and pendin
 
 ### Thundering herds
 
-Many clients waking up at once — cache expiry of a hot key ([Redis & Caching](lesson:db-redis-caching)), reconnects after a failover ([Failover](lesson:db-failover)), cron jobs at :00, all threads woken for one accept — create short, severe overloads. Jitter and coalescing are the cure.
+Many clients waking up at once create short, severe overloads. Typical triggers are the expiry of a hot cache key ([Redis & Caching](lesson:db-redis-caching)), reconnects after a failover ([Failover](lesson:db-failover)), cron jobs at :00, and every thread woken for one `accept()`. Jitter and coalescing are the cure.
 :::
 
 ## Example
@@ -217,6 +296,20 @@ of 100/instances with periodic synchronization, accepting approximate limits. Me
 
 Concurrency limits or adaptive admission control at the edge that reject excess requests quickly (429/503 with Retry-After); priority classes so critical paths (checkout, login) are protected and optional features are shed first; bounded queues and pools everywhere; per-dependency timeouts, circuit breakers and bulkheads; caching with stale-while-revalidate for read paths; client guidance to back off with jitter; and capacity headroom plus autoscaling for sustained growth.
 
+### [L2 · how] How do you make a Java thread pool shed load instead of queueing forever?
+
+Don't use `Executors.newFixedThreadPool`, whose queue is unbounded. Create a `ThreadPoolExecutor` with a bounded queue (for example an `ArrayBlockingQueue` of 100) and a rejection policy. `AbortPolicy` throws `RejectedExecutionException` when the queue is full; catch it and return 503 with `Retry-After`, which sheds load. `CallerRunsPolicy` makes the submitting thread run the task, which slows the producer down; that is backpressure. Size the queue from the latency you can afford: 100 queued tasks at 10 ms each, on 32 threads, is about 31 ms of extra waiting. Then watch the queue length and rejection count, not just CPU.
+
+### [L3 · design] What is a retry budget, and how would you implement one?
+
+A cap on retries as a fraction of normal traffic, for example "retries may add at most 10% to the load". Each successful first attempt adds 0.1 to a token bucket, and each retry spends 1 token; with no tokens, the call fails without retrying. When a dependency is healthy, the few retries it needs always find tokens. When it is failing, the budget runs out quickly, so retries can't triple the load on it. gRPC's retry throttling and Finagle's retry budgets work this way. It complements a per-call limit like "at most 2 attempts", which still lets every failing call retry.
+
+### [L3 · why] The bad query was fixed an hour ago, but the service is still overloaded. How is that possible, and how do you get out?
+
+The system is in a metastable state: the overload now sustains itself, whatever started it. Clients keep retrying their backlog, timed-out work is still being processed, caches emptied during the incident send every read to the database, and instances that restarted are cold. Each of these adds load, which keeps latency high, which causes more timeouts and retries.
+
+To get out, cut the load below capacity for long enough to drain the queues: shed traffic at the edge (reject a share of requests, lowest priority first), turn off retries or let the budgets run dry, and bring traffic back gradually while caches warm. Rate-limited retries and jittered backoff make it less likely to happen again.
+
 ## Practice
 
 ### [numeric 10] A single-worker queue with random arrivals runs at 90% utilization. Using time-in-system ≈ service time / (1 − ρ), how many times the service time does an average request spend in the system?
@@ -231,6 +324,55 @@ Concurrency limits or adaptive admission control at the edge that reject excess 
 Attempts multiply across layers: 3 × 3 × 3 = **27** calls. Retry at one layer only, with budgets.
 :::
 
+### [numeric 600] A service receives 400 requests per second and normally answers in 50 ms. A dependency slows down, and latency becomes 1.5 s. How many requests are in flight now?
+
+:::answer
+L = λ × W = 400 × 1.5 = **600**, up from 20. With Tomcat's 200 worker threads, the server ran out of threads well before that point; the rest queue, time out and retry.
+:::
+
+### [numeric 1390] 1,000 requests per second arrive, and during an incident 30% of every attempt fails. Each failed attempt is retried, up to 2 retries per request, with no retry budget. How many calls per second reach the struggling service?
+
+:::answer
+First attempts 1,000, first retries 1,000 × 0.3 = 300, second retries 300 × 0.3 = 90, for a total of **1390** calls per second: 39% more load on a service that is already failing. A 10% retry budget would cap it at 1,100.
+:::
+
+### [exercise] In the [Speedup & Queueing lab](lab:speedup-queueing), queueing tab, set the service time to 10 ms. Compare 1 server at 90 requests per second with 4 servers at 360 and 16 servers at 1,440: all three are 90% busy. What is the mean response time in each case, and what does that say about adding servers?
+
+:::solution
+- 1 server: 100 ms (10 × the service time), and 90% of requests wait.
+- 4 servers: 29.69 ms, and 78.8% wait.
+- 16 servers: 13.70 ms, and 59.1% wait.
+
+At the same utilization, a pool of servers sharing one queue answers much faster than a single server: a busy server rarely holds up the whole queue. But even 16 servers at 90% are 37% slower than idle ones, and every case climbs steeply as utilization approaches 100%. More servers soften the knee; they don't remove it. Keep headroom at peak.
+:::
+
+### [exercise] In the [producer–consumer lab](lab:producer-consumer), fill the buffer with a fast producer. Which thread blocks, and on which semaphore? Relate this to backpressure and to load shedding in a server.
+
+:::solution
+When the buffer is full, the `empty` semaphore (free slots) is 0, so the producer blocks on `empty` until a consumer removes an item and signals it. That is **backpressure**: a bounded buffer forces the producer to slow down to the consumer's pace.
+
+A server can do the same, with a bounded queue that blocks the caller, or TCP's window filling up. It can also refuse instead of blocking: a bounded queue that rejects when full, returning 503 or 429, is **load shedding**. Blocking suits internal producers that can wait. Rejecting suits external clients, who should back off rather than tie up a thread.
+:::
+
+### [mcq] What does `Executors.newFixedThreadPool(32)` give you under overload?
+
+- [ ] 32 threads, and new tasks are rejected when all are busy
+- [x] 32 threads and an unbounded queue: tasks wait for ever longer, and memory grows
+- [ ] A pool that grows past 32 threads when tasks queue up
+- [ ] 32 threads that block the caller when all are busy
+
+Its `LinkedBlockingQueue` has no capacity limit, so overload turns into unbounded latency and, eventually, an `OutOfMemoryError`. Build a `ThreadPoolExecutor` with a bounded queue and a rejection policy instead.
+
+### [exercise] In the [Overload & Retries lab](lab:overload-retries), run "No protection", then "No retries", then "Bounded queue". For each, does goodput recover after the spike ends at 20 s, and what does the server spend its capacity on in the meantime?
+
+:::solution
+- **No protection**: it never recovers. After the spike every request waits longer than the 1 s timeout, so each one turns into 3 attempts, and the offered load stays around 1,200 per second: 2.4 times the capacity of 500. The server stays 100% busy finishing requests whose clients have left: 88% of all its work is wasted, and only 13.3% of requests succeed. That is a metastable failure.
+- **No retries**: it recovers at 46 s, 26 s after the spike. Until then it drains the backlog, again mostly for clients who have already given up; 58.1% succeed.
+- **Bounded queue** (250 requests): it recovers immediately, at 20 s. During the spike about 900 requests per second are refused at once with a 503, but those admitted wait only about 0.45 s, inside the timeout, so the server spends its capacity on requests that can still succeed: 93.2% succeed overall.
+
+The lesson: retries turn a temporary overload into a permanent one, and a bounded queue (or dropping expired requests) keeps the server's work useful.
+:::
+
 ## Quick Revision
 
 - Latency ≈ service/(1 − ρ): the knee is real; keep peaks below ~70–80%.
@@ -239,3 +381,6 @@ Attempts multiply across layers: 3 × 3 × 3 = **27** calls. Retry at one layer 
 - Rate limit per key: token bucket (bursty, cheap) or sliding window; answer with 429 + Retry-After.
 - Timeouts everywhere; retries only idempotent, with backoff + jitter + budgets, at one layer.
 - Circuit breakers, bulkheads, graceful degradation; beware thundering herds, connection storms and metastable failures.
+- Java: never an unbounded executor queue; `ThreadPoolExecutor` + `ArrayBlockingQueue` + `AbortPolicy` (shed, 503) or `CallerRunsPolicy` (backpressure).
+- Resilience4j per dependency: circuit breaker, bulkhead, retry with a small max, time limiter.
+- Metastable overload outlives its trigger: shed load until queues drain, then restore traffic gradually.

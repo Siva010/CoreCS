@@ -8,7 +8,7 @@ export type WidgetKind = "lab" | "viz";
 export interface WidgetDef {
   id: string;
   title: string;
-  subject: Exclude<SubjectId, "x">;
+  subject: SubjectId;
   kinds: WidgetKind[];
   description: string;
   /** What the learner should try — shown above the widget on its own page. */
@@ -347,6 +347,34 @@ export const WIDGETS: WidgetDef[] = [
       "Count to infinity: compare the number of exchanges with no fix and with poison reverse.",
     ],
     lessons: ["cn-routing-algorithms", "cn-routing"],
+  },
+  {
+    id: "overload-retries",
+    title: "Overload & Retries Lab",
+    subject: "x",
+    kinds: ["lab"],
+    description: "A server with fixed capacity takes a traffic spike. Clients time out and retry, the queue grows, and the server may keep failing long after the spike ends. Turn on a bounded queue, a retry budget or dropping expired requests, and watch goodput, wasted work and queueing delay.",
+    tryThis: [
+      "No protection: why is goodput still zero 60 s after the spike ended?",
+      "Turn off retries: how long does recovery take now, and what is the server doing meanwhile?",
+      "Bounded queue: what happens to rejected requests, and to the success rate?",
+      "Retry budget only: why does it recover, but so slowly?",
+    ],
+    lessons: ["x-overloaded-server", "x-connection-management", "cn-tail-latency"],
+  },
+  {
+    id: "page-load",
+    title: "Page Load Timeline Lab",
+    subject: "x",
+    kinds: ["lab"],
+    description: "The latency budget of opening a website, as a waterfall: DNS, the TCP and TLS (or QUIC) handshakes, the request through a CDN edge or straight to the origin, the HTML under TCP slow start, CSS and JS, and rendering. Change one thing and see which round trips disappear.",
+    tryThis: [
+      "Cold visit vs Old stack: how much does TLS 1.2's extra round trip cost?",
+      "Switch to HTTP/3, then to 0-RTT resumption: how many round trips are left before the first byte?",
+      "Far away vs Far away with a CDN: where does the CDN save time, if the HTML can't be cached?",
+      "Raise the HTML from 14 KB to 15 KB: why does one kilobyte cost a whole round trip?",
+    ],
+    lessons: ["x-website-journey", "cn-latency-bandwidth", "cn-cdn"],
   },
   {
     id: "realtime-transports",

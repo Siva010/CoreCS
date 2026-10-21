@@ -214,7 +214,7 @@ or pre-aggregate 2024 sales in a subquery (usually clearer). Try both in the [SQ
 - **Fan-out** double counting when aggregating across one-to-many joins.
 - **Accidental Cartesian products** from a missing or wrong join condition (row counts explode, queries run for hours).
 - **Joining on nullable columns** and expecting NULL to match NULL.
-- **Type mismatches** (`text` vs `bigint`) that force casts and prevent index use.
+- **Type mismatches** (an `integer` key joined to a `numeric` one) that force a cast on one side and prevent index use. PostgreSQL rejects `text = bigint` outright, so that mistake fails loudly instead.
 
 ## In Production
 

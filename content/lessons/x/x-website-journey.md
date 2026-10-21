@@ -11,13 +11,21 @@ relevance: essential
 stage: 2
 prerequisites: [cn-dns-fundamentals, cn-tcp-handshake, cn-tls-handshake, cn-http-fundamentals]
 related: [x-sql-query-journey, cn-proxies-load-balancers, cn-cdn, cn-http-caching, os-epoll-event-loops, db-query-lifecycle, x-connection-management, cn-encapsulation]
+labs: [page-load]
 visualizations: [encapsulation]
 tags: [what happens when you type a url, request lifecycle, dns, tcp, tls, http, load balancer, reverse proxy, cdn, kernel, sockets, epoll, application server, database, rendering, latency budget]
 ---
 
 ## Mental Model
 
-Opening `https://shop.example.com/orders` is a relay race across **five systems** — browser, network, server kernel, application, database — and **four protocols** — DNS, TCP, TLS, HTTP. Each hands a well-defined object to the next: a name becomes an IP address, the address becomes a connection, the connection becomes a secure channel, the channel carries a request, the request becomes a query, rows become JSON, JSON becomes pixels.
+Opening `https://shop.example.com/orders` is a relay race across **five systems** (browser, network, server kernel, application, database) and **four protocols** (DNS, TCP, TLS, HTTP). Each runner hands a well-defined object to the next:
+
+- a name becomes an IP address;
+- the address becomes a connection;
+- the connection becomes a secure channel;
+- the channel carries a request;
+- the request becomes a query;
+- rows become JSON, and JSON becomes pixels.
 
 A strong answer is **ordered, layered and quantified**: say what happens, which layer does it, and roughly how long it takes — then go deep wherever the interviewer points.
 
@@ -39,15 +47,47 @@ Round trips dominate network time; that's why HTTP/2 connection reuse, TLS 1.3, 
 
 ## Why It Exists
 
-**The problem it reveals.** Loading a page looks like one action, but it needs *five independent problems* solved in sequence: find the machine (DNS), get a reliable pipe to it (TCP), make the pipe private and authentic (TLS), say what you want (HTTP), and have the server produce it (kernel, app, database). Each protocol in the chain exists because the one before it left exactly one problem unsolved.
+**The problem it reveals.** Loading a page looks like one action, but it needs *five independent problems* solved in sequence:
 
-**Why interviewers ask it.** This question tests whether you see the system as connected layers rather than memorized facts. Every follow-up ("what if DNS fails?", "where can it be slow?", "what does the kernel do?", "how does the server handle 10,000 of these?") is a door into one of the academy's subjects.
+1. find the machine (DNS);
+2. get a reliable pipe to it (TCP);
+3. make the pipe private and authentic (TLS);
+4. say what you want (HTTP);
+5. have the server produce it (kernel, app, database).
+
+Each protocol in the chain exists because the one before it left exactly one problem unsolved.
+
+**Why interviewers ask it.** This question tests whether you see the system as connected layers rather than memorized facts. Every follow-up opens a door into one of the academy's subjects. What if DNS fails? Where can it be slow? What does the kernel do? How does the server handle 10,000 of these?
 
 :::callout[That's all it is]{type=insight}
 Name → address (DNS), address → connection (TCP), connection → secure channel (TLS), channel → request (HTTP), request → rows (app + database), rows → pixels (browser). Each step costs round trips, which is why caching and connection reuse matter so much.
 :::
 
 ## How It Works
+
+The whole cold visit at a glance, before the steps one by one:
+
+```mermaid
+%%{init: {"sequence": {"width": 90, "actorMargin": 30}}}%%
+sequenceDiagram
+    participant B as Browser
+    participant D as DNS
+    participant E as CDN / LB
+    participant A as App
+    participant P as DB
+    B->>D: shop.example.com?
+    D-->>B: 93.184.215.14
+    B->>E: SYN
+    E-->>B: SYN-ACK
+    B->>E: ACK,<br/>ClientHello
+    E-->>B: ServerHello,<br/>cert, Finished
+    B->>E: Finished,<br/>GET /orders
+    E->>A: GET /orders
+    A->>P: SELECT
+    P-->>A: 20 rows
+    A-->>E: 200 OK
+    E-->>B: 200 OK, HTML
+```
 
 ### 1. Browser: before any network I/O
 
@@ -59,7 +99,14 @@ Name → address (DNS), address → connection (TCP), connection → secure chan
 
 *Why this step:* routers only understand numeric addresses, and humans only remember names.
 
-Browser cache → OS resolver (stub, `/etc/hosts`, systemd-resolved cache) → recursive resolver (ISP / 8.8.8.8 / 1.1.1.1) → if not cached: root → `.com` TLD → `example.com` authoritative servers → answer, possibly a CNAME to a CDN hostname with a short TTL ([DNS](lesson:cn-dns-fundamentals)). Result: `93.184.215.14`, cached per its TTL.
+The lookup tries the nearest cache first:
+
+1. the browser's own DNS cache;
+2. the OS resolver (`/etc/hosts`, then a local cache such as systemd-resolved);
+3. a recursive resolver (the ISP's, 8.8.8.8 or 1.1.1.1);
+4. if the resolver hasn't cached the name: the root servers, then the `.com` servers, then `example.com`'s authoritative servers.
+
+The answer may be a CNAME to a CDN hostname with a short TTL ([DNS](lesson:cn-dns-fundamentals)). The result, `93.184.215.14`, is cached for its TTL.
 
 Walkthrough: [DNS resolution](uth:dns-resolution).
 
@@ -67,7 +114,9 @@ Walkthrough: [DNS resolution](uth:dns-resolution).
 
 *Why this step:* IP only delivers loose packets that can be lost or reordered; HTTP needs an ordered, complete stream.
 
-The browser calls `connect()`: the kernel picks an ephemeral source port, creates a socket, and sends SYN; the server's kernel replies SYN-ACK from its listen queue; the client's ACK completes the handshake — **no application code on the server runs yet** ([TCP Handshake](lesson:cn-tcp-handshake)). Packets travel via the local router (ARP for the gateway's MAC, NAT rewriting the source address), ISP routers doing longest-prefix-match forwarding, and finally the server's network ([Routing](lesson:cn-routing), [NAT](lesson:cn-nat)).
+The browser calls `connect()`. The kernel picks an ephemeral source port, creates a socket and sends a SYN. The server's kernel answers with a SYN-ACK, and the client's ACK completes the handshake. **No application code on the server has run yet** ([TCP Handshake](lesson:cn-tcp-handshake)).
+
+On the way, the packets cross the home router: ARP finds the gateway's MAC, and NAT rewrites the source address. ISP routers then forward them by longest-prefix match until they reach the server's network ([Routing](lesson:cn-routing), [NAT](lesson:cn-nat)).
 
 Walkthrough: [TCP connect](uth:tcp-connect).
 
@@ -75,7 +124,11 @@ Walkthrough: [TCP connect](uth:tcp-connect).
 
 *Why this step:* the TCP stream crosses networks you don't control — anyone on the path could read or change it, or pretend to be the server.
 
-ClientHello (with key share, SNI, ALPN `h2`) → ServerHello + encrypted certificate chain + CertificateVerify + Finished → client verifies the chain to a trusted root, checks the hostname, derives keys, sends Finished + the first request. One round trip ([TLS Handshake](lesson:cn-tls-handshake)).
+1. The client sends a ClientHello with its key share, the server name (SNI) and the protocols it speaks (ALPN `h2`).
+2. The server answers with a ServerHello and then, already encrypted, its certificate chain, a CertificateVerify signature and Finished.
+3. The client verifies the chain up to a trusted root, checks the hostname and derives the keys. It sends its own Finished, followed at once by the first request.
+
+That is one round trip ([TLS Handshake](lesson:cn-tls-handshake)).
 
 Walkthrough: [HTTPS connect](uth:https-connect).
 
@@ -94,7 +147,7 @@ Over HTTP/2 it's a HEADERS frame on a new stream, HPACK-compressed ([HTTP/2](les
 
 *Why this step:* one server can't serve everyone and can't be close to everyone, so something in front spreads requests and answers what it can from nearby.
 
-The IP likely belongs to a **CDN or load balancer**, not the app server. A CDN may serve cached static assets itself ([CDN](lesson:cn-cdn)). For dynamic requests, an L7 load balancer terminates TLS, applies routing rules, picks a healthy backend (round robin / least connections), and forwards the request over a pooled connection ([Proxies & Load Balancers](lesson:cn-proxies-load-balancers)).
+The IP likely belongs to a **CDN or load balancer**, not the app server. A CDN may serve cached static assets itself ([CDN](lesson:cn-cdn)). For dynamic requests, an L7 load balancer terminates TLS and applies its routing rules. It picks a healthy backend (round robin, least connections) and forwards the request over a pooled connection ([Proxies & Load Balancers](lesson:cn-proxies-load-balancers)).
 
 ### 7. The server kernel
 
@@ -106,15 +159,31 @@ Walkthrough: [HTTP request reaching the server](uth:http-request-server).
 
 ### 8. The application
 
-The framework parses the HTTP request, runs middleware (auth: look up the session — maybe in Redis — [Redis & Caching](lesson:db-redis-caching)), routes to a handler on a worker thread or event-loop task ([Thread Pools](lesson:os-thread-pools)). The handler borrows a database connection from its **pool** ([Connection Management](lesson:x-connection-management)).
+The framework parses the HTTP request and runs middleware, such as authentication that looks up the session, perhaps in Redis ([Redis & Caching](lesson:db-redis-caching)). It routes the request to a handler on a worker thread or an event-loop task ([Thread Pools](lesson:os-thread-pools)). The handler borrows a database connection from its **pool** ([Connection Management](lesson:x-connection-management)).
+
+**The same step in a Spring Boot service on Tomcat.** An acceptor thread accepts the connection, and a poller thread watches all open connections with epoll (Java NIO's `Selector`). When a request's bytes arrive, a worker thread runs the filters, the controller and the repository. The repository borrows a JDBC connection from HikariCP and blocks while the database answers. Then Jackson writes the response as JSON. Each stage has a limit, and a queue behind it:
+
+| Stage | Spring Boot default | Where a request waits when it's full |
+|---|---|---|
+| Open connections (`server.tomcat.max-connections`) | 8,192 | the kernel's listen backlog (`server.tomcat.accept-count`, 100); after that, new connections time out |
+| Worker threads (`server.tomcat.threads.max`) | 200 | Tomcat's task queue: the request has arrived, but no thread runs it yet |
+| Database connections (`spring.datasource.hikari.maximum-pool-size`) | 10 | inside `getConnection()`, for up to `connection-timeout` (30 s) |
+
+Notice the mismatch: 200 threads share 10 connections. Under load, most threads end up waiting for a connection, which is where [Overloaded Server](lesson:x-overloaded-server) picks up the story. With virtual threads on (`spring.threads.virtual.enabled=true`, Spring Boot 3.2+), each request gets its own cheap thread instead, but the 10 connections remain the limit.
 
 ### 9. The database
 
-`SELECT … FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT 20` travels over the pooled TCP connection; the database parses, plans (index scan on `(customer_id, created_at)`), reads pages from its buffer pool (or disk), checks MVCC visibility, and streams rows back ([SQL Query Journey](lesson:x-sql-query-journey)).
+`SELECT … FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT 20` travels over the pooled TCP connection. The database parses and plans it (an index scan on `(customer_id, created_at)`). It reads pages from its buffer pool, or from disk, checks MVCC visibility and streams the rows back ([SQL Query Journey](lesson:x-sql-query-journey)).
 
 ### 10. The response and rendering
 
-The app serializes JSON/HTML, the response flows back through the proxy (maybe compressed with Brotli), and the browser parses HTML, builds the DOM and CSSOM, fetches subresources (parallel streams on the same HTTP/2 connection), runs JavaScript, lays out and paints. Subsequent requests reuse the connection: no DNS, TCP or TLS cost.
+The app serializes JSON or HTML, and the response flows back through the proxy, perhaps compressed with Brotli. The browser then:
+
+- parses the HTML into the DOM, and the CSS into the CSSOM;
+- fetches subresources as parallel streams on the same HTTP/2 connection;
+- runs JavaScript, lays out the page and paints it.
+
+CSS blocks rendering until it has loaded, and a plain `<script>` tag stops the HTML parser while it downloads and runs. That is why critical CSS is kept small and scripts are marked `defer` or `async`. Later requests reuse the connection, so they pay no DNS, TCP or TLS cost.
 
 ::viz{id=encapsulation}
 
@@ -123,15 +192,33 @@ The app serializes JSON/HTML, the response flows back through the proxy (maybe c
 :::depth{level=advanced}
 ### Where the packets actually go
 
-Each hop re-encapsulates: the IP packet stays (TTL decremented, checksum updated, NAT rewriting addresses at the home router), while the Ethernet/Wi-Fi frame is rebuilt per link with new MAC addresses ([Encapsulation](lesson:cn-encapsulation)). Congestion control starts with a small window (slow start), so the first response bytes arrive in a few round trips if the page is large — another reason to keep critical HTML small ([Congestion Control](lesson:cn-tcp-congestion-control)).
+Each hop re-encapsulates. The IP packet stays, with its TTL decremented and its checksum updated, and the home router's NAT rewrites its addresses. The Ethernet or Wi-Fi frame is rebuilt for every link, with new MAC addresses ([Encapsulation](lesson:cn-encapsulation)). Congestion control starts with a small window (slow start), so a large page needs several round trips to arrive. That is another reason to keep the critical HTML small ([Congestion Control](lesson:cn-tcp-congestion-control)).
 
 ### Resumption and 0-RTT
 
-Returning visitors resume TLS sessions with PSK tickets; TLS 1.3 0-RTT (and QUIC) can send the request in the first flight — at the cost of replay risk, so it's limited to idempotent requests ([HTTP/3 & QUIC](lesson:cn-http3-quic)).
+Returning visitors resume TLS sessions with PSK tickets. With TLS 1.3 0-RTT (and with QUIC), the request can even ride in the first flight. An attacker could replay that early data, so 0-RTT is limited to idempotent requests ([HTTP/3 & QUIC](lesson:cn-http3-quic)).
 
 ### Server-side concurrency
 
-Thousands of such requests arrive concurrently. Event-loop servers (nginx, Node.js) multiplex sockets with epoll on few threads; thread-per-request servers use pools; both are bounded by the database connection pool and CPU ([Overloaded Server](lesson:x-overloaded-server)).
+Thousands of such requests arrive concurrently. Event-loop servers (nginx, Node.js, Netty) multiplex sockets with epoll on a few threads, and thread-per-request servers such as Tomcat use pools. Both are bounded by the database connection pool and the CPU ([Overloaded Server](lesson:x-overloaded-server)).
+
+### Measuring each step
+
+`curl` can time each phase of a real request. Its timings are cumulative, counted from the start:
+
+```bash
+curl -o /dev/null -s -w 'dns %{time_namelookup}\ntcp %{time_connect}\ntls %{time_appconnect}\nttfb %{time_starttransfer}\ntotal %{time_total}\n' https://shop.example.com/orders
+```
+
+```text
+dns 0.045212      45 ms resolving the name
+tcp 0.085397      +40 ms: one round trip for the TCP handshake
+tls 0.125630      +40 ms: one round trip for TLS 1.3
+ttfb 0.180114     +55 ms: request out, 15 ms of server time, first byte back
+total 0.212480    +32 ms: the rest of the HTML
+```
+
+Each difference is one step of the journey; the numbers match the example below. For real users, the browser's Navigation Timing API (`performance.getEntriesByType("navigation")`) records the same phases.
 :::
 
 ## Example
@@ -148,6 +235,10 @@ A cold first visit, 40 ms RTT, uncached DNS:
 | HTML download + CSS/JS (parallel on the same connection) + render | + 300–800 ms |
 
 Warm repeat visit: DNS cached, connection reused, static assets fresh in cache → TTFB ≈ 55 ms and far fewer bytes. Most web performance work is removing round trips and bytes from the cold path.
+
+Rebuild this budget yourself: change one setting at a time, such as the TLS version, HTTP/3, a CDN or the page size, and watch which round trips disappear.
+
+::lab{id=page-load}
 
 ## Complexity & Performance
 
@@ -208,6 +299,22 @@ DNS results are cached, the TCP/TLS connection is reused (or TLS resumed), stati
 
 Serve from edges closer to users: a CDN terminating TCP/TLS near the user (short handshakes) with persistent, pre-warmed connections to the origin; cache what's cacheable at the edge (including API responses with short TTLs/stale-while-revalidate); enable TLS 1.3, session resumption, HTTP/2 or HTTP/3; reduce DNS time with long TTLs where safe; and reduce server time (database query optimization, caching). For truly global low latency, deploy regional application replicas with local read replicas.
 
+### [L2 · how] In a Spring Boot service, which threads and pools does one request pass through, and where can it queue?
+
+Tomcat's acceptor thread accepts the TCP connection, up to 8,192 open connections; beyond that, new connections wait in the kernel's listen backlog (100). A poller thread watches the open sockets with epoll and hands each request that arrives to a worker thread from a pool of 200. The worker runs the filters, the controller and the repository code. The repository borrows a JDBC connection from HikariCP (10 by default) and blocks while the query runs.
+
+So a request can queue in three places: the listen backlog, Tomcat's task queue when all 200 workers are busy, and HikariCP's `getConnection()` when all 10 connections are lent out. Under load the last one is the usual culprit, because 200 threads share 10 connections.
+
+### [L2 · what-if] How does the journey change with HTTP/3?
+
+DNS is the same; the browser learns that the site speaks HTTP/3 from an `Alt-Svc` header or an HTTPS DNS record. The connection is QUIC over UDP, which merges the transport and TLS 1.3 handshakes into one round trip. A new connection therefore gets its first response byte after 2 round trips instead of 3, and a resumed one can use 0-RTT for idempotent requests. A lost packet stalls only its own stream, and the connection survives a change of IP address (Wi-Fi to mobile), because it is identified by a connection ID. Behind the load balancer that terminates QUIC, the rest of the journey is unchanged.
+
+### [L3 · debugging] Users see a 2-second time to first byte, but the server's log says the handler took 50 ms. Where can the rest of the time go?
+
+Outside the handler's own timer. Before the handler starts, the time can go to DNS, the TCP and TLS handshakes, queueing at the load balancer, the kernel's accept queue, Tomcat's task queue (all worker threads busy) or a GC pause. Inside the request but outside the timed code, it can go to waiting for a pooled connection, or to filters that run before the timer.
+
+To find it, compare the client's view (`curl -w` or browser timings) with the load balancer's log (total request time vs time spent at the target), the server's access log (Tomcat's `%D` request duration), thread-pool and HikariCP pending-connection metrics, and GC logs. The gap is almost always a queue.
+
 ## Practice
 
 ### [numeric 3] How many round trips before the first HTTP response byte arrives on a brand-new HTTPS connection using TCP and TLS 1.3 (DNS cached, ignore server time)?
@@ -225,6 +332,67 @@ TCP handshake (1) + TLS 1.3 handshake (1) + HTTP request/response (1) = **3** ro
 
 Completed connections wait in the accept queue until the application accepts them.
 
+### [numeric 220 unit=ms] A first visit uses TLS 1.2, which needs two round trips, instead of TLS 1.3. The RTT is 40 ms, DNS takes 45 ms and the server needs 15 ms. What is the time to first byte?
+
+:::answer
+DNS 45 + TCP 40 + TLS 1.2 (2 × 40) 80 + request and response 40 + server 15 = **220** ms. TLS 1.3 saves one round trip and gives 180 ms.
+:::
+
+### [numeric 500] In a Spring Boot service, 200 Tomcat worker threads share a HikariCP pool of 10 connections, and every request holds a connection for 20 ms. What is the most requests per second the service can complete, however many threads it has?
+
+:::answer
+By Little's law, each connection completes 1 / 0.020 = 50 requests per second, so 10 connections complete 10 × 50 = **500**. The other 190 threads can only queue for a connection. To go faster, shorten the hold time or raise the pool size, if the database can take it.
+:::
+
+### [exercise] `curl -w` reports, cumulatively: dns 0.012, tcp 0.052, tls 0.131, ttfb 0.389, total 0.402 (seconds). How long did each step take, what does each number suggest, and what would you look at first?
+
+:::solution
+Take the differences:
+
+- DNS 12 ms: the resolver had the name cached.
+- TCP 40 ms: one round trip, so the RTT is about 40 ms.
+- TLS 79 ms: about two round trips. That points to TLS 1.2 or a missed session resumption; TLS 1.3 would take one, 40 ms.
+- Request to first byte 258 ms: one round trip (40 ms) plus about 218 ms of server time.
+- Download 13 ms: small.
+
+Server time is the largest piece by far, so investigate it first: traces, pool checkout time, query time ([Slow Endpoint](lesson:x-slow-query)). Enabling TLS 1.3 and resumption would save another 40 ms on new connections.
+:::
+
+### [exercise] Step through the [encapsulation visualization](viz:encapsulation) until the request reaches the server. At which step does code you wrote first run, and what has already happened to the request by then?
+
+:::solution
+Your code runs only at the last step, "Server · application". Before that, at "Server · NIC + kernel", the NIC has checked the CRC, IP has recognized its own address and removed its header, and TCP has found the socket by its 4-tuple. TCP has also put the bytes in the receive buffer in order, sent the ACK and woken the server's `read()`. Then the TLS library, inside the server process, decrypted the record.
+
+So the kernel has already acknowledged the data before any application code sees it. In a real deployment, TLS usually ends earlier still, at the load balancer, and the application receives plain HTTP over a pooled connection from it.
+:::
+
+### [mcq] A user types `http://shop.example.com`, and the site is on the browser's HSTS list. What does the browser do first?
+
+- [ ] Sends a plain HTTP request to port 80 and follows the 301 redirect to HTTPS
+- [x] Rewrites the URL to `https://` itself and connects to port 443, with no plain-HTTP request at all
+- [ ] Asks DNS for the site's TLS certificate
+- [ ] Shows a cached copy of the page
+
+HSTS tells the browser to use HTTPS for that host without asking. Skipping the first plain request closes the window in which an attacker could intercept it and keep the user on HTTP.
+
+### [exercise] In the [Page Load Timeline lab](lab:page-load), compare "Far away" with "Far away, with a CDN". The HTML can't be cached at the edge. Where does the CDN still save time, and why does the request phase itself get slightly longer?
+
+:::solution
+Time to first byte drops from 660 ms to 295 ms, and the page is ready at 409 ms instead of 1,144 ms.
+
+- The handshakes now end at the edge, 15 ms away: TCP and TLS cost 15 ms each instead of 200 ms.
+- The CSS and JS come from the edge's cache: 34 ms instead of 219 ms.
+- The HTML download's extra slow-start round costs 15 ms instead of 200 ms, because slow start runs between the browser and the edge.
+
+The request phase grows from 215 ms to 220 ms because the request now takes two hops: 15 ms to the edge, then 190 ms from the edge to the origin, against 200 ms direct. That trip happens once, over a connection the edge keeps open, instead of once per handshake.
+:::
+
+### [numeric 3] TCP starts with a window of 10 segments (about 14.6 KB) and doubles it every round trip. How many round trips does a fresh connection need to deliver a 50 KB HTML page?
+
+:::answer
+14.6 KB in the first round, then 29.2 KB (43.8 KB in total), which is not enough, then 58.4 KB more: **3** round trips. A page under 14.6 KB arrives in one, which is why critical HTML and CSS are kept that small. The [Page Load Timeline lab](lab:page-load) shows the extra rounds as you change the HTML size.
+:::
+
 ## Quick Revision
 
 - Browser caches → DNS → TCP (1 RTT) → TLS 1.3 (1 RTT) → HTTP (1 RTT + server time) → render.
@@ -232,3 +400,6 @@ Completed connections wait in the accept queue until the application accepts the
 - Server: NIC → interrupt → kernel TCP → socket buffer → epoll wakes app → handler → pooled DB connection → query → response.
 - Round trips dominate; caching and connection reuse remove them.
 - Know the failure signature per layer: NXDOMAIN, timeout/refused, cert error, 502/503/504, 500, slow DB.
+- Spring Boot path: Tomcat accepts (8,192 connections, backlog 100) → 200 worker threads → HikariCP (10 connections). Under load, requests usually queue at the pool.
+- Time a real request with `curl -w` (dns, tcp, tls, ttfb, total): each difference is one step.
+- HTTP/3: QUIC merges the transport and TLS handshakes, so a new connection gets its first byte after 2 round trips.

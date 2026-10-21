@@ -28,7 +28,7 @@ import {
 } from "./types";
 import { createRenderer, parseMarkdown, plainText, slugify, splitAnswer, splitByHeading } from "./markdown";
 import { applyGlossary } from "./glossary";
-import { GLOSSARY } from "@content/glossary";
+import { GLOSSARY, type GlossaryEntry } from "@content/glossary";
 import { visit } from "unist-util-visit";
 
 const CONTENT_DIR = path.join(process.cwd(), "content");
@@ -651,23 +651,43 @@ async function renderPractice(p: RawPractice, lessonId: string): Promise<Practic
   };
 }
 
+let ambiguous: Set<string> | null = null;
+/** Glossary terms whose name (or an alias) is defined by more than one subject, e.g. "page". */
+function ambiguousTerms(subjectOf: (lessonId: string) => string | undefined): Set<string> {
+  if (ambiguous) return ambiguous;
+  const subjectsByName = new Map<string, Set<string>>();
+  for (const e of GLOSSARY)
+    for (const n of [e.term, ...(e.aliases ?? [])]) {
+      const key = n.toLowerCase();
+      if (!subjectsByName.has(key)) subjectsByName.set(key, new Set());
+      subjectsByName.get(key)!.add(subjectOf(e.lesson) ?? "");
+    }
+  ambiguous = new Set(
+    GLOSSARY.filter((e) => [e.term, ...(e.aliases ?? [])].some((n) => subjectsByName.get(n.toLowerCase())!.size > 1)).map((e) => e.term),
+  );
+  return ambiguous;
+}
+
 export async function renderLesson(id: string): Promise<RenderedLesson | null> {
   const rec = getLessonRecord(id);
   if (!rec) return null;
   const r = renderer();
-  // Database and OS lessons get hover definitions for jargon on its first use (content/glossary.ts).
-  // A term applies only within its own subject: "page" means different things in the two tracks.
+  // Lessons get hover definitions for jargon on its first use (content/glossary.ts).
+  // In a subject's own lessons, a term applies only within that subject: "page" means
+  // different things in the OS and database tracks. Cross-domain lessons draw on all
+  // three, minus any word the tracks define differently.
   const prose = rec.sections.filter((s) => s.key !== "interview-questions" && s.key !== "practice");
   const lessons = load().lessonsById;
-  const marked =
+  const subjectOf = (lessonId: string) => lessons.get(lessonId)?.meta.subject;
+  const applies =
     rec.meta.subject === "db" || rec.meta.subject === "os" || rec.meta.subject === "cn"
-      ? applyGlossary(
-          [rec.intro, ...prose.map((s) => s.nodes)],
-          id,
-          (lessonId) => lessons.get(lessonId)?.meta.href,
-          (entry) => lessons.get(entry.lesson)?.meta.subject === rec.meta.subject,
-        )
-      : [rec.intro, ...prose.map((s) => s.nodes)];
+      ? (entry: GlossaryEntry) => subjectOf(entry.lesson) === rec.meta.subject
+      : rec.meta.subject === "x"
+        ? (entry: GlossaryEntry) => !ambiguousTerms(subjectOf).has(entry.term)
+        : null;
+  const marked = applies
+    ? applyGlossary([rec.intro, ...prose.map((s) => s.nodes)], id, (lessonId) => lessons.get(lessonId)?.meta.href, applies)
+    : [rec.intro, ...prose.map((s) => s.nodes)];
   const sections: RenderedSection[] = [];
   for (const s of rec.sections) {
     if (s.key === "interview-questions" || s.key === "practice") {

@@ -70,7 +70,7 @@ An index is a sorted copy of some columns with pointers to the rows. It helps wh
 | `col LIKE 'abc%'` | ✔ prefix range (with suitable collation/opclass) |
 | `col LIKE '%abc'` | ✘ no fixed prefix (use trigram/full-text indexes) |
 | `lower(col) = 'x'`, `col + 1 = 5`, `date(col) = …` | ✘ unless there's an expression index on exactly that expression |
-| `col_text = 42` (type mismatch/implicit cast on the column) | ✘ often |
+| `int_col = 42.0` (a `numeric` value, so PostgreSQL casts the column) | ✘ |
 | `col IS NULL` | ✔ in PostgreSQL |
 | `col <> 5` | usually ✘ (matches most rows) |
 

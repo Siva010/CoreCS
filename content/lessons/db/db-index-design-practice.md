@@ -66,7 +66,7 @@ flowchart TD
 | Cause | Example | Fix |
 |---|---|---|
 | Function on the column | `WHERE date(created_at) = '2024-05-01'` | range on the bare column, or expression index |
-| Implicit cast on the column | `varchar` column compared with an integer / `uuid` compared with `text` | pass correctly typed parameters |
+| Implicit cast on the column | an integer column compared with a `numeric` or `float8` value, such as a Java `BigDecimal` or `double` parameter: PostgreSQL casts the column (`customer_id::numeric`). In MySQL, also a `varchar` column compared with a number | pass parameters of the column's type |
 | Leading wildcard | `LIKE '%son'` | trigram GIN index, full text, or reversed-string index |
 | OR across different columns | `WHERE email = ? OR phone = ?` | separate indexes (BitmapOr) or `UNION ALL` of two queries |
 | Not a leftmost prefix | index `(a, b)`, query on `b` | reorder or add an index |

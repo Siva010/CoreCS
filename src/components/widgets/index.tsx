@@ -47,6 +47,8 @@ const WIDGETS: Record<string, ComponentType> = {
   "error-detection": lazy(() => import("./cn/ErrorDetection")),
   "arq-protocols": lazy(() => import("./cn/ArqProtocols")),
   "routing-algorithms": lazy(() => import("./cn/RoutingAlgorithms")),
+  "overload-retries": lazy(() => import("./x/OverloadRetries")),
+  "page-load": lazy(() => import("./x/PageLoad")),
   // Databases
   "sql-playground": lazy(() => import("./db/SqlPlayground")),
   "query-plan": lazy(() => import("./db/QueryPlan")),
