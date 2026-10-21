@@ -76,7 +76,7 @@ sequenceDiagram
 
 Walking root → TLD → authoritative for every lookup would take hundreds of milliseconds and melt the root servers. Caching is what makes the design work. A lookup may be answered by any of these, in order:
 
-1. The **application** (JVM's InetAddress cache, browser DNS cache — `chrome://net-internals/#dns`).
+1. The **application**: the JVM's `InetAddress` cache (30 s by default, whatever the record's TTL says: [Networking in Java](lesson:cn-java-networking)), or the browser's DNS cache (`chrome://net-internals/#dns`).
 2. The **OS** (systemd-resolved, nscd, macOS mDNSResponder; many Linux containers have no OS cache at all).
 3. The **recursive resolver** (shared by all its users — the most important cache).
 4. Authoritative servers (the source of truth).
@@ -95,12 +95,12 @@ Each cached record lives until its **TTL** expires. **Negative answers** (NXDOMA
 
 ### What happens when I type google.com? (the DNS part)
 
-The browser checks its own cache → asks the OS stub resolver → which may check `/etc/hosts` and its cache → sends a query to the recursive resolver → which answers from cache (most likely, for a popular name) or walks root → `.com` → `google.com`'s authoritative servers. For large services the authoritative answer is **dynamic**: GeoDNS/latency-based routing may return an IP of a nearby data center or CDN edge, based on the resolver's location or the EDNS Client Subnet hint. Only then can TCP/QUIC and TLS start ([Opening a Website](lesson:x-website-journey)).
+The browser checks its own cache, then asks the OS stub resolver, which may check `/etc/hosts` and its own cache. Next comes a query to the recursive resolver, which answers from cache (most likely, for a popular name) or walks root → `.com` → `google.com`'s authoritative servers. For large services the authoritative answer is **dynamic**: GeoDNS or latency-based routing may return the IP of a nearby data center or CDN edge, based on the resolver's location or the EDNS Client Subnet hint. Only then can TCP/QUIC and TLS start ([Opening a Website](lesson:x-website-journey)).
 
 :::depth{level=advanced}
 ### DNSSEC
 
-DNS answers were originally unauthenticated, so an attacker able to inject a forged response (**cache poisoning**, e.g., the 2008 Kaminsky attack exploiting predictable transaction IDs) could redirect a whole resolver's users. Mitigations: randomized source ports and query IDs, 0x20 case randomization, and **DNSSEC**, which signs records with a chain of keys from the root down (DS records in the parent, DNSKEY/RRSIG in the zone) so validating resolvers can verify authenticity. DNSSEC provides integrity, not confidentiality (that's DoT/DoH), and misconfigured signatures cause validation failures that look like outages.
+DNS answers were originally unauthenticated. An attacker able to inject a forged response (**cache poisoning**, as in the 2008 Kaminsky attack on predictable transaction IDs) could redirect a whole resolver's users. Mitigations: randomized source ports and query IDs, 0x20 case randomization, and **DNSSEC**. DNSSEC signs records with a chain of keys from the root down (DS records in the parent, DNSKEY/RRSIG in the zone), so validating resolvers can verify authenticity. It provides integrity, not confidentiality (that's DoT/DoH), and misconfigured signatures cause validation failures that look like outages.
 :::
 
 ## Example
@@ -183,6 +183,10 @@ Resolvers and clients cached the old answer until its TTL expired; some caches (
 
 Use multiple authoritative DNS providers (secondary DNS) with independent infrastructure, sensible TTLs (long enough to survive short provider outages, short enough for failover), health-checked DNS failover or anycast front doors, monitoring of resolution from many vantage points, and for internal clients: local caching resolvers, multiple upstream resolvers, retry/timeout tuning, and applications that respect TTLs without failing hard on transient DNS errors (serve stale where acceptable).
 
+### [L2 · how] A Java service calls `api.partner.com`. Which caches can answer the lookup, and how long can each keep a stale answer?
+
+In order: the JVM's `InetAddress` cache, which applies its own fixed time (`networkaddress.cache.ttl`, 30 s by default) instead of the record's TTL; the operating system's resolver cache, if there is one (often none in containers); then the recursive resolver, which honours the record's TTL. Negative answers are cached too: 10 s in the JVM, and the zone's negative TTL at the resolver. On top of all that, pooled connections keep using the IP they connected to until they are closed, so after a DNS change a service may need its connection pool recycled.
+
 ## Practice
 
 ### [mcq] Which server gives the final answer for www.example.com's A record?
@@ -203,6 +207,43 @@ Root and TLD servers only return referrals.
 
 Caches keep the answer for its TTL from when it was cached.
 
+### [numeric 3] A recursive resolver with a completely empty cache resolves `www.example.com`. How many queries does the resolver itself send to authoritative servers?
+
+:::answer
+**3**: one to a root server (referral to `.com`), one to a `.com` TLD server (referral to `example.com`'s name servers), and one to `example.com`'s authoritative server, which returns the A record. Glue records in the referrals save extra lookups for the name servers' own addresses.
+:::
+
+### [numeric 55 unit=minutes] At 10:00 a user looks up `new.example.com` before it exists and gets NXDOMAIN. The zone's negative-caching TTL is 3,600 s. The record is created at 10:05. For how many minutes after its creation can that user's resolver keep answering NXDOMAIN?
+
+:::answer
+The NXDOMAIN was cached at 10:00 for 3,600 s, until 11:00. That is **55** minutes after the record was created. Creating DNS records ahead of time avoids this trap.
+:::
+
+### [numeric 512 unit=bytes] What was the original maximum size of a DNS message over UDP, before EDNS(0)?
+
+:::answer
+**512** bytes. Larger answers set the TC (truncated) flag and the client retries over TCP. EDNS(0) lets clients advertise larger UDP buffers; about 1,232 bytes is the common safe choice that avoids IP fragmentation.
+:::
+
+### [mcq] What is the difference between DoT and DoH?
+
+- [ ] DoT encrypts queries; DoH only authenticates them
+- [x] Both encrypt DNS; DoT uses its own port (853), while DoH sends DNS inside HTTPS on port 443, where it blends in with web traffic
+- [ ] DoH is for authoritative servers; DoT for resolvers
+- [ ] DoT works over UDP; DoH over TCP
+
+Both hide queries from on-path observers. Because DoH uses the HTTPS port, networks can't easily block or inspect it separately, which is useful against censorship and frustrating for corporate DNS filtering.
+
+### [exercise] In the [DNS resolution simulator](lab:dns-resolver), resolve a name with a cold cache, then resolve it again, then advance time past its TTL and resolve once more. Count the queries the resolver sends each time and explain the differences.
+
+:::solution
+- **Cold cache:** the resolver walks the hierarchy: root → TLD → authoritative, about 3 queries (more if a CNAME points into another zone). This takes tens to hundreds of milliseconds.
+- **Second lookup:** answered from the resolver's cache, with 0 queries; the TTL in the answer has counted down by the time that has passed.
+- **After the TTL expires:** the record has gone, but the resolver still caches the referrals (the TLD's and the zone's NS records have longer TTLs, often days). So it asks the authoritative server directly: 1 query, not 3.
+
+This is why the long TTLs high in the hierarchy keep the root and TLD servers lightly loaded, while short TTLs on individual records still allow fast changes.
+:::
+
 ## Quick Revision
 
 - Stub resolver → recursive resolver (cache) → root → TLD → authoritative (iterative referrals).
@@ -211,3 +252,5 @@ Caches keep the answer for its TTL from when it was cached.
 - 13 root identities, 1,000+ anycast instances; glue records avoid circular lookups.
 - Lower TTLs before migrations; multiple providers for resilience; lost DNS packets cost seconds.
 - DNSSEC = authenticity; DoH/DoT = privacy.
+- Cold lookup: resolver → root → TLD → authoritative (3 queries); later lookups reuse cached referrals. Negative answers cached for the SOA's negative TTL.
+- JVM caches lookups 30 s by default regardless of TTL; pooled connections ignore DNS changes.

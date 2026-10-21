@@ -43,7 +43,7 @@ HTTP/3 is simply HTTP's semantics mapped onto QUIC streams.
 
 **Why not just fix TCP?** Because TCP lives in every OS kernel and every middlebox expects its exact header layout. A new TCP feature needs the whole internet's kernels and boxes to cooperate.
 
-**The idea.** Build a new transport *on top of UDP* (which every network already passes), run it in the application rather than the kernel (so it can ship as fast as a browser update), and encrypt its headers (so middleboxes can't freeze it in place again). Then fix TCP's limitations inside it.
+**The idea.** Build a new transport *on top of UDP*, which every network already passes. Run it in the application rather than the kernel, so it can ship as fast as a browser update. And encrypt its headers, so middleboxes can't freeze it in place again. Then fix TCP's limitations inside it.
 
 :::callout[That's all it is]{type=insight}
 QUIC is TCP's job (reliability, congestion control) plus TLS, rebuilt on UDP in user space — with separate streams so one lost packet doesn't block the others. HTTP/3 is HTTP running over it.
@@ -174,6 +174,14 @@ Connections are identified by connection IDs rather than the IP/port 4-tuple. Wh
 
 0-RTT data can be replayed by an attacker who captured it, since the server can't distinguish a replay without state. Services should accept 0-RTT only for safe, idempotent requests (e.g., GETs without side effects), reject or defer non-idempotent ones (e.g., respond 425 Too Early), and use anti-replay measures where available.
 
+### [L2 · numerical] How many round trips before the first response byte with HTTP/3 compared with HTTP/2 over TCP and TLS 1.3, for a new connection?
+
+HTTP/2: TCP handshake (1 RTT) + TLS 1.3 (1 RTT) + request/response (1 RTT) = **3 RTTs**. HTTP/3: QUIC combines the transport and TLS handshakes into 1 RTT, then 1 RTT for the request: **2 RTTs**. With 0-RTT resumption, a returning client sends its request in the first flight and gets the response after **1 RTT**, at the risk of replay for that early data.
+
+### [L3 · why] Why does QUIC limit a server to sending three times what it received before validating the client's address?
+
+UDP source addresses can be spoofed. Without a limit, an attacker could send a small Initial packet with a victim's address, and the server would send its whole handshake (certificates are several kilobytes) to the victim: an amplification attack. Capping the response at 3× the bytes received, with clients required to pad their first packet to at least 1,200 bytes, bounds the amplification until the client proves it can receive at its address.
+
 ## Practice
 
 ### [mcq] With TLS 1.3, how many round trips does a new QUIC connection need before the client can send its HTTP request (no 0-RTT)?
@@ -194,6 +202,35 @@ Transport and cryptographic handshakes are combined.
 
 Endpoints choose connection IDs independent of addresses.
 
+### [numeric 2] A client opens a brand-new HTTP/3 connection (no resumption). After how many round trips does it receive the first byte of the response?
+
+:::answer
+One round trip for the combined QUIC and TLS handshake, then one for the request and response: **2**. HTTP/2 over TCP and TLS 1.3 needs 3.
+:::
+
+### [numeric 3600 unit=bytes] A client's first QUIC packet is 1,200 bytes. Before validating the client's address, at most how many bytes may the server send back?
+
+:::answer
+3 × 1,200 = **3,600** bytes. If the server's certificate chain doesn't fit, it must wait for more data from the client (or validate the address with a Retry) before sending the rest.
+:::
+
+### [mcq] A phone moves from Wi-Fi to cellular in the middle of a download. Why can a QUIC connection continue when a TCP connection can't?
+
+- [ ] QUIC buffers the whole download in advance
+- [ ] QUIC uses the same IP address on both networks
+- [x] QUIC identifies a connection by connection IDs, not by the IP and port 4-tuple, so packets from the new address still match it
+- [ ] TCP could continue too, but browsers disable it
+
+TCP names a connection by its addresses and ports, so a new address means a new connection. QUIC validates the new path and carries on.
+
+### [exercise] In the [head-of-line blocking visualization](viz:hol-blocking), lose one packet with HTTP/3. Which responses are delayed, and why can't the same improvement simply be added to TCP?
+
+:::solution
+Only the stream whose data was in the lost packet waits for the retransmission; the other responses are delivered as their packets arrive. QUIC tracks byte offsets per stream, so data for other streams can be passed to the application out of packet order.
+
+TCP can't do this, because it promises one ordered byte stream: it has no idea that later bytes belong to an independent stream, and it may not deliver them past a gap. Changing that would need changes in every operating system kernel and in middleboxes that inspect TCP. QUIC sidesteps both by running in user space over UDP, with headers encrypted so that middleboxes can't depend on them.
+:::
+
 ## Quick Revision
 
 - QUIC = user-space transport over UDP with TLS 1.3 built in; HTTP/3 = HTTP over QUIC (QPACK headers).
@@ -202,3 +239,4 @@ Endpoints choose connection IDs independent of addresses.
 - Connection IDs → migration across networks (with path validation).
 - Encrypted headers resist ossification; anti-amplification 3× limit.
 - Discovered via Alt-Svc/HTTPS records; TCP fallback when UDP is blocked; more CPU than kernel TCP.
+- New connection to first response byte: HTTP/2 + TLS 1.3 = 3 RTTs; HTTP/3 = 2; 0-RTT = 1 (replayable). Anti-amplification: ≤ 3× received before address validation; client Initial ≥ 1,200 bytes.

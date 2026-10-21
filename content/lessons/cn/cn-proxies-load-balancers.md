@@ -101,9 +101,18 @@ Trust these headers **only from your own proxies** — clients can send forged `
 :::depth{level=advanced}
 ### How big L4 balancers scale
 
-Large L4 systems (Google Maglev, Facebook Katran) run on commodity servers announcing the same virtual IP via **anycast/ECMP** ([BGP & Anycast](lesson:cn-bgp-anycast)); routers spread packets across LB servers; each LB uses **consistent hashing** on the 5-tuple so every packet of a connection reaches the same backend even as LB servers are added/removed; responses may bypass the LB entirely (**direct server return**). They're effectively stateless and scale horizontally.
+Large L4 systems (Google Maglev, Facebook Katran) run on commodity servers that all announce the same virtual IP via **anycast/ECMP** ([BGP & Anycast](lesson:cn-bgp-anycast)). Routers spread packets across the LB servers. Each LB server uses **consistent hashing** on the 5-tuple, so every packet of a connection reaches the same backend even as LB servers are added or removed. Responses may bypass the LB entirely (**direct server return**). They're effectively stateless and scale horizontally.
 
 ### Retries and overload
+
+Retries multiply at each layer that has them:
+
+```mermaid
+flowchart TD
+    U["1 user request"] --> G["API gateway: up to 3 attempts"]
+    G -->|"each attempt"| S["service: up to 3 attempts"]
+    S -->|"each attempt"| D["database: up to 3 × 3 × 3 = 27 calls"]
+```
 
 L7 proxies retry failed idempotent requests — helpful for transient errors, dangerous under overload: each layer retrying 3× turns one user request into 27 backend attempts (**retry amplification**). Use retry budgets (e.g., retries ≤ 10% of requests), only retry idempotent requests, and propagate deadlines ([Overloaded Servers](lesson:x-overloaded-server)).
 :::
@@ -197,6 +206,10 @@ If the database has a brief problem, every instance's health check fails simulta
 
 The LB sends requests to instances that are shutting down (killed before in-flight requests finish, or still registered after the process exits) or to new instances not yet ready. Fix: readiness probes gating traffic, deregistration/draining delays longer than request timeouts, graceful SIGTERM handling (stop accepting, finish in-flight), preStop delay so the LB notices removal first, and keep-alive timeouts on backends longer than the LB's idle timeout.
 
+### [L2 · how] How do you keep retries from making an outage worse?
+
+Retry in one layer only (usually the one closest to the user, or the client library), never in every layer. Retry only idempotent requests, and only for errors that may be transient. Use exponential backoff with jitter, and cap retries with a **retry budget** (for example, retries may add at most 10% to the request rate), so that when a dependency is failing, retries stop instead of tripling its load. Pair this with circuit breakers and deadlines, so retries never outlive the caller's interest in the answer.
+
 ## Practice
 
 ### [mcq] A gRPC service with long-lived HTTP/2 connections is balanced by an L4 load balancer. What problem is likely?
@@ -217,6 +230,57 @@ Use L7 or client-side balancing.
 
 Only trust it when set by your own proxies.
 
+### [numeric 27] A request passes through a gateway, a service and a client library to a database, and each of the three layers retries a failed call up to 3 times in total. In the worst case, how many database calls can one user request cause?
+
+:::answer
+3 × 3 × 3 = **27**. When the database slows down, the retries arrive exactly when it can least handle them, which is why retries belong in one layer, with a budget.
+:::
+
+### [numeric 3] Four backends have 3, 7, 2 and 5 active connections, in that order. Least-connections balancing sends the next request to which backend (number them 1 to 4)?
+
+:::answer
+Backend **3**, which has the fewest active connections (2); the others have 3, 7 and 5. Round robin would have ignored the difference and could have picked backend 2, the busiest.
+:::
+
+### [mcq] With "power of two choices", what does a load balancer do for each request?
+
+- [ ] Sends it to two backends and uses the faster reply
+- [x] Picks two backends at random and sends it to the less loaded of the two
+- [ ] Alternates between the two least-loaded backends
+- [ ] Doubles the weight of healthy backends
+
+Comparing just two random choices avoids both the herd behaviour of always picking the global minimum (every balancer piles onto the same new server) and the variance of pure random choice.
+
+### [exercise] Users see a burst of 502 errors for about a minute during every deploy. Explain what is happening between the load balancer and the instances, and describe a deploy sequence that removes the errors.
+
+:::solution
+**What happens.** The deploy stops old instances while the load balancer still sends them requests: in-flight requests are cut off, and connections the balancer had pooled to those instances are reset. Meanwhile new instances may be registered before they are ready (still starting, caches cold), and fail their first requests. The balancer turns both into 502s.
+
+**A clean sequence:**
+1. Start the new instance and add it only when its **readiness** check passes.
+2. **Deregister** an old instance from the balancer, so it receives no new requests.
+3. Let it **drain**: in-flight requests finish during the deregistration delay (longer than the slowest normal request), and it closes idle keep-alive connections, or sends GOAWAY for HTTP/2.
+4. Only then send it SIGTERM. The application stops accepting connections, finishes its work and exits.
+5. Make the balancer's idle timeout towards backends shorter than the backends' own keep-alive timeout, so it never reuses a connection the backend is about to close.
+:::
+
+### [mcq] A backend reads the client's IP from `X-Forwarded-For: 203.0.113.7, 10.0.0.12`. Which value can it trust, and when?
+
+- [ ] The leftmost, always
+- [ ] The rightmost, always
+- [x] It should trust only the entries added by its own proxies, reading from the right, and take the first address added by a proxy it trusts
+- [ ] Neither: the header is always forged
+
+Clients can send any `X-Forwarded-For` they like, and each proxy appends the address it received from. Only the entries appended by your own infrastructure are reliable.
+
+### [numeric 17.5 ±0.2 unit=ms] Four backends each take 10 ms per request on average, and 320 requests per second arrive. A random balancer gives each backend its own queue of 80 requests per second: four M/M/1 queues, each with a mean response of 50 ms. If requests instead wait in one shared queue and go to whichever backend is free (M/M/4), what is the mean response time?
+
+:::answer
+Both setups keep the backends 80% busy, but the shared queue answers in **17.5** ms on average (17.46), against 50 ms.
+
+With separate queues, a request can wait behind a slow one while another backend sits idle. A shared queue never leaves a backend idle while anyone is waiting. Least-outstanding-requests balancing and the power of two choices get most of this benefit without a central queue. Compute both cases in the [Speedup & Queueing lab](lab:speedup-queueing): Queueing delay with 4 servers at 320 per second, then 1 server at 80 per second.
+:::
+
 ## Quick Revision
 
 - Forward proxy = for clients; reverse proxy = for servers; LB = reverse proxy spreading load.
@@ -225,3 +289,4 @@ Only trust it when set by your own proxies.
 - Health checks (active/passive; readiness vs liveness; don't depend on shared downstreams), draining on deploy.
 - Client identity via X-Forwarded-For/Forwarded/PROXY protocol (trust only your proxies).
 - Beware retry amplification and idle-timeout mismatches.
+- Retries multiply across layers (3 × 3 × 3 = 27): retry in one layer, idempotent only, backoff + jitter + budget. Deploy without 502s: readiness → deregister → drain → SIGTERM.

@@ -11,7 +11,7 @@ relevance: low
 stage: 4
 prerequisites: [cn-nat, cn-udp, cn-crypto-foundations]
 related: [cn-mtu-congestion, cn-realtime, cn-container-networking, cn-tls-handshake]
-tags: [vpn, ipsec, wireguard, openvpn, tls vpn, tunnel, split tunneling, zero trust, nat traversal, hole punching, stun, turn, ice, webrtc, relay]
+tags: [vpn, ipsec, wireguard, openvpn, tls vpn, tunnel, split tunneling, zero trust, nat traversal, hole punching, stun, turn, ice, webrtc, relay, esp, ah, transport mode, tunnel mode, ike]
 ---
 
 ## Mental Model
@@ -64,6 +64,16 @@ Encapsulation adds overhead → a smaller effective MTU (WireGuard default 1,420
 | Typical use | Cloud/site-to-site, enterprise | Modern remote access, mesh VPNs | Legacy remote access |
 
 **TCP-over-TCP meltdown**: tunneling TCP inside a TCP-based VPN stacks two retransmission/congestion loops; under loss, inner and outer TCP both back off and retransmit, collapsing throughput — why UDP transports are preferred for tunnels.
+
+### IPsec in one table
+
+| | Transport mode | Tunnel mode |
+|---|---|---|
+| What is protected | The payload of the original IP packet | The entire original packet, wrapped in a new IP header |
+| Original IP header | Kept (visible) | Hidden inside the encrypted packet |
+| Typical use | Host-to-host encryption | Site-to-site VPNs, gateways |
+
+Two protocols do the work. **ESP** (Encapsulating Security Payload) encrypts and authenticates, and is what almost everyone uses. **AH** (Authentication Header) only authenticates, including the outer IP addresses, which breaks through NAT, so it is rarely used. **IKEv2** negotiates the keys, and NAT traversal wraps ESP in UDP port 4500.
 
 ### Zero trust vs VPN
 
@@ -176,6 +186,18 @@ Each learns its public address/port mapping from a STUN server, they exchange ca
 
 Tunneling TCP inside TCP stacks two reliability and congestion-control loops: under loss, both layers retransmit and back off, causing severe throughput collapse and latency spikes ("TCP meltdown"). A UDP-based tunnel lets the inner transport handle reliability alone, and UDP traverses NATs well.
 
+### [L2 · compare] IPsec transport mode vs tunnel mode, and ESP vs AH?
+
+Transport mode protects only the payload of the original packet and keeps the original IP header, so it suits host-to-host encryption. Tunnel mode encrypts the whole original packet and puts it inside a new IP header between two gateways, hiding the internal addresses: the site-to-site VPN case. ESP provides encryption and integrity and is the normal choice. AH provides integrity only, and covers the outer IP header too, which makes it incompatible with NAT.
+
+### [L2 · compare] STUN vs TURN vs ICE?
+
+STUN tells a peer its public address and port as seen from outside its NAT (a "reflexive candidate"). TURN is a relay server that forwards traffic between peers when no direct path works, typically behind symmetric NATs or strict firewalls; it always works, but costs server bandwidth and latency. ICE is the procedure that gathers all candidates (local, reflexive, relayed), exchanges them through signaling, tests pairs, and picks the best working path.
+
+### [L2 · compare] Full tunnel vs split tunnel?
+
+A full-tunnel VPN sends all of a device's traffic through the VPN gateway: central inspection and control, but every video call and download takes the detour, adding latency and gateway load. A split tunnel sends only traffic for private ranges (and internal DNS names) through the VPN, and everything else directly. It performs better, but internet traffic bypasses corporate controls, and DNS must be configured so internal names go to internal resolvers.
+
 ## Practice
 
 ### [mcq] Which server type relays media between peers when direct NAT traversal fails?
@@ -193,9 +215,51 @@ TURN relays traffic; STUN only discovers addresses.
 WireGuard's default is **1,420** bytes (1,500 − 80), which fits both IPv4 (60 B overhead) and IPv6 (80 B) underlays.
 :::
 
+### [numeric 25 unit=s] WireGuard's documentation suggests a PersistentKeepalive value that keeps NAT mappings alive on most networks, whose UDP timeouts are often around 30 s. What value, in seconds, does it suggest?
+
+:::answer
+**25** s: each keepalive must arrive before the NAT forgets the mapping, and 25 s stays safely under the common 30 s timeouts. With no keepalive, the peer would become unreachable from outside after 30 s of silence.
+:::
+
+### [numeric 4500] On which UDP port does IPsec NAT traversal encapsulate ESP packets?
+
+:::answer
+**4500**. Plain ESP is IP protocol 50 and has no ports, so NAT devices can't track it; wrapping it in UDP lets it cross NATs like any other UDP flow. IKE itself starts on UDP 500.
+:::
+
+### [mcq] Which IPsec setting is used by almost every site-to-site VPN?
+
+- [ ] AH in transport mode
+- [ ] AH in tunnel mode
+- [ ] ESP in transport mode
+- [x] ESP in tunnel mode
+
+Site-to-site VPNs encrypt whole packets between two gateways (tunnel mode) and need encryption, not just authentication (ESP).
+
+### [exercise] Two laptops in different homes try to start a video call. Laptop A's NAT keeps the same public port for every destination; laptop B's NAT uses a new public port for each destination. Walk through what ICE tries and which path the call ends up using.
+
+:::solution
+1. **Gather candidates.** Each laptop collects its local address, its **reflexive** address from a STUN server (its public address and port as the STUN server saw them), and a **relayed** address on a TURN server.
+2. **Exchange candidates** through the signaling server.
+3. **Check pairs.** Each side sends UDP probes to the other's candidates.
+   - A's NAT is endpoint-independent, so the port STUN saw is the port B's probes need. A is reachable at its reflexive address once A has sent a packet towards B.
+   - B's NAT is symmetric: the port it used towards the STUN server differs from the port it opens towards A. A's probes to B's reflexive address arrive at a port with no mapping and are dropped. But B's probes to A do arrive, from B's new port, and A can reply to that observed address ("peer-reflexive candidate").
+4. **Result.** Because one side is endpoint-independent, a direct path usually still works. If *both* were symmetric, no direct pair would succeed, and the call would use the **TURN relay**.
+:::
+
+### [exercise] In the [routing lab](lab:routing), send a packet from host A to the web server and read R1's NAT step. What entry does R1 create, and what must a packet from the internet match to get through to host A? Use that to explain why two peers behind different NATs can't simply connect, and how hole punching gets around it.
+
+:::solution
+R1 maps 192.168.1.20:51514 to 198.51.100.7:40001 and records the mapping in its connection-tracking table. A packet from outside reaches host A only if it is addressed to 198.51.100.7:40001, and, with most NATs' filtering, comes from the address host A contacted. Anything else is dropped, because no entry tells R1 where it should go.
+
+Two peers behind NATs each have such a gate, and it opens only from the inside, so neither can start the conversation. In hole punching, both peers learn each other's public address and port from a rendezvous (STUN) server. Then they send to each other at the same time: each outgoing packet creates the entry that lets the other's packets in. If a NAT picks a new port for every destination (a symmetric NAT), the learned port is wrong, and traffic has to be relayed through TURN.
+:::
+
 ## Quick Revision
 
 - VPN = encrypted encapsulation to a gateway; site-to-site vs remote access; IPsec, WireGuard (UDP, minimal), TLS VPNs; avoid TCP-over-TCP.
 - Overhead → smaller MTU → MSS clamping; keepalives for NAT mappings; split vs full tunnel (+ split DNS).
 - Zero trust = per-request, per-app authorization vs network-level VPN access.
 - NAT traversal: STUN (discover mapping) + signaling + simultaneous UDP (hole punching); ICE picks paths; TURN relays when symmetric NATs block.
+- IPsec: ESP (encrypt + integrity) vs AH (integrity only, NAT-hostile); transport (payload) vs tunnel (whole packet, site-to-site); IKE on UDP 500, NAT-T on 4500.
+- STUN (learn your public address), TURN (relay), ICE (try all candidate pairs). Full vs split tunnel.

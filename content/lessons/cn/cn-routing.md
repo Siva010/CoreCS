@@ -10,9 +10,10 @@ minutes: 40
 relevance: high
 stage: 2
 prerequisites: [cn-subnetting]
-related: [cn-ip-packet-icmp, cn-nat, cn-bgp-anycast, cn-arp-dhcp]
+related: [cn-ip-packet-icmp, cn-nat, cn-bgp-anycast, cn-arp-dhcp, cn-routing-algorithms]
+labs: [routing-algorithms]
 visualizations: [routing]
-tags: [routing, routing table, longest prefix match, default gateway, default route, next hop, static routing, dynamic routing, ospf, bgp, distance vector, link state, ecmp, forwarding]
+tags: [routing, routing table, longest prefix match, administrative distance, route metric, default gateway, default route, next hop, static routing, dynamic routing, ospf, bgp, distance vector, link state, ecmp, forwarding]
 ---
 
 ## Mental Model
@@ -81,6 +82,16 @@ Because prefixes can overlap (a /8 contains a /16 which contains a /24), one add
 4. LPM lookup → next hop + interface. No match and no default → drop, send **ICMP Destination Unreachable**.
 5. Resolve the next hop's MAC (ARP), re-frame, transmit.
 
+```mermaid
+flowchart TD
+    P["packet arrives"] -->|"addressed to this router"| L["deliver locally"]
+    P -->|"addressed elsewhere"| T["TTL − 1"]
+    T -->|"TTL reached 0"| X["drop; ICMP Time Exceeded<br/>to the sender"]
+    T -->|"TTL still above 0"| M["longest-prefix match"]
+    M -->|"no route, no default"| U["drop; ICMP Destination<br/>Unreachable"]
+    M -->|"route found"| F["ARP for the next hop,<br/>new frame, transmit"]
+```
+
 ::viz{id=routing}
 
 ### Where routes come from (control plane)
@@ -102,6 +113,16 @@ Typing every route by hand works for 5 routers, not 5,000 — and hand-typed rou
 | Algorithm | Bellman-Ford, iterative | Dijkstra |
 | Convergence | Slow; "count to infinity" loops | Fast |
 | Overhead | Low memory, periodic updates | More memory/CPU, flooding of link-state updates |
+
+Both algorithms are worked through step by step in [Routing Algorithms](lesson:cn-routing-algorithms).
+
+### When several routes match: prefix, then preference, then metric
+
+A router can learn the same destination from several sources. It decides in a fixed order:
+
+1. **Longest prefix wins**, whatever its source. A /24 learned from RIP beats a /16 configured by hand.
+2. Among routes for the **same prefix** from different sources, the most trusted source wins. Cisco calls this the **administrative distance**: connected 0, static 1, eBGP 20, OSPF 110, RIP 120 (lower is better). Linux expresses the same preference with route metrics.
+3. Among routes from the **same protocol**, the lowest metric wins: OSPF's summed link costs, or RIP's hop count. Equal metrics can be used together (ECMP).
 
 ## Internal Mechanism
 
@@ -187,6 +208,10 @@ Routing symmetry and filtering: B's network must have a route for 10.1.0.0/16 vi
 
 The router drops it and typically sends an ICMP Destination Unreachable (network unreachable) back to the source, which may surface as an immediate "No route to host"/"Network unreachable" error instead of a timeout.
 
+### [L2 · how] A router learns 10.5.0.0/16 from OSPF and has a static route for 10.5.0.0/16 too. Which one does it use, and what changes if OSPF instead learns 10.5.7.0/24?
+
+For the same prefix, it prefers the more trusted source: on Cisco, static routes have administrative distance 1 and OSPF 110, so the static route wins. If OSPF learns the more specific 10.5.7.0/24, longest-prefix match comes first: packets to 10.5.7.x follow the OSPF /24, while the rest of 10.5.0.0/16 still follows the static route. Preference between sources only breaks ties between routes of equal length.
+
 ## Practice
 
 ### [mcq] A router has routes 172.16.0.0/12, 172.16.5.0/24 and 0.0.0.0/0. Where does a packet to 172.16.5.9 go?
@@ -207,6 +232,48 @@ Longest prefix wins.
 
 BGP is the inter-domain (exterior) routing protocol.
 
+### [numeric 2] A router's table has 10.0.0.0/8 → A, 10.1.0.0/16 → B, 10.1.2.0/24 → C and 0.0.0.0/0 → D. Of the destinations 10.1.2.9, 10.1.3.9, 10.2.0.1, 10.1.200.5 and 8.8.8.8, how many leave via B?
+
+:::answer
+**2**: 10.1.3.9 and 10.1.200.5. Their longest match is the /16. 10.1.2.9 matches the /24 (C), 10.2.0.1 only the /8 (A), and 8.8.8.8 only the default route (D).
+:::
+
+### [numeric 55] A host sends a packet with TTL 64. It crosses 9 routers before reaching the destination host. What TTL does the destination see?
+
+:::answer
+Each router decrements the TTL once: 64 − 9 = **55**. The destination host doesn't decrement it. This is how `ping` output's TTL hints at the hop count.
+:::
+
+### [mcq] A router has a static route and an OSPF route for exactly the same prefix, 172.16.0.0/16. Which does it install (Cisco defaults)?
+
+- [x] The static route, because its administrative distance (1) is lower than OSPF's (110)
+- [ ] The OSPF route, because dynamic routes are always newer
+- [ ] Both, balancing traffic between them
+- [ ] Whichever was learned first
+
+Administrative distance ranks sources for the same prefix. A longer prefix from any source would still beat both.
+
+### [exercise] In the [routing simulator](lab:routing), send a packet to the remote server with TTL 64, then again with TTL 2. Explain each hop's decision in the second run, and say how traceroute uses exactly this behaviour.
+
+:::solution
+With TTL 64 the packet reaches the server: each router strips the frame, decrements the TTL, does a longest-prefix match and re-frames the packet for its next hop, and the edge router also applies NAT.
+
+With TTL 2:
+1. The first router decrements the TTL to 1 and forwards the packet.
+2. The second router decrements it to 0, so it drops the packet. It sends an **ICMP Time Exceeded** back to the sender (through NAT, so it reaches the original host).
+
+Traceroute sends probes with TTL 1, 2, 3 and so on. The router where each probe's TTL runs out identifies itself in its Time Exceeded message, so the probes reveal the path one hop at a time.
+:::
+
+### [mcq] What does a router do with a packet whose destination matches no route, when it has no default route?
+
+- [ ] Floods it out of all interfaces
+- [ ] Sends it back to the previous hop
+- [x] Drops it and sends ICMP Destination Unreachable to the source
+- [ ] Holds it until a route is learned
+
+Routers never flood IP packets. With no matching route the packet is dropped, and an ICMP "network unreachable" tells the sender why.
+
 ## Quick Revision
 
 - Hop-by-hop: each router picks the next hop from its own table.
@@ -215,3 +282,4 @@ BGP is the inter-domain (exterior) routing protocol.
 - Routes: connected, static, IGP (OSPF/IS-IS link-state, RIP distance-vector), BGP between ASes.
 - ECMP spreads flows over equal paths by hashing the 5-tuple.
 - Failures: loops, black holes, asymmetric paths, missing return routes.
+- Route choice order: longest prefix → most trusted source (administrative distance: connected 0, static 1, eBGP 20, OSPF 110, RIP 120) → lowest metric (ties → ECMP).

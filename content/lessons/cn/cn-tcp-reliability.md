@@ -10,9 +10,9 @@ minutes: 45
 relevance: high
 stage: 2
 prerequisites: [cn-tcp-handshake]
-related: [cn-tcp-flow-control, cn-tcp-congestion-control, cn-http2, cn-tail-latency]
+related: [cn-tcp-flow-control, cn-tcp-congestion-control, cn-http2, cn-tail-latency, cn-arq-protocols]
 visualizations: [sliding-window]
-labs: [tcp-handshake]
+labs: [tcp-handshake, arq-protocols]
 tags: [acknowledgment, cumulative ack, retransmission, rto, rtt estimation, karn's algorithm, duplicate ack, fast retransmit, sack, delayed ack, head-of-line blocking, reordering]
 ---
 
@@ -76,6 +76,25 @@ Sender sends segments 1–5 (1,000 bytes each, seq 1, 1001, 2001, 3001, 4001); s
 | seg 5 | ACK 1001 (dup #3) | → sender fast-retransmits seg 2 |
 | seg 2 (retransmitted) | **ACK 5001** | cumulative ACK jumps: everything through 5000 is here |
 
+```mermaid
+%%{init: {"sequence": {"width": 110, "actorMargin": 40}}}%%
+sequenceDiagram
+    participant S as Sender
+    participant R as Receiver
+    S->>R: seg 1 (bytes 1–1000)
+    R-->>S: ACK 1001
+    S-xR: seg 2 (lost)
+    S->>R: seg 3
+    R-->>S: ACK 1001 (duplicate 1)
+    S->>R: seg 4
+    R-->>S: ACK 1001 (duplicate 2)
+    S->>R: seg 5
+    R-->>S: ACK 1001 (duplicate 3)
+    Note over S: 3 duplicates: resend seg 2 now,<br/>without waiting for the timer
+    S->>R: seg 2 again
+    R-->>S: ACK 5001 (segments 3–5 were buffered)
+```
+
 Why **3** duplicates? One or two duplicate ACKs can result from mild **reordering**; three is a heuristic that suggests true loss. (Modern Linux uses RACK — time-based loss detection — which handles reordering better.)
 
 ::viz{id=sliding-window}
@@ -92,14 +111,14 @@ Receivers usually don't ACK every segment immediately: they wait up to ~40 ms (L
 
 ### Head-of-line blocking
 
-Segment 2 is lost; segments 3–100 arrive and sit in the **receiver's out-of-order queue**. The application's `read()` gets nothing new until segment 2's retransmission arrives — at least one extra RTT, or an RTO if fast retransmit can't trigger (e.g., loss of the last segments of a response, where there aren't 3 later segments to generate dup ACKs; **tail loss probes** exist to address this).
+Segment 2 is lost; segments 3–100 arrive and sit in the **receiver's out-of-order queue**. The application's `read()` gets nothing new until segment 2's retransmission arrives: at least one extra RTT. It takes a full RTO if fast retransmit can't trigger, for example when the last segments of a response are lost and there aren't 3 later segments to generate duplicate ACKs. **Tail loss probes** exist to address this.
 
 When one TCP connection carries **multiple independent streams** (HTTP/2 multiplexing many requests), a lost packet belonging to one stream stalls **all** streams — the key motivation for QUIC, which delivers streams independently ([HTTP/3 & QUIC](lesson:cn-http3-quic)).
 
 :::depth{level=advanced}
 ### Spurious retransmissions and timeouts in the tail
 
-A delay spike (e.g., a Wi-Fi retry burst or a GC-paused receiver) can exceed the RTO, triggering a retransmission of data that wasn't lost. Detection (F-RTO, Eifel, DSACK — the receiver reporting duplicate data) lets the sender undo the congestion-window reduction. From an application's perspective, an RTO costs at least 200 ms (Linux minimum) and backs off exponentially — which is why a 0.1% loss rate can move p99 latency from 20 ms to 220+ ms ([Tail Latency](lesson:cn-tail-latency)).
+A delay spike (e.g., a Wi-Fi retry burst or a GC-paused receiver) can exceed the RTO, triggering a retransmission of data that wasn't lost. Detection (F-RTO, Eifel, DSACK — the receiver reporting duplicate data) lets the sender undo the congestion-window reduction. From an application's perspective, an RTO costs at least 200 ms (Linux minimum) and backs off exponentially. That is why a 0.1% loss rate can move p99 latency from 20 ms to 220+ ms ([Tail Latency](lesson:cn-tail-latency)).
 :::
 
 ## Example
@@ -194,6 +213,41 @@ The jump to ~200+ ms at p99 matches TCP's minimum RTO: some requests are hitting
 
 Cumulative ACK: still waiting for byte 1001 — a duplicate ACK.
 
+### [numeric 105 unit=ms] SRTT is 100 ms when a new RTT sample R = 140 ms arrives. Using SRTT ← (7/8)·SRTT + (1/8)·R, what is the new SRTT?
+
+:::answer
+0.875 × 100 + 0.125 × 140 = 87.5 + 17.5 = **105** ms. One slow sample moves the estimate only an eighth of the way.
+:::
+
+### [numeric 175 unit=ms] Same moment: RTTVAR was 10 ms. RTTVAR is updated first, using the old SRTT: RTTVAR ← (3/4)·RTTVAR + (1/4)·|SRTT − R|. What is the new RTO = SRTT + 4·RTTVAR, before any minimum is applied?
+
+:::answer
+RTTVAR = 0.75 × 10 + 0.25 × |100 − 140| = 7.5 + 10 = 17.5 ms. RTO = 105 + 4 × 17.5 = **175** ms. Linux would then raise it to its 200 ms minimum.
+:::
+
+### [numeric 4] A sender sends six segments; only the second is lost. How many duplicate ACKs does the receiver send before the retransmission arrives?
+
+:::answer
+Segment 1 produces a normal ACK. Segments 3, 4, 5 and 6 each arrive out of order and each produces another ACK for segment 2's first byte: **4** duplicates. The third duplicate triggers fast retransmit.
+:::
+
+### [mcq] Why does Karn's algorithm skip RTT samples from retransmitted segments?
+
+- [ ] Retransmissions are always slower than the original
+- [x] The sender can't tell whether the ACK answers the original transmission or the retransmission
+- [ ] Retransmitted segments carry no sequence numbers
+- [ ] The receiver delays ACKs for retransmissions
+
+If the ACK was for the original, timing it from the retransmission gives a sample too short; if it was for the retransmission, timing it from the original gives one too long. TCP timestamps remove the ambiguity, giving a clean sample on every ACK.
+
+### [exercise] In the [sliding window lab](lab:sliding-window), lose one segment in the middle of a full window. Write down the ACKs the receiver sends and when the sender resends. How would the picture change if the lost segment were the *last* one in the window?
+
+:::solution
+**A loss in the middle.** The segments after the gap arrive and are buffered, and each one makes the receiver repeat its ACK for the missing byte. After three duplicates the sender **fast-retransmits** the lost segment, within about one round trip, and the cumulative ACK then jumps past everything that was buffered.
+
+**A loss at the end.** Nothing arrives after it, so no duplicate ACKs come back, and fast retransmit can't fire. The sender has to wait for the **retransmission timeout**, at least 200 ms on Linux, and often much more than the RTT. That is why losses at the tail of a response hurt latency so much, and why modern stacks add tail loss probes and RACK, which detect it sooner.
+:::
+
 ## Quick Revision
 
 - Cumulative ACK = next byte expected; sender keeps unacked data for retransmission.
@@ -202,3 +256,4 @@ Cumulative ACK: still waiting for byte 1001 — a duplicate ACK.
 - **SACK** reports received blocks → retransmit only gaps.
 - Delayed ACK (~40 ms) + Nagle → stalls → TCP_NODELAY.
 - **HOL blocking**: one lost segment stalls all later bytes (and all HTTP/2 streams) → QUIC.
+- RTO update order: RTTVAR from the old SRTT, then SRTT; RTO = SRTT + 4·RTTVAR (Linux min 200 ms). A tail loss gets no duplicate ACKs → waits for the RTO.

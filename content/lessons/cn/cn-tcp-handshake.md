@@ -74,7 +74,7 @@ The client can send data with its third segment; the server's application sees t
 
 ### Cost: one round trip before any data
 
-The client can't send the request until the SYN-ACK arrives → **1 RTT** of setup. With TLS 1.3 add another RTT (TLS 1.2: two) before the first HTTP byte. On a 100 ms RTT link, a new HTTPS connection costs ≥ 200 ms before the request even leaves — the reason for connection reuse, TLS session resumption, TCP Fast Open, 0-RTT and QUIC ([Latency & Bandwidth](lesson:cn-latency-bandwidth)).
+The client can't send the request until the SYN-ACK arrives → **1 RTT** of setup. With TLS 1.3 add another RTT (TLS 1.2: two) before the first HTTP byte. On a 100 ms RTT link, a new HTTPS connection costs at least 200 ms before the request even leaves. That is the reason for connection reuse, TLS session resumption, TCP Fast Open, 0-RTT and QUIC ([Latency & Bandwidth](lesson:cn-latency-bandwidth)).
 
 ### Why the ISN is random
 
@@ -191,6 +191,46 @@ The server's SYN consumes sequence number 9000, so the client acknowledges **900
 
 The host's TCP stack responds to SYN on a closed port with RST (unless a firewall drops it).
 
+### [numeric 240 unit=ms] A browser opens a new HTTPS connection (TCP, then TLS 1.3) to a server 80 ms away (RTT). Ignoring processing time, how long after the first SYN does the first byte of the response arrive?
+
+:::answer
+TCP handshake 1 RTT, TLS 1.3 handshake 1 RTT, then the request goes out and the response comes back 1 RTT later: 3 × 80 = **240** ms. A reused connection would get the response after one RTT, 80 ms.
+:::
+
+### [numeric 15 unit=s] A client's SYN gets no answer. The first retransmission comes after 1 s and each wait doubles, and the kernel allows 3 retransmissions. How long until `connect()` fails?
+
+:::answer
+It waits 1 s, 2 s and 4 s before the three retransmissions, then 8 s for an answer to the last one: 1 + 2 + 4 + 8 = **15** s. Linux's default of 6 retries gives 127 s, which is why clients need their own connect timeout.
+:::
+
+### [mcq] `connect()` fails immediately with "connection refused" for one host, but hangs and then times out for another. What is the difference?
+
+- [x] The first host answered the SYN with an RST (nothing listening); for the second, the SYN or its reply is being dropped
+- [ ] The first host is down; the second has a full accept queue
+- [ ] The first uses TLS; the second doesn't
+- [ ] Both mean a firewall is blocking the port
+
+A reachable host with no listener replies RST at once. Silence (a down host, a firewall that drops instead of rejecting, or a filtered route) makes the client retransmit the SYN until it gives up.
+
+### [mcq] What do SYN cookies give up in exchange for surviving a SYN flood?
+
+- [ ] The three-way handshake becomes two-way
+- [x] The server keeps no state for half-open connections, so some SYN options (such as large window scales) can only be encoded coarsely or are lost
+- [ ] Initial sequence numbers become predictable
+- [ ] Connections can no longer carry data in the third segment
+
+The server encodes what it needs (a hash, the MSS) into its initial sequence number instead of storing the half-open connection. Modern stacks recover most options through TCP timestamps, and cookies only kick in when the SYN queue overflows.
+
+### [exercise] In the [TCP connection simulator](lab:tcp-handshake), lose the SYN-ACK. Describe each side's state, and what each side retransmits, until the connection is established.
+
+:::solution
+1. The client sent its SYN and sits in **SYN_SENT**. The server received it, sent a SYN-ACK and sits in **SYN_RECV**, with the half-open connection in its SYN queue.
+2. The SYN-ACK is lost, so neither side hears from the other. The server's timer fires and it **retransmits the SYN-ACK**. The client's timer may also fire, and it **retransmits its SYN**; the server, already in SYN_RECV for that 4-tuple, answers it with the SYN-ACK again.
+3. When a SYN-ACK finally arrives, the client moves to **ESTABLISHED** and sends the ACK; when that arrives, the server moves to ESTABLISHED and the connection enters the accept queue.
+
+The cost is at least one retransmission timeout, 1 s on Linux, added to connection setup. That is the "connect sometimes takes exactly 1 s longer" symptom.
+:::
+
 ## Quick Revision
 
 - SYN (seq=x) → SYN-ACK (seq=y, ack=x+1) → ACK (ack=y+1). SYN and FIN consume one sequence number.
@@ -199,3 +239,4 @@ The host's TCP stack responds to SYN on a closed port with RST (unless a firewal
 - ISNs random (clock + keyed hash) against old duplicates and spoofing.
 - Costs 1 RTT; lost SYN retransmits at 1, 2, 4… s → set connect timeouts.
 - SYN flood → SYN cookies. Refused (RST) vs timeout (dropped).
+- Refused (RST: reachable, no listener) vs timeout (SYN or reply dropped). SYN retries: waits 1, 2, 4… s; 6 retries ≈ 127 s.

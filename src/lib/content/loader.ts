@@ -660,7 +660,7 @@ export async function renderLesson(id: string): Promise<RenderedLesson | null> {
   const prose = rec.sections.filter((s) => s.key !== "interview-questions" && s.key !== "practice");
   const lessons = load().lessonsById;
   const marked =
-    rec.meta.subject === "db" || rec.meta.subject === "os"
+    rec.meta.subject === "db" || rec.meta.subject === "os" || rec.meta.subject === "cn"
       ? applyGlossary(
           [rec.intro, ...prose.map((s) => s.nodes)],
           id,

@@ -17,7 +17,7 @@ tags: [http, request, response, methods, get, post, put, patch, delete, idempote
 
 ## Mental Model
 
-HTTP is a **form-and-reply protocol**. The client fills out a form — *what action* (method), *on what* (URL), *with what metadata* (headers), *and what payload* (body) — and the server returns a reply: *how it went* (status code), metadata (headers) and content (body). Each exchange stands alone: the server remembers nothing between requests unless you send it something to remember you by (cookies, tokens). That **statelessness** is why HTTP scales across load balancers and caches so well.
+HTTP is a **form-and-reply protocol**. The client fills out a form: *what action* (method), *on what* (URL), *with what metadata* (headers) *and what payload* (body). The server returns a reply: *how it went* (status code), metadata (headers) and content (body). Each exchange stands alone: the server remembers nothing between requests unless you send it something to remember you by (cookies, tokens). That **statelessness** is why HTTP scales across load balancers and caches so well.
 
 ## Definition
 
@@ -92,6 +92,16 @@ Why methods matter beyond "what the server does": they tell *everyone in between
 
 Distinctions interviewers probe: **401 vs 403**, **301 vs 302 vs 307/308**, **502 vs 503 vs 504**, **200 vs 201 vs 204**, and why **5xx and 429 are retryable while most 4xx are not**.
 
+A client's reaction to a response follows from its status family:
+
+```mermaid
+flowchart LR
+    R["response"] -->|"2xx"| OK["success: use the body"]
+    R -->|"3xx"| RD["redirect: follow Location<br/>(304: use the cached copy)"]
+    R -->|"4xx"| C["the request was wrong: fix it, don't retry<br/>(except 408 and 429: retry after a pause)"]
+    R -->|"5xx"| S["the server failed: retry idempotent requests<br/>with backoff, honour Retry-After"]
+```
+
 ### Essential headers
 
 | Header | Purpose |
@@ -160,6 +170,7 @@ Caching headers in action — see how `Cache-Control` and `ETag` decide between 
 
 - Observability: log method, route, status, latency; alert on 5xx rates; treat 429/503 as backpressure signals.
 - API design: correct methods, status codes, idempotency keys for POST, pagination, versioning ([API Styles](lesson:cn-api-styles)).
+- From Java, `java.net.http.HttpClient` sends these requests. Always set a connect timeout and a per-request timeout: HttpClient has neither by default, so a server that never answers holds the calling thread indefinitely ([Java Networking](lesson:cn-java-networking)).
 
 ## Deeper Connections
 
@@ -194,6 +205,10 @@ All come from a server or proxy. 502 Bad Gateway: a proxy received an invalid re
 
 Require an Idempotency-Key header (a client-generated UUID per logical operation). On first receipt, atomically record the key with a "processing" status (unique constraint), perform the payment, and store the resulting response. On retries with the same key, return the stored response instead of charging again; if still processing, return 409 or wait. Keys expire after a retention window; the key must be scoped to the client and request parameters (reject mismatched bodies).
 
+### [L2 · compare] PUT vs PATCH vs POST?
+
+PUT replaces the resource at a known URL with the body sent; doing it twice leaves the same state, so it is idempotent and safe to retry. PATCH applies a partial change; whether repeating it is safe depends on the change ("set name = X" is, "add 10 to balance" isn't). POST asks the server to process the body, typically creating a new resource at a URL the server chooses; repeating it may create duplicates, which is why payment and order APIs accept an Idempotency-Key header.
+
 ## Practice
 
 ### [mcq] Which status code should an API return after successfully creating a resource?
@@ -214,6 +229,42 @@ Require an Idempotency-Key header (a client-generated UUID per logical operation
 
 Authenticated but not authorized. (Some APIs return 404 to avoid revealing existence — a deliberate choice.)
 
+### [numeric 204] Which status code fits a successful `DELETE` that returns no body?
+
+:::answer
+**204 No Content**: the request succeeded and there is nothing to send back. 200 with a body describing the result is also acceptable; 202 Accepted fits when the deletion happens later.
+:::
+
+### [numeric 429] A client exceeds an API's rate limit. Which status code should it receive, ideally with a `Retry-After` header?
+
+:::answer
+**429 Too Many Requests**. Unlike most 4xx codes it is retryable: the request itself is fine, only the timing isn't.
+:::
+
+### [numeric 304] A browser revalidates a cached file with `If-None-Match`, and the file hasn't changed. Which status code does the server return?
+
+:::answer
+**304 Not Modified**, with no body: the browser keeps using its cached copy and refreshes its freshness information.
+:::
+
+### [mcq] Which of these requests can a client or proxy safely retry automatically after a connection drops mid-request?
+
+- [ ] `POST /orders`
+- [ ] `PATCH /accounts/7` with "add 10 to the balance"
+- [x] `PUT /users/7/email` with the complete new value
+- [ ] Any request whose response wasn't received
+
+PUT with a full replacement is idempotent: applying it twice leaves the same state. The POST may create a second order, and the increment would add 20. Without idempotency, "no response" doesn't mean "not executed".
+
+### [exercise] In the [HTTP caching simulator](lab:http-cache), give a response `Cache-Control: max-age=60` and an ETag, then request it at t = 30 s and at t = 90 s, changing nothing on the server. Write down the status code and what crossed the network each time, and explain why the second request is still cheap.
+
+:::solution
+- **t = 30 s:** the cached copy is fresh (age 30 < 60), so it is served from the cache. Nothing crosses the network; the client sees the stored 200.
+- **t = 90 s:** the copy is stale, so the cache sends a **conditional request** with `If-None-Match: <the ETag>`. The resource is unchanged, so the server answers **304 Not Modified** with no body, and the cache serves its stored body, now fresh for another 60 s.
+
+The second request still costs a round trip, but only a few hundred bytes of headers instead of the whole response, and the server can often answer it without regenerating the content.
+:::
+
 ## Quick Revision
 
 - Stateless request/response: method + URL + headers + body → status + headers + body.
@@ -221,3 +272,4 @@ Authenticated but not authorized. (Some APIs return 404 to avoid revealing exist
 - 2xx success, 3xx redirect (304 = revalidated), 4xx client (401 vs 403, 429), 5xx server (502/503/504).
 - Key headers: Host, Content-Type/Length, Accept*, Authorization, Cookie, Cache-Control/ETag, Location, Retry-After.
 - Content negotiation + compression (gzip/br) + `Vary`.
+- Client reaction by family: 2xx use, 3xx follow (304 = use cache), 4xx fix (408/429 retry later), 5xx retry idempotent with backoff. PUT idempotent; PATCH depends; POST not (Idempotency-Key).

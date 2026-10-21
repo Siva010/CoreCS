@@ -40,6 +40,11 @@ const IMPORTS = [
   "java.lang.foreign.*",
   "java.time.*",
   "com.sun.net.httpserver.*",
+  "java.security.*",
+  "javax.crypto.*",
+  "javax.crypto.spec.*",
+  "javax.net.ssl.*",
+  "java.util.zip.*",
 ]
   .map((p) => `import ${p};`)
   .join(" ");

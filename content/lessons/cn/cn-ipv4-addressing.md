@@ -12,7 +12,7 @@ stage: 1
 prerequisites: [cn-arp-dhcp]
 related: [cn-subnetting, cn-routing, cn-nat, cn-ipv6]
 labs: [subnet-calculator]
-tags: [ipv4, ip address, cidr, subnet mask, prefix length, network address, broadcast address, private ip, public ip, rfc 1918, loopback, classful addressing]
+tags: [ipv4, ip address, cidr, address classes, iana, rir, subnet mask, prefix length, network address, broadcast address, private ip, public ip, rfc 1918, loopback, classful addressing]
 ---
 
 ## Mental Model
@@ -91,7 +91,16 @@ Worth knowing as the *problem* CIDR fixed. Before 1993, the split was fixed by t
 
 ### Why IPv4 ran out
 
-32 bits = ~4.3 billion addresses, minus reserved ranges. The regional internet registries exhausted their free pools between 2011 and 2019. The internet survived via **NAT** (many private hosts behind one public address — [NAT](lesson:cn-nat)), address markets (IPv4 addresses are bought and sold), and **IPv6** ([IPv6](lesson:cn-ipv6)).
+32 bits = ~4.3 billion addresses, minus reserved ranges. Addresses are handed down a hierarchy, and each level keeps a pool for the level below:
+
+```mermaid
+flowchart TD
+    I["IANA: the whole IPv4 space"] --> R["five regional registries (RIRs)<br/>ARIN, RIPE NCC, APNIC, LACNIC, AFRINIC"]
+    R --> P["ISPs and large organizations<br/>(blocks such as a /16 or /20)"]
+    P --> C["customers and their subnets<br/>(a /24, a /29, one address)"]
+```
+
+IANA gave out its last blocks in 2011, and the regional registries exhausted their free pools between 2011 and 2019. The internet survived via **NAT** (many private hosts behind one public address — [NAT](lesson:cn-nat)), address markets (IPv4 addresses are bought and sold), and **IPv6** ([IPv6](lesson:cn-ipv6)).
 
 :::depth{level=advanced}
 ### Route aggregation (supernetting)
@@ -163,6 +172,10 @@ Fixed class sizes wasted addresses (organizations needing a few hundred hosts go
 
 Overlapping ranges can't be routed directly. Options: renumber one network (painful but clean), use NAT between them (both sides see the other through translated addresses; breaks some protocols and complicates DNS), or connect only specific services via proxies/load balancers or a service mesh gateway. Long-term: an address plan that avoids overlaps (and IPv6).
 
+### [L1 · conceptual] In the old classful scheme, which class is 172.20.5.9, and what was its default mask?
+
+Class **B**: the first octet, 172, is in 128–191 (first bits `10`), so the default mask was **255.255.0.0** (/16). Class A covered first octets 1–126 (/8), class C 192–223 (/24), class D 224–239 (multicast) and class E 240–255 (reserved). CIDR replaced classes in 1993, so today the prefix length is always stated explicitly, but exams and older documentation still use the class names.
+
 ## Practice
 
 ### [numeric 62] How many usable host addresses are there in a /26 subnet?
@@ -186,6 +199,35 @@ Overlapping ranges can't be routed directly. Options: renumber one network (pain
 
 172.16.0.0/12 spans 172.16.0.0–172.31.255.255.
 
+### [numeric 16] How many /24 networks fit inside one /20?
+
+:::answer
+A /20 leaves 4 more bits before /24, so it holds 2⁴ = **16** /24 networks. For example, 10.0.16.0/20 covers 10.0.16.0/24 through 10.0.31.0/24.
+:::
+
+### [numeric 6] How many usable host addresses does a /29 provide?
+
+:::answer
+32 − 29 = 3 host bits, so 2³ = 8 addresses, minus the network and broadcast addresses: **6** usable.
+:::
+
+### [mcq] Which of these can be assigned to a host in 192.168.4.0/22?
+
+- [ ] 192.168.4.0
+- [ ] 192.168.7.255
+- [x] 192.168.5.255
+- [ ] 192.168.8.1
+
+A /22 spans 192.168.4.0 to 192.168.7.255. The first is the network address and the last the broadcast address, so neither can be a host. 192.168.8.1 is outside the block. 192.168.5.255 looks like a broadcast address, but inside a /22 it is an ordinary host: only the last address of the whole /22 is special.
+
+### [exercise] A company owns 203.0.112.0/24, 203.0.113.0/24, 203.0.114.0/24 and 203.0.115.0/24. What single route can it advertise for all four? It then gets 203.0.116.0/24 as well: can all five still be advertised as one prefix without claiming addresses it doesn't own? Check your answers in the [subnet calculator](lab:subnet-calculator).
+
+:::solution
+**Four networks.** In binary the third octets are 112 = `011100|00` through 115 = `011100|11`. The first 22 bits are common, and 112 is a multiple of 4, so the block is aligned: **203.0.112.0/22**.
+
+**Five networks.** No. 116 = `01110100` differs from 112 in the sixth bit of the third octet. The smallest single prefix covering 112–116 is 203.0.112.0/21, which also covers 117–119, three /24s the company doesn't own. Advertising it would attract traffic for other people's addresses. It must advertise two routes instead: 203.0.112.0/22 and 203.0.116.0/24.
+:::
+
 ## Quick Revision
 
 - IPv4 = 32 bits; `/n` = network bits; mask = n ones.
@@ -193,3 +235,5 @@ Overlapping ranges can't be routed directly. Options: renumber one network (pain
 - Same subnet? compare IP AND mask.
 - Private: 10/8, 172.16/12, 192.168/16; loopback 127/8; link-local 169.254/16; CGNAT 100.64/10.
 - Classful A/B/C is history → CIDR + aggregation.
+- Classes (history): A 1–126 (/8), B 128–191 (/16), C 192–223 (/24), D 224–239 multicast, E reserved.
+- Allocation hierarchy: IANA → 5 RIRs → ISPs/organizations → customers; free pools ran out 2011–2019.

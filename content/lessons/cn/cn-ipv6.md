@@ -11,7 +11,7 @@ relevance: medium
 stage: 2
 prerequisites: [cn-ipv4-addressing, cn-arp-dhcp]
 related: [cn-nat, cn-ip-packet-icmp, cn-dns-records, cn-routing]
-tags: [ipv6, 128-bit, address notation, link-local, global unicast, slaac, ndp, dual stack, happy eyeballs, aaaa record, nat64]
+tags: [ipv6, 128-bit, address notation, link-local, global unicast, slaac, ndp, dual stack, happy eyeballs, aaaa record, nat64, ipv6 header, flow label, hop limit, next header, extension headers]
 ---
 
 ## Mental Model
@@ -65,9 +65,32 @@ IPv6 is IP with 128-bit addresses — enough that every device gets its own publ
 | NAT | Ubiquitous | Not needed for address conservation |
 | DNS record | A | **AAAA** |
 
+### The IPv6 header
+
+The fixed header is 40 bytes with eight fields:
+
+| Field | Bits | Purpose |
+|---|---|---|
+| Version | 4 | 6 |
+| Traffic class | 8 | QoS marking and ECN, like IPv4's DSCP/ECN |
+| Flow label | 20 | Tags packets of one flow so routers can keep them on one path |
+| Payload length | 16 | Bytes after the fixed header |
+| Next header | 8 | What follows: TCP (6), UDP (17), ICMPv6 (58) or an extension header |
+| Hop limit | 8 | IPv4's TTL, renamed to say what it really counts |
+| Source, destination | 128 each | Addresses |
+
+Options that IPv4 crammed into its variable header become **extension headers**, chained by the Next header field. Routers only parse what they need, which keeps the common path fast:
+
+```mermaid
+flowchart TD
+    H["IPv6 header<br/>next header = 43 (Routing)"] --> R["Routing header<br/>next header = 44 (Fragment)"]
+    R --> F["Fragment header<br/>next header = 6 (TCP)"]
+    F --> T["TCP segment"]
+```
+
 ### SLAAC in brief
 
-With 64 bits for the host part, there's enough room for a host to *invent* its own address with almost no chance of collision — so no server has to hand addresses out. A host generates a link-local address, performs duplicate address detection, listens for (or solicits) **Router Advertisements** containing the /64 prefix, and forms a global address from the prefix plus an interface identifier — usually **random/temporary** for privacy (rather than derived from the MAC address, as in early IPv6).
+With 64 bits for the host part, there's enough room for a host to *invent* its own address with almost no chance of collision — so no server has to hand addresses out. A host generates a link-local address and performs duplicate address detection. It listens for (or solicits) **Router Advertisements** containing the /64 prefix, and forms a global address from the prefix plus an interface identifier. The identifier is usually **random and temporary**, for privacy, rather than derived from the MAC address as in early IPv6.
 
 ### Coexistence: dual stack and translation
 
@@ -148,6 +171,14 @@ Drop leading zeros and replace the longest run of zero groups with `::` → **20
 
 A connection strategy for dual-stack clients: start an IPv6 connection attempt and, after a short delay (~250 ms), also try IPv4, using whichever succeeds first. It prevents users from waiting on timeouts when IPv6 connectivity is advertised (AAAA records exist) but broken somewhere on the path.
 
+### [L2 · how] What is in the IPv6 header, and what happened to IPv4's options and checksum?
+
+The fixed 40-byte header has version, traffic class, flow label, payload length, next header, hop limit and the two 128-bit addresses. IPv4's variable-length options moved into extension headers, chained by the next-header field, so the base header always has the same layout and is fast to process. The header checksum was dropped: link-layer CRCs and the transport checksums already catch corruption. Fragmentation fields moved into a Fragment extension header used only by the sender.
+
+### [L2 · numerical] A site is given a /48. How many /64 subnets can it create, and how many addresses does each hold?
+
+48 to 64 is 16 more bits, so 2¹⁶ = **65,536** /64 subnets. Each /64 has 2⁶⁴ ≈ 1.8 × 10¹⁹ addresses. That is why IPv6 planning is about the number of subnets, never about running out of host addresses.
+
 ## Practice
 
 ### [mcq] Which of these is a valid compressed IPv6 address?
@@ -168,6 +199,46 @@ A connection strategy for dual-stack clients: start an IPv6 connection attempt a
 
 NDP uses ICMPv6 neighbor solicitation/advertisement messages.
 
+### [numeric 256] A home router receives a /56 from its ISP. How many /64 subnets can it create?
+
+:::answer
+64 − 56 = 8 bits, so 2⁸ = **256** subnets.
+:::
+
+### [numeric 1280 unit=bytes] What is the minimum MTU that every IPv6 link must support?
+
+:::answer
+**1,280** bytes. Because routers never fragment IPv6 packets, a sender that stays at or below 1,280 bytes never needs Path MTU Discovery.
+:::
+
+### [mcq] Which IPv6 header field does the job of IPv4's TTL?
+
+- [ ] Flow label
+- [ ] Traffic class
+- [x] Hop limit
+- [ ] Next header
+
+It is decremented by each router, and the packet is dropped (with an ICMPv6 Time Exceeded) at 0, exactly like TTL. The name says what it really counts: hops, not seconds.
+
+### [exercise] (a) Compress `2001:0db8:0000:0042:0000:0000:0000:0007`. (b) Expand `fe80::1:2` to all eight groups. (c) Is `2001:db8::1::2` valid?
+
+:::solution
+(a) Drop leading zeros in each group: `2001:db8:0:42:0:0:0:7`. Then replace the longest run of zero groups with `::`: **`2001:db8:0:42::7`**.
+
+(b) `fe80` and `1:2` are three groups, so `::` stands for 8 − 3 = 5 zero groups: **`fe80:0000:0000:0000:0000:0000:0001:0002`**.
+
+(c) **No.** `::` may appear only once; with two, there is no way to tell how many zero groups each one stands for.
+:::
+
+### [mcq] What does the Next header field contain when a TCP segment follows the IPv6 header directly?
+
+- [x] 6
+- [ ] 17
+- [ ] 58
+- [ ] 43
+
+It uses the same protocol numbers as IPv4's protocol field: 6 for TCP, 17 for UDP, 58 for ICMPv6. 43 would mean a Routing extension header comes next.
+
 ## Quick Revision
 
 - 128-bit addresses; compress leading zeros and one zero run with `::`.
@@ -175,3 +246,5 @@ NDP uses ICMPv6 neighbor solicitation/advertisement messages.
 - Fixed 40-byte header, no checksum, no broadcast, sender-only fragmentation (min MTU 1,280).
 - NDP (not ARP), SLAAC (+ optional DHCPv6), /64 subnets.
 - Dual stack + Happy Eyeballs; NAT64/DNS64 for IPv6-only networks; firewall IPv6 too.
+- Header: 40 bytes fixed; traffic class, flow label, payload length, next header (6 TCP, 17 UDP, 58 ICMPv6, or an extension header), hop limit; no checksum, no options (extension headers instead).
+- /48 → 65,536 /64s; /56 → 256 /64s; minimum MTU 1,280.

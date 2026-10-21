@@ -32,13 +32,30 @@ A TCP connection (plus TLS) is expensive to set up — like dialing and authenti
 
 **The idea.** The expensive part is setting up the connection, not using it — so set it up once and send many requests over it. Reusing connections saves round trips and keeps congestion windows warm.
 
-**The catch that drives the rest of the lesson.** Once requests share a connection, the receiver must know where each message ends (framing), and HTTP/1.1 can only answer one request at a time per connection — which is what parallel connections, pipelining and eventually HTTP/2 each tried to fix.
+**The catch that drives the rest of the lesson.** Once requests share a connection, the receiver must know where each message ends (framing). And HTTP/1.1 can answer only one request at a time per connection, which is what parallel connections, pipelining and eventually HTTP/2 each tried to fix.
 
 :::callout[That's all it is]{type=insight}
 Keep-alive = reuse the TCP connection for the next request instead of opening a new one. HTTP/1.1 still sends one request at a time on it, which is why browsers open about six per host.
 :::
 
 ## How It Works
+
+### One connection, many requests
+
+```mermaid
+%%{init: {"sequence": {"width": 110, "actorMargin": 40}}}%%
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    C->>S: SYN
+    S-->>C: SYN-ACK
+    Note over C,S: TLS handshake (1 more round trip)
+    C->>S: GET /a
+    S-->>C: 200 OK, Content-Length 1256
+    Note over C: body fully read, connection back in the pool
+    C->>S: GET /b (same connection: no TCP or TLS setup)
+    S-->>C: 200 OK
+```
 
 ### Cost comparison: 10 small resources, RTT = 50 ms
 
@@ -61,6 +78,8 @@ When one connection carried one response, "the server closed the connection" mea
 
 1. **`Content-Length: 1256`** — exactly this many bytes follow.
 2. **`Transfer-Encoding: chunked`** — the body is sent as chunks, each prefixed with its size in hex, terminated by a zero-length chunk. Lets servers stream responses whose size isn't known in advance (server-rendered pages, streaming APIs, large exports):
+
+Each chunk starts with its size in hexadecimal: `7` means the next 7 bytes, `9` the next 9, and `0` ends the body.
 
 ```http
 HTTP/1.1 200 OK
@@ -86,13 +105,13 @@ Developer\r\n
 Reuse needs somewhere to keep idle connections between requests. HTTP client libraries keep a **pool** of idle keep-alive connections per origin (host + port + scheme): a request borrows one, returns it after reading the full response. Key settings:
 
 - **max connections per host** (browser: ~6 for HTTP/1.1; libraries: configurable) — beyond it, requests queue;
-- **idle timeout / max lifetime** — must be **shorter** than the server's and any load balancer's idle timeout, or the client will reuse a connection the server already closed (first request fails with a reset);
-- **response draining** — a connection returns to the pool only after the body is fully read; forgetting to read/close response bodies leaks connections (Go's classic `resp.Body.Close()` bug).
+- **idle timeout / max lifetime** — must be **shorter** than the server's and any load balancer's idle timeout. Otherwise the client reuses a connection the server already closed, and the first request fails with a reset;
+- **response draining** — a connection returns to the pool only after the body is fully read; forgetting to read or close response bodies leaks connections. In Java that means closing the `InputStream` from `BodyHandlers.ofInputStream()` or the response entity in Apache HttpClient on every path, error paths included ([Networking in Java](lesson:cn-java-networking)).
 
 :::depth{level=advanced}
 ### Request smuggling
 
-When a front-end proxy and a back-end server disagree on where a request ends — e.g., one honors `Content-Length` and the other `Transfer-Encoding: chunked` when both are present — an attacker can smuggle a second request inside the first's body, poisoning the connection for the next user (cache poisoning, bypassing auth). Defenses: reject ambiguous messages, normalize at the edge, use HTTP/2 end to end, and keep proxies and servers patched. It's a direct consequence of text framing plus connection reuse.
+When a front-end proxy and a back-end server disagree on where a request ends, an attacker can smuggle a second request inside the first one's body. For example, one honours `Content-Length` and the other `Transfer-Encoding: chunked` when both are present. The smuggled request poisons the connection for the next user (cache poisoning, bypassing auth). Defenses: reject ambiguous messages, normalize at the edge, use HTTP/2 end to end, and keep proxies and servers patched. It's a direct consequence of text framing plus connection reuse.
 
 ### Domain sharding (historical)
 
@@ -161,6 +180,14 @@ From Content-Length (exact byte count), from chunked transfer encoding (size-pre
 
 The client reuses an idle pooled connection that the server or an intermediate load balancer already closed after its idle timeout. The client's pool idle timeout is longer than the server's. Fix: set the client pool's idle timeout/max lifetime below the server/LB timeouts, enable connection validation, and retry idempotent requests once on reset.
 
+### [L2 · how] How does a client reuse connections, and what breaks reuse in practice?
+
+The client library keeps idle keep-alive connections in a pool per origin and lends one to each request, returning it once the response body has been fully read. Reuse breaks when: the body isn't read or closed (the connection never returns, the pool drains); a load balancer or server closes idle connections before the client's pool evicts them (the next request on that connection fails with a reset); the server sends `Connection: close`; or a new client object is created per request, so there is no pool to reuse.
+
+### [L2 · compare] Content-Length vs chunked transfer encoding?
+
+With `Content-Length` the server states the body size up front, so it must know it before sending the headers. With `Transfer-Encoding: chunked` the body is sent as size-prefixed chunks ending with a zero-size chunk, so the server can stream output whose length it doesn't know yet: generated reports, proxied streams, server-sent events. Both let the connection be reused, because the receiver knows exactly where the body ends. HTTP/2 and HTTP/3 replace both with their own framing.
+
 ## Practice
 
 ### [numeric 3] With HTTP/1.1 keep-alive on one connection, how many round trips does it take to fetch 2 small resources sequentially, including the TCP handshake (ignore TLS)?
@@ -178,6 +205,38 @@ The client reuses an idle pooled connection that the server or an intermediate l
 
 Chunked encoding frames the body in pieces.
 
+### [numeric 26 unit=bytes] In a chunked HTTP/1.1 response, a chunk starts with the size line `1A`. How many bytes of data follow?
+
+:::answer
+Chunk sizes are hexadecimal: 0x1A = **26** bytes. A size line of `0` marks the end of the body.
+:::
+
+### [numeric 20] Fetching 10 small resources with HTTP/1.0, one new TCP connection each and no TLS, how many round trips does it take sequentially?
+
+:::answer
+Each resource needs one round trip for the TCP handshake and one for the request and response: 10 × 2 = **20**. With keep-alive on one connection it is 1 + 10 = 11; with HTTP/2 multiplexing, about 2.
+:::
+
+### [mcq] What does a server mean by sending `Connection: close` in an HTTP/1.1 response?
+
+- [ ] The client must close every connection to this server
+- [x] The server will close this connection after this response, so the client must not reuse it
+- [ ] The response body is empty
+- [ ] The client should switch to HTTP/2
+
+HTTP/1.1 connections are persistent by default; `Connection: close` opts out for this connection. Clients then open a new connection for the next request.
+
+### [exercise] In the [head-of-line blocking visualization](viz:hol-blocking), compare "HTTP/1.1, one connection" with "HTTP/1.1, 3 connections", first with no loss and then losing one of A's packets. Explain why browsers opened up to 6 connections per host for HTTP/1.1, and what that cost.
+
+:::solution
+- **No loss, one connection:** responses come back strictly in order, so B and C wait for all of A even though nothing went wrong: head-of-line blocking at the HTTP level.
+- **No loss, 3 connections:** A, B and C travel in parallel and each finishes on its own schedule.
+- **A's packet lost, one connection:** A stalls until the retransmission arrives, and B and C stall behind it.
+- **A's packet lost, 3 connections:** only A's connection stalls; B and C are unaffected.
+
+Browsers opened several HTTP/1.1 connections per host to get that parallelism and that isolation. The cost: a TCP (and TLS) handshake and a slow start for every connection, more sockets and memory on the server, and connections that compete instead of sharing one congestion window. HTTP/2 gets the parallelism on one connection, but brings back the shared-loss problem at the TCP level, which HTTP/3 then removes.
+:::
+
 ## Quick Revision
 
 - HTTP/1.0: new connection per request. HTTP/1.1: keep-alive default, Host required, chunked encoding, caching headers.
@@ -185,3 +244,4 @@ Chunked encoding frames the body in pieces.
 - Framing: Content-Length, chunked, or close.
 - Client pools: max per host, idle timeout < server/LB timeout, always drain/close responses.
 - Request smuggling from framing disagreements.
+- Chunk sizes are hex (1A = 26 bytes; 0 = end). Connection: close = don't reuse. Java: always close response bodies, or the pool drains.

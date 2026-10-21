@@ -38,7 +38,7 @@ A wider pipe doesn't make the first drop arrive sooner; for small transfers (mos
 
 **The problem.** "The network is slow" can mean two completely different things — the pipe is *narrow* (bandwidth) or *long* (latency) — and the fixes are different. More bandwidth does nothing for a long pipe.
 
-**Why it matters.** Engineers constantly face questions like "why is this upload slow on a gigabit link?", "how much will a CDN help?", "should we batch these calls?" — all answered with a few formulas and realistic numbers.
+**Why it matters.** Engineers constantly face questions like these. Why is this upload slow on a gigabit link? How much will a CDN help? Should we batch these calls? All of them are answered with a few formulas and realistic numbers.
 
 :::callout[That's all it is]{type=insight}
 Small transfers are limited by round trips (latency); large transfers by link speed (bandwidth) and by having enough data in flight to fill the pipe (window ≥ bandwidth × RTT). Count round trips first.
@@ -54,6 +54,17 @@ Small transfers are limited by round trips (latency); large transfers by link sp
 | **Transmission (serialization)** | packet size / link rate | 1,500 B at 1 Gb/s = 12 µs; at 10 Mb/s = 1.2 ms |
 | **Queueing** | waiting behind other packets in buffers | 0 to hundreds of ms (congestion, bufferbloat) |
 | **Processing** | header parsing, lookups, encryption | ns–µs |
+
+The four delays happen in sequence at every hop:
+
+```mermaid
+flowchart TD
+    A["packet arrives at a router"] --> P["processing: check the header,<br/>look up the route (ns–µs)"]
+    P --> Q["queueing: wait behind other packets<br/>for the output link (0 to many ms)"]
+    Q --> T["transmission: push every bit onto the link<br/>(size ÷ link rate)"]
+    T --> G["propagation: the signal travels to the next hop<br/>(distance ÷ ~200,000 km/s)"]
+    G --> N["next router: the same again"]
+```
 
 Propagation sets an unbreakable floor: New York ↔ London ≈ 5,600 km great-circle → ≥ 28 ms one way, ≥ 56 ms RTT (real paths ~70 ms). Only moving closer (CDNs, regional deployments) reduces it.
 
@@ -179,6 +190,10 @@ Transmission: 12,000 bits / 10⁷ b/s = **1.2 ms**. Propagation: 2,000 km × 5 �
 
 The app's page loads are dominated by latency: DNS, TCP and TLS handshakes, and many sequential request round trips to a distant data center, each costing an RTT; responses are small, so serialization time was already negligible. Improvements must reduce RTTs or round-trip counts (CDN/edge, HTTP/2 or 3, fewer sequential requests, caching).
 
+### [L2 · numerical] A 1,500-byte packet crosses one 100 Mb/s link of 1,000 km. Ignoring processing and queueing, how long until it is fully received?
+
+Transmission: 1,500 × 8 bits ÷ 10⁸ bit/s = 0.12 ms. Propagation: 1,000 km × 5 µs/km = 5 ms. Total about **5.12 ms**: on a long link, propagation dominates, and a faster link would only shrink the 0.12 ms part. On a short data-centre link it's the opposite: a few metres of cable add nanoseconds, and transmission and queueing dominate.
+
 ## Practice
 
 ### [numeric 625 ±5 unit=KB] BDP of a 100 Mb/s path with 50 ms RTT, in KB (1 KB = 1,000 bytes)?
@@ -199,6 +214,31 @@ The app's page loads are dominated by latency: DNS, TCP and TLS handshakes, and 
 116,800 b/s × 1.22 / 0.03162 ≈ 4.51 Mb/s ≈ **4.5 Mb/s**.
 :::
 
+### [numeric 5.12 ±0.01 unit=ms] A 1,500-byte packet is sent over a single 100 Mb/s link 1,000 km long (5 µs per km). Ignoring processing and queueing, how long from the first bit being sent until the last bit arrives?
+
+:::answer
+Transmission 1,500 × 8 ÷ 10⁸ = 0.12 ms, plus propagation 1,000 × 5 µs = 5 ms: **5.12** ms.
+:::
+
+### [mcq] A team upgrades its office link from 100 Mb/s to 1 Gb/s, but loading their SaaS dashboard (dozens of small API calls to a server 80 ms away) feels no faster. Why?
+
+- [ ] The new link is misconfigured
+- [x] Each small call is dominated by round trips (handshakes, request/response), which propagation sets, not by transmission time
+- [ ] 1 Gb/s links have higher latency than 100 Mb/s links
+- [ ] Browsers can't use more than 100 Mb/s
+
+A 20 KB response takes 1.6 ms to transmit at 100 Mb/s and 0.16 ms at 1 Gb/s, but each round trip still costs 80 ms. Fewer round trips (connection reuse, HTTP/2, batching, a nearer server) would help; more bandwidth doesn't.
+
+### [exercise] Use the [network calculator](lab:network-calculator) to estimate the time to download a 50 MB file over a 200 Mb/s path with 60 ms RTT, (a) with a window large enough for the path, and (b) with a 64 KB window. Which limit applies in each case?
+
+:::solution
+**(a) Window large enough.** The bandwidth-delay product is 200 × 10⁶ × 0.06 ÷ 8 = 1.5 MB, so the window must be at least 1.5 MB. Serialization: 50 × 8 ÷ 200 = 2 s, plus a few RTTs for the handshakes and slow start, about **2.3–2.5 s**. The **bandwidth** is the limit.
+
+**(b) 64 KB window.** Throughput ≤ window ÷ RTT = 65,536 × 8 ÷ 0.06 ≈ 8.7 Mb/s, about 4% of the link. 50 MB at 8.7 Mb/s takes about **46 s**. The **window** is the limit, and a faster link would change nothing.
+
+The calculator shows the same split: whichever of bandwidth, window/RTT or the loss bound is smallest sets the throughput.
+:::
+
 ## Quick Revision
 
 - Delay = propagation (~5 µs/km) + transmission (size/rate) + queueing + processing.
@@ -206,3 +246,4 @@ The app's page loads are dominated by latency: DNS, TCP and TLS handshakes, and 
 - Throughput ≤ window/RTT; loss-limited ≈ (MSS/RTT)·1.22/√p.
 - Small transfers are RTT-bound; big transfers window/loss-bound.
 - Know RTTs: DC ~0.5 ms, cross-AZ ~1 ms, cross-continent ~70 ms, intercontinental 70–250 ms.
+- One hop = processing + queueing + transmission (size/rate) + propagation (distance × 5 µs/km). Small transfers are RTT-bound; big ones bandwidth- or window-bound.

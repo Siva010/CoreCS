@@ -11,7 +11,7 @@ relevance: medium
 stage: 1
 prerequisites: [cn-ethernet-switching]
 related: [cn-ipv4-addressing, cn-routing, cn-ipv6, cn-dns-fundamentals]
-tags: [arp, arp cache, gratuitous arp, arp spoofing, dhcp, dora, lease, default gateway, ndp, slaac]
+tags: [arp, arp cache, gratuitous arp, proxy arp, rarp, bootp, arp spoofing, dhcp, dora, lease, default gateway, ndp, slaac]
 ---
 
 ## Mental Model
@@ -19,7 +19,7 @@ tags: [arp, arp cache, gratuitous arp, arp spoofing, dhcp, dora, lease, default 
 You walk into a new office building:
 
 - **DHCP** is the front desk: "I'm new, can someone assign me a desk?" — you shout, because you don't know anyone's name yet. The desk replies with a desk number (**IP address**), where the exit to the outside world is (**default gateway**), who answers questions about names (**DNS servers**), and how long you may keep the desk (**lease**).
-- **ARP** is asking the room: "Whoever has desk 192.168.1.1, what's your name tag?" — you need the gateway's **MAC address** to hand it a frame, because on the local link frames are delivered by MAC, not IP.
+- **ARP** is asking the room who sits at desk 192.168.1.1, and what their name tag says. You need the gateway's **MAC address** to hand it a frame, because on the local link frames are delivered by MAC, not IP.
 
 Both work by **broadcasting** to the local network, and both trust whoever answers — which is exactly their security weakness.
 
@@ -82,7 +82,15 @@ $ ip neigh show
 
 ### Gratuitous ARP
 
-Caching ARP answers creates a staleness problem: if an IP moves to a different machine, everyone's cache still points to the old MAC. The fix is to announce changes proactively. A host can announce its own IP→MAC mapping unsolicited ("192.168.1.10 is at X") — used to detect duplicate IPs at startup and to **fail over** a virtual IP: when a standby server takes over a floating IP (keepalived/VRRP), it sends gratuitous ARP so switches and neighbors update their tables immediately.
+Caching ARP answers creates a staleness problem: if an IP moves to a different machine, everyone's cache still points to the old MAC. The fix is to announce changes proactively. A host can announce its own IP→MAC mapping unsolicited: "192.168.1.10 is at X". This is used for two things:
+- **detecting duplicate IPs** at startup;
+- **failing over a virtual IP**: when a standby server takes over a floating IP (keepalived, VRRP), it sends a gratuitous ARP so switches and neighbours update their tables immediately.
+
+### Before DHCP: RARP and BOOTP
+
+ARP maps an IP address to a MAC. Early diskless machines needed the reverse: "I know my MAC; what is my IP?" **RARP** (reverse ARP) answered that, but only within one LAN and with nothing besides the address. **BOOTP** ran over UDP, so relays could carry it across routers, and it added a boot server and file. **DHCP** extended BOOTP with leases and options (gateway, DNS servers), and replaced both. That is why DHCP still uses UDP ports 67 (server) and 68 (client), BOOTP's ports.
+
+**Proxy ARP** is a router answering ARP requests on behalf of hosts on another network, so hosts with a wrong mask still reach them. It hides misconfigurations, and is mostly disabled today.
 
 ## Internal Mechanism
 
@@ -96,7 +104,7 @@ Neither protocol authenticates responses by default:
 :::depth{level=advanced}
 ### IPv6 does it differently
 
-IPv6 hosts use **Neighbor Solicitation/Advertisement** (ICMPv6) to multicast groups instead of broadcasts (IPv6 has no broadcast), and can configure addresses themselves with **SLAAC**: routers send **Router Advertisements** with the network prefix; the host forms its address (with random/privacy interface IDs) and runs **duplicate address detection**. DHCPv6 is optional or supplies extra options like DNS servers. The same trust issues exist (rogue RAs), mitigated by RA Guard and SEND.
+IPv6 hosts use **Neighbor Solicitation/Advertisement** (ICMPv6) to multicast groups instead of broadcasts, since IPv6 has no broadcast. They can also configure addresses themselves with **SLAAC**: routers send **Router Advertisements** with the network prefix, and the host forms its address (with random privacy interface IDs) and runs **duplicate address detection**. DHCPv6 is optional or supplies extra options like DNS servers. The same trust issues exist (rogue RAs), mitigated by RA Guard and SEND.
 :::
 
 ## Example
@@ -167,6 +175,10 @@ An attacker sends forged ARP replies associating the gateway's (or another host'
 
 Clients and routers still have the old server's MAC cached for the virtual IP in their ARP tables. Until those entries expire, frames go to the dead machine. The new owner should send gratuitous ARP on takeover to update neighbors immediately (keepalived/VRRP do this); verify it isn't being blocked.
 
+### [L2 · numerical] A DHCP lease lasts 24 hours. When does the client first try to renew it, and when does it ask any server instead of its own?
+
+At **T1 = 50%** of the lease, 12 hours, the client unicasts a REQUEST to the server that gave it the address. If that server hasn't answered by **T2 = 87.5%**, 21 hours, it broadcasts a REQUEST so that any DHCP server can extend the lease. If the lease expires with no answer, the client must stop using the address and start over with DISCOVER. Short leases free addresses quickly on busy guest networks; long leases reduce DHCP traffic.
+
 ## Practice
 
 ### [mcq] In DHCP's DORA sequence, why is the REQUEST message broadcast rather than unicast?
@@ -187,6 +199,51 @@ Other servers that made offers withdraw them.
 
 Same subnet → deliver directly on the link.
 
+### [numeric 12 unit=hours] A laptop gets a 24-hour DHCP lease. After how many hours does it first try to renew it with the same server?
+
+:::answer
+At T1, half the lease: **12** hours. It tries again with any server at T2 = 87.5% of the lease, 21 hours.
+:::
+
+### [numeric 21 unit=hours] Same lease: after how many hours does the client broadcast its renewal so that any DHCP server can answer?
+
+:::answer
+At T2 = 0.875 × 24 = **21** hours, if its own server hasn't answered since T1.
+:::
+
+### [mcq] A standby load balancer takes over the virtual IP 10.0.0.100 after the primary dies. What makes clients on the same LAN send to the standby straight away?
+
+- [ ] The clients' ARP caches expire after a few milliseconds
+- [x] The standby sends a gratuitous ARP announcing 10.0.0.100 at its own MAC
+- [ ] DHCP gives the clients a new gateway address
+- [ ] The switch forwards the old MAC's frames to the new port automatically
+
+Clients cache IP→MAC for tens of seconds or more, so they would keep sending to the dead primary's MAC. The gratuitous ARP overwrites those cache entries, and teaches the switches the MAC's port, at once.
+
+### [mcq] What did RARP do?
+
+- [ ] Map an IP address to a MAC address on a remote network
+- [x] Let a machine that knew only its MAC address learn its IP address
+- [ ] Detect duplicate IP addresses on a LAN
+- [ ] Relay DHCP broadcasts across routers
+
+RARP answered "what is my IP?" for diskless machines, within one LAN. BOOTP and then DHCP replaced it.
+
+### [exercise] Run a packet through the [routing simulator](lab:routing). On the first hop, note which device the frame is addressed to, and the packet's source and destination IP. Then explain how the sender found that destination MAC, assuming an empty ARP cache, and why it never ARPs for the remote server's address.
+
+:::solution
+On the first hop:
+- the frame is addressed to the **gateway router's** MAC, not the server's;
+- the IP packet goes from the host's IP to the **remote server's** IP.
+
+With an empty cache:
+1. The host compares the destination IP with its own subnet. It is not local, so the routing table says "via the default gateway".
+2. It broadcasts an ARP request for the gateway's IP.
+3. The gateway answers with its MAC, which the host caches and uses as the frame's destination.
+
+ARP only works within one broadcast domain: the request is a link-layer broadcast that routers don't forward. The remote server is not on the link, and the host never needs its MAC: each router along the way resolves only its own next hop.
+:::
+
 ## Quick Revision
 
 - DHCP DORA: Discover (broadcast) → Offer → Request (broadcast) → Ack. Provides IP, mask, gateway, DNS, lease. Relays cross routers.
@@ -194,3 +251,5 @@ Same subnet → deliver directly on the link.
 - Gratuitous ARP: announce own mapping (duplicate detection, failover of virtual IPs).
 - No authentication → ARP spoofing, rogue DHCP → switch protections + TLS.
 - IPv6: NDP (ICMPv6, multicast) + SLAAC/DHCPv6.
+- DHCP lease renewal: T1 = 50% (unicast to own server), T2 = 87.5% (broadcast to any server); UDP ports 67/68 (inherited from BOOTP).
+- RARP (MAC → IP, one LAN) → BOOTP (over UDP, relayable) → DHCP (leases, options). Proxy ARP: a router answering for others.

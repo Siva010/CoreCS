@@ -67,6 +67,18 @@ P(slow) = 1 − (1 − q)^n
 | 1% (p99 exceeded) | 1% | 9.6% | **63.4%** |
 | 0.1% (p99.9 exceeded) | 0.1% | 1% | 9.5% |
 
+```mermaid
+flowchart TD
+    R["user request"] --> L1["leaf 1"]
+    R --> L2["leaf 2"]
+    R --> L3["…"]
+    R --> LN["leaf 100"]
+    L1 --> A["aggregate: waits for the slowest leaf"]
+    L2 --> A
+    L3 --> A
+    LN --> A
+```
+
 So a service fanning out to 100 leaves needs each leaf's **p99.9** to be good for the overall **p90** to be good. ("The Tail at Scale", Dean & Barroso, 2013.)
 
 ### Where the tail comes from
@@ -175,6 +187,14 @@ After waiting for a short delay (e.g., the p95 latency), send a duplicate reques
 
 Suspect TCP retransmission timeouts: a small loss rate barely affects medians but adds ≥ 200 ms RTO stalls (plus backoff) to affected requests. Check retransmission and timeout counters per host and path (nstat, ss -ti, tcpretrans), correlate slow traces with retransmits, localize the loss (mtr per hop, specific AZ/rack/NIC, LB), check MTU/fragmentation issues and NIC errors (ethtool -S), and confirm by packet capture on slow requests. Mitigate by fixing the lossy component, enabling tail-loss probing/RACK, hedging idempotent calls, and avoiding cross-zone paths.
 
+### [L3 · why] What is coordinated omission, and how does it make load tests lie?
+
+A closed-loop load generator sends the next request only after the previous one returns. When the server stalls for 2 seconds, the generator also stops sending, so instead of recording thousands of requests that would each have waited up to 2 s, it records one slow request. The measured p99 looks fine while real users, who don't stop arriving, suffer. Fixes: generate load at a constant arrival rate (open-loop tools such as wrk2, k6's constant-arrival-rate executor or Gatling's open models), or correct latencies for the intended send time.
+
+### [L3 · numerical] A request fans out to 50 leaves. What per-leaf percentile must stay under the latency target for the whole request to meet it 99% of the time?
+
+The request is slow if any leaf is slow: 1 − (1 − q)⁵⁰ ≤ 0.01. Solving, q ≤ 1 − 0.99^(1/50) ≈ 0.0002: each leaf must meet the target at its **p99.98**. Fan-out turns a deep percentile of each component into the one users see, which is why hedging and partial results exist.
+
 ## Practice
 
 ### [numeric 63.4 ±0.5 unit=%] Each of 100 parallel sub-requests exceeds its latency target with probability 1%. What is the probability (in %) that the overall request exceeds the target?
@@ -192,6 +212,43 @@ Suspect TCP retransmission timeouts: a small loss rate barely affects medians bu
 
 Percentiles aren't additive.
 
+### [numeric 64.2 ±0.3 unit=%] A page needs 20 independent backend calls, and each is slow 5% of the time. What percentage of page loads hit at least one slow call?
+
+:::answer
+1 − 0.95²⁰ = 1 − 0.358 = **64.2**%. A "rare" 5% event becomes the common case once a request depends on 20 of them.
+:::
+
+### [numeric 99.98 ±0.01 unit=%] A request fans out to 50 leaves in parallel. To keep the whole request under its target 99% of the time, what percentile must each leaf meet the target at?
+
+:::answer
+1 − (1 − q)⁵⁰ = 0.01 gives q = 1 − 0.99^(1/50) ≈ 0.0002, so each leaf must meet it **99.98**% of the time: its p99.98.
+:::
+
+### [numeric 5 unit=%] A client sends a hedged request to a second replica whenever the first hasn't answered by its p95 latency. Roughly how much extra load does hedging add?
+
+:::answer
+Only requests slower than the p95 trigger a second copy: about **5**% extra load, in exchange for cutting the tail that the slowest 5% used to set. (Cancelling the loser when the winner answers keeps even that down.)
+:::
+
+### [exercise] A team's load test reports p99 = 40 ms, yet users see multi-second stalls. The tool runs 50 virtual users, each sending a request and waiting for the response before sending the next. Explain the discrepancy and how to fix the test.
+
+:::solution
+This is **coordinated omission**. When the server stalls for, say, 3 s, each of the 50 virtual users is stuck waiting for its one request. During those 3 s the tool sends nothing new, so it records only 50 slow requests, instead of the hundreds that real users, who keep arriving, would have sent and suffered. The slow period is mostly missing from the data, and the p99 looks healthy.
+
+Fixes:
+- Generate load at a **constant arrival rate** (open model): new requests start on schedule whether or not earlier ones finished.
+- Or record latency from each request's **intended** start time, not from when the busy virtual user finally got round to sending it.
+- Keep the full latency histogram (HdrHistogram) and look at the maximum, not just percentiles.
+:::
+
+### [numeric 100 ±1 unit=ms] A server's mean service time is 10 ms, and requests arrive at random (an M/M/1 queue). What is the mean response time when the server is 90% busy?
+
+:::answer
+For M/M/1, response time = S / (1 − ρ) = 10 / (1 − 0.9) = **100** ms. That is ten times the service time, although no request needs more than 10 ms of work on average. At 50% busy it is 20 ms, and at 95% it is 200 ms.
+
+The tail grows the same way. In M/M/1 the response time is exponentially distributed, so p99 is about 4.6 times the mean: roughly 460 ms here. Try it in the [Speedup & Queueing lab](lab:speedup-queueing): Queueing delay, 1 server, S = 10 ms, λ = 90 per second.
+:::
+
 ## Quick Revision
 
 - Use percentiles (p50/p95/p99/p99.9), not averages; percentiles don't average — merge histograms.
@@ -199,3 +256,4 @@ Percentiles aren't additive.
 - Sources: queueing, RTOs, GC, locks, cache misses, background work, noisy neighbors, retries.
 - Fixes: hedged/tied requests (idempotent), deadlines, reduce variability, low utilization, load shedding, partial results.
 - Beware coordinated omission.
+- Fan-out: P(slow) = 1 − (1 − q)ⁿ (20 calls at 5% → 64%); 50 leaves need p99.98 for an overall p99. Hedging at p95 costs ~5% load. Beware coordinated omission: use open-model load tests.

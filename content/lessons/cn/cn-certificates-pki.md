@@ -17,7 +17,7 @@ tags: [certificate, x.509, certificate authority, ca, root ca, intermediate ca, 
 
 ## Mental Model
 
-Diffie–Hellman gives you a secret shared with *someone* — but who? A certificate is a **passport for a public key**: a document saying "the public key K belongs to `shop.example.com`", **signed by an authority** your device already trusts. Your browser ships with a list of trusted authorities (root CAs); a certificate is trusted if a chain of signatures leads from it back to one of those roots, the names match, and it hasn't expired or been revoked.
+Diffie–Hellman gives you a secret shared with *someone* — but who? A certificate is a **passport for a public key**: a document saying "the public key K belongs to `shop.example.com`", **signed by an authority** your device already trusts. Your browser ships with a list of trusted authorities (root CAs). A certificate is trusted if a chain of signatures leads from it back to one of those roots, the names match, and it hasn't expired or been revoked.
 
 ## Definition
 
@@ -62,7 +62,7 @@ Certificate:
 
 ### Validation — what the client checks
 
-1. **Chain building**: the server sends its leaf + intermediates; the client builds a path to a root in its trust store (servers must send intermediates — a missing intermediate is a common misconfiguration that works in some browsers (which cache or fetch intermediates) and fails in others and in API clients).
+1. **Chain building**: the server sends its leaf + intermediates, and the client builds a path to a root in its trust store. Servers must send their intermediates: a missing intermediate is a common misconfiguration that works in some browsers (which cache or fetch intermediates) and fails in others and in API clients.
 2. **Signatures**: each certificate's signature verifies with its issuer's public key.
 3. **Validity period**: now is between Not Before and Not After.
 4. **Name match**: the hostname the client asked for (and sent in SNI) matches a SAN entry.
@@ -71,6 +71,17 @@ Certificate:
 7. **Certificate Transparency**: browsers require proof (SCTs) that the certificate was logged publicly.
 
 Finally, during the TLS handshake the server proves it holds the **private key** matching the certificate by signing the handshake transcript (**CertificateVerify**, [TLS Handshake](lesson:cn-tls-handshake)). A stolen certificate without its private key is useless.
+
+The chain the client builds, from the certificate it was sent up to an anchor it already trusts:
+
+```mermaid
+flowchart TD
+    R["root CA certificate<br/>(self-signed, in the client's trust store)"] -->|"signs"| I["intermediate CA certificate<br/>(sent by the server)"]
+    I -->|"signs"| L["leaf certificate: shop.example.com<br/>(sent by the server)"]
+    L -->|"its key signs"| V["CertificateVerify in this handshake"]
+```
+
+The root never travels in the handshake: the client already has it, and a root sent by the server would prove nothing. Java clients check against the JVM's truststore, which is why a missing intermediate or a private CA produces "PKIX path building failed" ([Networking in Java](lesson:cn-java-networking)).
 
 ### How CAs verify you control a domain (ACME / Let's Encrypt)
 
@@ -97,7 +108,7 @@ In **mutual TLS**, the server also requests a client certificate, authenticating
 
 ### Pinning
 
-Apps can "pin" expected keys/certificates to resist rogue CAs. Pinning in browsers (HPKP) was abandoned because misconfigured pins bricked sites; mobile apps still pin sometimes, at the risk of outages during certificate rotation — pin to public keys or intermediate CAs with backups, not leaf certificates.
+Apps can "pin" expected keys/certificates to resist rogue CAs. Browsers abandoned pinning (HPKP) because misconfigured pins bricked sites. Mobile apps still pin sometimes, at the risk of outages during certificate rotation, so pin to public keys or intermediate CAs with backups, never to leaf certificates.
 :::
 
 ## Example
@@ -169,6 +180,14 @@ The certificate contains only the public key. Impersonation requires proving pos
 
 An intermediate certificate in the chain served by the server (renewal deployed the new leaf with an old bundled intermediate), a cross-signed root/intermediate the clients rely on (e.g., an old root expiring in client trust stores), a client certificate in mTLS, or a separate endpoint (load balancer, sidecar) still serving the old certificate. Check the chain actually served with openssl s_client -showcerts at each hop.
 
+### [L2 · how] What is OCSP stapling, and why is it better than the client asking the CA?
+
+With plain OCSP, the client contacts the CA during the handshake to ask whether the certificate is revoked: an extra round trip, a privacy leak (the CA learns which sites you visit), and a dilemma if the CA is unreachable (most clients then "soft-fail" and accept the certificate). With stapling, the server fetches a short-lived, CA-signed OCSP response itself and sends it in the handshake. The client gets fresh revocation status with no extra connection, and the CA learns nothing about the client.
+
+### [L2 · conceptual] Which hostnames does a wildcard certificate for `*.example.com` cover?
+
+Exactly one label in place of the asterisk: `www.example.com` and `api.example.com` match, but `example.com` itself doesn't (no label), and neither does `a.b.example.com` (two labels). Certificates for the apex and the wildcard therefore usually list both in the SAN. Wildcards are convenient, but every server holding the key can impersonate every subdomain, so many teams prefer per-service certificates from automated issuance.
+
 ## Practice
 
 ### [mcq] Which certificate field determines which hostnames a certificate is valid for?
@@ -189,6 +208,48 @@ Modern clients validate names against SAN entries.
 
 Domain owners can monitor logs for unexpected certificates.
 
+### [numeric 2] A server's certificate was issued by an intermediate CA, which was issued by a root CA. How many certificates should the server send in its handshake?
+
+:::answer
+**2**: its leaf certificate and the intermediate. The root is already in the client's trust store; sending it is pointless, because a client can't trust a root just because the server offered it. Forgetting the intermediate is the classic cause of errors in clients that don't fetch it themselves, Java among them.
+:::
+
+### [numeric 60 unit=days] Let's Encrypt certificates last 90 days, and the recommended practice is to renew when two-thirds of the lifetime has passed. After how many days should automation renew?
+
+:::answer
+2/3 × 90 = **60** days, leaving 30 days to fix a failed renewal before the certificate expires.
+:::
+
+### [mcq] Which hostname is covered by a certificate whose only SAN entry is `*.example.com`?
+
+- [ ] `example.com`
+- [x] `api.example.com`
+- [ ] `v2.api.example.com`
+- [ ] `example.com.evil.net`
+
+A wildcard replaces exactly one leftmost label. The apex has no label to replace, and `v2.api` is two labels.
+
+### [exercise] A Java service calling `https://payments.internal` fails with "PKIX path building failed", while `curl` from the same machine works. Using the chain-of-trust picture, list the possible causes and how you would check each, then name the fix you would refuse to apply.
+
+:::solution
+Java couldn't build a chain from the server's certificate to a root in **its own truststore**. Possible causes:
+1. **The server doesn't send its intermediate.** curl (via the OS library) or browsers may complete the chain from a cache or by fetching it; Java won't. Check with `openssl s_client -connect payments.internal:443 -showcerts`: only one certificate in the output means the chain is incomplete. Fix the server's configuration.
+2. **The root is a private or corporate CA.** It is in the operating system's store, which curl uses, but not in the JVM's `cacerts`. Import the CA into a truststore and point the JVM at it (`-Djavax.net.ssl.trustStore`, or an `SSLContext` built from it).
+3. **An outdated JDK** whose `cacerts` lacks a newer root CA. Update the JDK.
+
+`-Djavax.net.debug=ssl:handshake` shows the chain Java received.
+
+The fix to refuse: a "trust all certificates" `TrustManager`, or disabling hostname verification. It makes the error go away by making TLS accept any attacker's certificate.
+:::
+
+### [exercise] Step through the [TLS handshake visualization](viz:tls-handshake) and point to the moment the server proves it owns the certificate's private key. Why doesn't sending the certificate prove anything by itself?
+
+:::solution
+The proof is **CertificateVerify**: the server signs a hash of the whole handshake transcript so far with the private key matching the certificate's public key, and the client verifies that signature with the public key from the certificate.
+
+The certificate itself is public: any server could send a copy of `shop.example.com`'s certificate. Only the holder of the private key can produce a valid signature over *this* handshake's transcript, which includes fresh random values from both sides, so an old signature can't be replayed either.
+:::
+
 ## Quick Revision
 
 - Certificate = public key + names (SAN) + validity + issuer, signed by a CA.
@@ -196,3 +257,4 @@ Domain owners can monitor logs for unexpected certificates.
 - Validation: chain + signatures + dates + hostname + usage + (revocation) + CT; possession proven by CertificateVerify.
 - ACME (HTTP-01, DNS-01) automates short-lived certs; automate renewal and alert on expiry.
 - Revocation (CRL, OCSP, stapling) is weak → short lifetimes. mTLS + private PKI for services.
+- Server sends leaf + intermediates (not the root). Wildcard `*.example.com` = exactly one label (not the apex). OCSP stapling: the server delivers fresh revocation status in the handshake.

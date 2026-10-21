@@ -11,7 +11,7 @@ relevance: essential
 stage: 1
 prerequisites: [cn-tcp-fundamentals]
 related: [cn-http3-quic, cn-dns-fundamentals, cn-tcp-reliability, cn-vpn-nat-traversal]
-tags: [udp, datagram, connectionless, tcp vs udp, message boundaries, reliability, ordering, multicast, dns, quic, rtp, games, amplification attack]
+tags: [udp, datagram, connectionless, tcp vs udp, message boundaries, reliability, ordering, multicast, dns, quic, rtp, games, amplification attack, datagramsocket, datagramchannel, java udp]
 ---
 
 ## Mental Model
@@ -84,21 +84,49 @@ A UDP socket can call `connect()` to fix its peer: the kernel then filters incom
 :::depth{level=advanced}
 ### Security: spoofing and amplification
 
-UDP has no handshake, so the source address isn't verified. Attackers send small requests with the **victim's** spoofed address to services that return large responses — **reflection/amplification** DDoS (DNS, NTP `monlist`, memcached, SSDP; amplification factors from tens to tens of thousands). Defenses: source-address validation at networks (BCP 38), response rate limiting, not exposing UDP services publicly, and protocol designs that require the client to prove its address before large responses (QUIC's address validation and anti-amplification limit: a server sends at most 3× what it received before validating the client).
+UDP has no handshake, so the source address isn't verified. Attackers send small requests carrying the **victim's** address as the source to services that return large responses. The responses flood the victim: **reflection and amplification** DDoS. DNS, NTP's `monlist`, memcached and SSDP have all been abused this way, with amplification factors from tens to tens of thousands.
+
+Defenses:
+- source-address validation by networks (BCP 38), so spoofed packets never leave their origin;
+- response rate limiting on DNS and other UDP servers;
+- not exposing UDP services to the internet unless needed;
+- protocols that make clients prove their address before sending large responses: a QUIC server sends at most 3× what it has received until the client's address is validated.
 :::
 
 ## Example
 
-```python
-import socket
-s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-s.settimeout(2.0)
-s.sendto(b"ping", ("192.0.2.10", 9999))     # no handshake, may be lost silently
-try:
-    data, addr = s.recvfrom(2048)            # one whole datagram
-except socket.timeout:
-    pass                                     # our job to retry (or not)
+A UDP request and reply in Java:
+
+```java
+try (DatagramSocket socket = new DatagramSocket()) {
+    socket.setSoTimeout(2_000);                                  // receive() gives up after 2 s
+    byte[] msg = "ping".getBytes(StandardCharsets.US_ASCII);
+    socket.send(new DatagramPacket(msg, msg.length,
+            InetAddress.getByName("192.0.2.10"), 9999));         // no handshake; may be lost silently
+    DatagramPacket reply = new DatagramPacket(new byte[2048], 2048);
+    try {
+        socket.receive(reply);                                   // exactly one whole datagram
+        System.out.println(reply.getLength() + " bytes from " + reply.getSocketAddress());
+    } catch (SocketTimeoutException e) {
+        // lost request, lost reply, or nobody listening: retrying is our job
+    }
+}
 ```
+
+Each `receive()` returns one complete datagram, never part of one or two at once. A datagram larger than the buffer is silently cut to fit, so size the buffer for the largest message. `DatagramChannel` offers the same with NIO and selectors.
+
+```mermaid
+%%{init: {"sequence": {"width": 110, "actorMargin": 40}}}%%
+sequenceDiagram
+    participant C as Client
+    participant S as DNS resolver
+    C-xS: query (lost)
+    Note over C: no reply after 1 s,<br/>retry (maybe another server)
+    C->>S: same query again
+    S-->>C: answer
+```
+
+With UDP, a lost datagram is the application's problem: here the DNS client retries after its own timeout. That timeout is why one lost DNS packet costs a whole second.
 
 ## Complexity & Performance
 
@@ -157,6 +185,10 @@ Sequence numbers and acknowledgments (ideally selective), retransmission with RT
 
 IP fragments it into ~14 fragments. If any fragment is lost, the whole datagram is lost (loss amplification), reassembly consumes receiver resources, and many firewalls drop fragments entirely. Better: keep datagrams under the path MTU and segment at the application level.
 
+### [L2 · how] How do you send and receive UDP in Java, and what does one receive() call return?
+
+Create a `DatagramSocket`, wrap each message in a `DatagramPacket` with the destination address and port, and call `send()`. `receive()` blocks until a datagram arrives (or `setSoTimeout` expires) and fills the packet with exactly one whole datagram, preserving message boundaries, unlike a TCP stream. If the buffer is smaller than the datagram, the excess is silently discarded. Nothing tells you whether a sent datagram arrived; timeouts and retries are the application's job. `DatagramChannel` provides the same over NIO.
+
 ## Practice
 
 ### [mcq] Which of these does UDP preserve that TCP does not?
@@ -177,9 +209,61 @@ Each datagram is received whole.
 
 Ports, length and checksum: 2 bytes each.
 
+### [numeric 65507 unit=bytes] What is the largest payload a single UDP datagram can carry over IPv4?
+
+:::answer
+The IPv4 total-length field allows 65,535 bytes. Subtract the 20-byte IPv4 header and the 8-byte UDP header: **65,507** bytes. Anything over the path MTU (around 1,472 bytes of payload on Ethernet) is IP-fragmented, so real protocols stay far below this.
+:::
+
+### [numeric 1472 unit=bytes] On a path with a 1,500-byte MTU and no IP options, what is the largest UDP payload that avoids IPv4 fragmentation?
+
+:::answer
+1,500 − 20 (IPv4 header) − 8 (UDP header) = **1,472** bytes. This is the payload size `ping -M do -s 1472` uses to test a full-size path.
+:::
+
+### [numeric 50] An attacker sends 60-byte DNS queries with the victim's spoofed address, and each provokes a 3,000-byte response to the victim. What is the amplification factor?
+
+:::answer
+3,000 ÷ 60 = **50**. Each megabit per second the attacker sends becomes 50 Mb/s at the victim, and the victim sees traffic from DNS servers, not from the attacker.
+:::
+
+### [mcq] A Java `DatagramSocket` receives into a 512-byte buffer, and a 1,200-byte datagram arrives. What happens?
+
+- [ ] `receive()` returns the first 512 bytes and the next call returns the rest
+- [x] The first 512 bytes are delivered and the rest is discarded
+- [ ] `receive()` throws an exception
+- [ ] The datagram waits until a larger buffer is offered
+
+UDP delivers datagrams whole or not at all, one per receive call; data that doesn't fit the buffer is lost. Size buffers for the largest message the protocol allows.
+
+### [exercise] A multiplayer game sends player positions 30 times a second over UDP. Which of TCP's features should it rebuild on top of UDP, and which should it deliberately leave out?
+
+:::solution
+**Rebuild:**
+- **Sequence numbers**, so the client can discard out-of-order and duplicate updates. An update older than the newest one received is simply ignored.
+- **Congestion control or rate limiting**, so the game backs off on a congested link instead of flooding it.
+- **Reliable delivery only for the messages that need it**: chat lines, item pickups and "player joined", resent until acknowledged.
+
+**Leave out:**
+- **Retransmission of position updates.** A lost update is replaced by the next one 33 ms later. Resending an old position would only deliver stale data late.
+- **In-order delivery with blocking.** Waiting for a missing old update would delay newer ones: exactly TCP's head-of-line blocking.
+
+The result is how most games, and protocols like QUIC and RTP, use UDP: choose per message what matters.
+:::
+
+### [exercise] In the [TCP connection simulator](lab:tcp-handshake), press "Client connect()", "Client sends 100 B" and "Server sends 300 B", then close both sides. How many segments carried no application data, and how long did the client wait before it could send its request? Compare a DNS lookup over UDP, and say when DNS still falls back to TCP.
+
+:::solution
+In the lab, 9 of the 11 segments carry no application data: the handshake (SYN, SYN-ACK, ACK), one ACK for each data segment, and the close (FIN and ACK in each direction). The client waits one full round trip, for the SYN-ACK, before its request can go.
+
+Over UDP, a DNS lookup is 2 datagrams: the query and the response. Nothing is set up before or torn down after, and the server keeps no state per client, which matters for a resolver answering millions of them. DNS falls back to TCP when a response doesn't fit (the server sets the TC "truncated" bit and the client retries over TCP), for zone transfers, and for DNS over TLS.
+:::
+
 ## Quick Revision
 
 - UDP = IP + ports + length + checksum (8 B). Connectionless, unreliable, unordered, message boundaries kept.
 - No handshake, no HOL blocking, no flow/congestion control → app builds what it needs (seq numbers, selective retransmit, FEC, jitter buffer, congestion control).
 - Uses: DNS, RTP media, games, QUIC/HTTP/3, DHCP, NTP, WireGuard, StatsD.
 - Keep datagrams < MTU; NAT mappings expire fast; beware amplification.
+- Java: `DatagramSocket` + `DatagramPacket`; `receive()` = one whole datagram (truncated if the buffer is too small); `setSoTimeout` + retries are your job.
+- Max IPv4 UDP payload 65,507; no fragmentation at MTU 1,500 → ≤ 1,472.

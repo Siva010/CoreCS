@@ -33,9 +33,9 @@ TLS 1.3 overlaps these cleverly: the client *guesses* the key-exchange group and
 
 **The problem.** To stop eavesdropping, tampering and impersonation on untrusted networks — and, with HTTPS everywhere, to protect cookies, credentials and content integrity (no ISP ad injection, no tampered downloads).
 
-**What the handshake must achieve.** Before the first encrypted byte, two strangers must (1) agree on algorithms, (2) agree on a secret key nobody else can compute, and (3) prove the server is who it claims. The previous two lessons supply the tools — Diffie–Hellman for (2), certificates and signatures for (3). The handshake is the choreography that uses them.
+**What the handshake must achieve.** Before the first encrypted byte, two strangers must agree on algorithms, agree on a secret key nobody else can compute, and prove the server is who it claims. The previous two lessons supply the tools: Diffie–Hellman for the key, certificates and signatures for the proof. The handshake is the choreography that uses them.
 
-**The design goal of TLS 1.3.** Every round trip costs latency, so do as much as possible in the first message: the client *guesses* which key-exchange method the server will accept and sends its half immediately.
+**The design goal of TLS 1.3.** Every round trip costs latency, so do as much as possible in the first message. The client *guesses* which key-exchange method the server will accept and sends its half immediately.
 
 :::callout[That's all it is]{type=insight}
 Client: "here are my options and my half of a key exchange". Server: "here's my half, my certificate, and a signature proving I own it". Both now compute the same key and everything after is encrypted. One round trip.
@@ -79,7 +79,7 @@ Message by message:
 
 ### Where the keys come from
 
-The (EC)DHE shared secret goes through **HKDF** together with transcript hashes to produce: client and server **handshake traffic keys** (encrypting the rest of the handshake), then **application traffic keys** (one per direction), plus a resumption secret. Records are then protected with an AEAD cipher (AES-GCM or ChaCha20-Poly1305) and per-record nonces from sequence numbers ([Crypto Foundations](lesson:cn-crypto-foundations)).
+The (EC)DHE shared secret goes through **HKDF** together with transcript hashes. It produces client and server **handshake traffic keys** (encrypting the rest of the handshake), then **application traffic keys** (one per direction), plus a resumption secret. Records are then protected with an AEAD cipher (AES-GCM or ChaCha20-Poly1305) and per-record nonces from sequence numbers ([Crypto Foundations](lesson:cn-crypto-foundations)).
 
 ### TLS 1.2 vs 1.3
 
@@ -230,6 +230,36 @@ The client names the host it wants in the ClientHello.
 
 Everything after ServerHello is encrypted with handshake keys.
 
+### [numeric 4] With TCP and TLS 1.2 (full handshake), after how many round trips does the first byte of the response arrive?
+
+:::answer
+TCP 1 RTT + TLS 1.2 2 RTTs + request and response 1 RTT = **4**. TLS 1.3 saves one, for 3; 0-RTT resumption saves another round trip for the request itself.
+:::
+
+### [numeric 1] With TLS 1.3, how many round trips does the TLS handshake itself take for a new (non-resumed) connection?
+
+:::answer
+**1**: the ClientHello already carries a key share, so after the ServerHello both sides can derive keys. TLS 1.2 needed 2 round trips, because the key exchange only began in the second flight.
+:::
+
+### [exercise] Step through the [TLS handshake visualization](viz:tls-handshake) for TLS 1.3 and for TLS 1.2. For each, list which messages travel encrypted, and explain what an eavesdropper on the network still learns in TLS 1.3.
+
+:::solution
+- **TLS 1.3:** only ClientHello and ServerHello are in clear text. EncryptedExtensions, Certificate, CertificateVerify, both Finished messages and all application data are encrypted with handshake or application keys.
+- **TLS 1.2:** the whole handshake is in clear text, including the server's certificate; only the final Finished messages and the application data are encrypted.
+
+In TLS 1.3 an eavesdropper still sees the IP addresses and ports, the timing and sizes of records, and the **SNI** hostname in the ClientHello, unless Encrypted Client Hello (ECH) is used. They no longer see the certificate, so they can't confirm which site is served at that IP from the certificate alone.
+:::
+
+### [mcq] What does the client's Finished message prove to the server?
+
+- [ ] That the client owns a certificate
+- [x] That the client derived the same keys and saw the same handshake messages, so nothing was tampered with
+- [ ] That the client's clock is correct
+- [ ] That the server's certificate is valid
+
+Finished is a MAC over the transcript using a key derived from the handshake secret. A man in the middle who altered any message would make the MACs disagree.
+
 ## Quick Revision
 
 - ClientHello (suites, key_share, SNI, ALPN) → ServerHello (key_share) → [enc] EncryptedExtensions, Certificate, **CertificateVerify** (signs transcript), Finished → client Finished → data. **1 RTT**.
@@ -238,3 +268,4 @@ Everything after ServerHello is encrypted with handshake keys.
 - Resumption via PSK tickets; 0-RTT is replayable → idempotent only.
 - HTTPS = authentication + integrity + confidentiality + downgrade protection; HSTS defeats SSL stripping; SNI visible unless ECH.
 - Failures: expiry, missing intermediate, hostname mismatch, version/suite mismatch, clock skew.
+- First response byte: TCP + TLS 1.2 = 4 RTTs, TCP + TLS 1.3 = 3, HTTP/3 = 2. In TLS 1.3 only the hellos are clear text; SNI still leaks without ECH.

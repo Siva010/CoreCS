@@ -12,7 +12,7 @@ stage: 1
 prerequisites: []
 related: [cn-layered-models, cn-encapsulation, cn-ethernet-switching, cn-routing]
 visualizations: [encapsulation]
-tags: [packet switching, circuit switching, bits, signals, frames, packets, switch, router, mac address, ip address, port, protocol, end-to-end principle]
+tags: [packet switching, circuit switching, message switching, store and forward, network topology, lan, man, wan, bits, signals, frames, packets, switch, router, mac address, ip address, port, protocol, end-to-end principle]
 ---
 
 ## Mental Model
@@ -22,7 +22,7 @@ Sending data across the internet is like **mailing a book through a postal syste
 1. You tear the book into pages and put each page on a postcard (**packets**), numbered so the recipient can reassemble them.
 2. Each postcard carries a **destination address** (the recipient's building — an **IP address**) and an **apartment number** (the program on that machine — a **port**).
 3. Postcards travel hop by hop. At each local post office (**router**), a clerk looks only at the destination and decides the next post office. Nobody plans the whole route in advance.
-4. Between two post offices, the postcard rides a specific truck on a specific road (**a link**); for that ride it's put in an envelope addressed to the next stop's loading dock (a **frame** with **MAC addresses**).
+4. Between two post offices, the postcard rides a specific truck on a specific road (**a link**). For that ride it's put in an envelope addressed to the next stop's loading dock (a **frame** with **MAC addresses**).
 5. Postcards can get lost, arrive out of order, or be duplicated. If you need the whole book intact, the sender and receiver must run a **protocol** on top: number pages, acknowledge receipt, resend missing ones (**TCP**).
 
 Everything in computer networking elaborates one of those five sentences.
@@ -55,7 +55,7 @@ Everything in computer networking elaborates one of those five sentences.
 
 The price of packet switching is **queueing**: when many packets want the same link at once, they wait in router buffers (delay) or get dropped (loss). Much of networking — TCP congestion control, QoS, tail latency — exists to cope with that price.
 
-**From idea to mechanism.** Once you decide "independent packets on shared links", the rest of the course falls out: packets need addresses to find hosts (**IP**), something to choose each next hop (**routing**), a way to cross each individual link (**Ethernet, MAC addresses**), a way to reach the right program on the host (**ports**), and — because packets can be lost or reordered — a way to rebuild a reliable stream (**TCP**).
+**From idea to mechanism.** Once you decide "independent packets on shared links", the rest of the course falls out. Packets need addresses to find hosts (**IP**) and something to choose each next hop (**routing**). They need a way to cross each individual link (**Ethernet, MAC addresses**) and a way to reach the right program on the host (**ports**). And because packets can be lost or reordered, the ends need a way to rebuild a reliable stream (**TCP**).
 
 :::callout[That's all it is]{type=insight}
 Data is cut into packets with an address on each. Every router looks at the address and passes the packet one hop closer. The two ends fix up whatever goes wrong on the way: losses, reordering, duplicates.
@@ -65,7 +65,11 @@ Data is cut into packets with an address on each. Every router looks at the addr
 
 ### Four kinds of addresses, four jobs
 
-Why so many addresses? Because "deliver to that program on that machine across the world" is really four questions: which program (port), which machine globally (IP), which device on this cable right now (MAC), and what humans type (domain name).
+Why so many addresses? Because "deliver to that program on that machine across the world" is really four questions:
+- which program (port);
+- which machine, globally (IP);
+- which device on this cable right now (MAC);
+- what humans type (domain name).
 
 | Address | Example | Scope | Who uses it |
 |---|---|---|---|
@@ -102,6 +106,53 @@ You run `curl https://example.com` on a laptop on home Wi-Fi:
 | Load balancer / proxy | Up to HTTP (Layer 7) | May terminate TCP/TLS and open a new connection |
 | End host | Everything | Delivers to the socket |
 
+```mermaid
+flowchart TD
+    L["laptop 192.168.1.23"] -->|"frame to the router's MAC<br/>IP 192.168.1.23 → 93.184.215.14"| R["home router"]
+    R -->|"NAT: source becomes 198.51.100.7<br/>TTL − 1, new frame"| I["ISP and backbone routers<br/>(10–20 hops)"]
+    I -->|"TTL − 1 and a new frame<br/>at every hop"| S["server 93.184.215.14<br/>port 443"]
+```
+
+The IP addresses survive the whole trip (apart from NAT at the edge); the frame around the packet is rebuilt on every link.
+
+### Store-and-forward: why packets beat whole messages
+
+A router must receive a whole packet before it can check it and send it on. This is **store-and-forward**, and it means every hop costs one full transmission time. Cutting a message into packets lets the hops work at the same time, like an assembly line: while hop 2 sends packet 1, hop 1 is already sending packet 2.
+
+Send a 1 MB message (8,000,000 bits) across 3 links of 1 Mb/s, ignoring propagation:
+
+```text
+whole message (message switching): 8 s per hop → 3 × 8 s = 24 s
+1,000 packets of 1,000 bytes:      8 ms per packet per hop
+  the first packet arrives after 3 × 8 ms; the other 999 follow, one every 8 ms
+  total = (3 + 999) × 8 ms = 8.016 s
+```
+
+In general, N packets of L bits over Q store-and-forward links of rate R take **(Q + N − 1) × L / R**, plus propagation. Smaller packets pipeline better, but each one carries its own headers, so there is a limit: on Ethernet a packet carries at most 1,500 bytes.
+
+### Network types and topologies
+
+Networks are often classified by how far they reach:
+
+| Type | Span | Example |
+|---|---|---|
+| PAN | A few metres | A phone and a Bluetooth headset |
+| LAN | A building or campus | Office Ethernet and Wi-Fi |
+| MAN | A city | A city-wide fibre ring |
+| WAN | Countries and continents | The internet; a company's links between offices |
+
+They are also described by **topology**, the shape in which devices are connected:
+
+| Topology | Shape | Strength | Weakness |
+|---|---|---|---|
+| Bus | Every device on one shared cable | Cheap, little cable | One cable fault cuts everyone off; collisions |
+| Star | Every device to a central switch | Easy to manage; a bad cable affects one device | The centre is a single point of failure |
+| Ring | Each device linked to two neighbours | Predictable access (token passing) | One break can stop the ring (dual rings fix it) |
+| Mesh | Devices linked directly to many others | Many paths; survives failures | A full mesh of n devices needs n(n − 1)/2 links |
+| Tree | Stars joined in a hierarchy | Grows by adding branches | Losing an upper branch cuts off everything below |
+
+A modern office LAN is a star, or a tree of stars, built around switches. The internet's core is a partial mesh: routers have several links each, but not to every other router.
+
 ## Internal Mechanism
 
 ### Where delay comes from
@@ -111,16 +162,16 @@ Every hop adds four kinds of delay ([Latency & Bandwidth](lesson:cn-latency-band
 - **Processing**: examining headers, looking up routes (ns–µs).
 - **Queueing**: waiting behind other packets in the output buffer (0 to many ms — the variable part).
 - **Transmission**: pushing the bits onto the link = packet size / link bandwidth (1500 B at 1 Gb/s = 12 µs).
-- **Propagation**: the signal traveling the distance at ~2/3 the speed of light in fiber (~5 µs per km — about 28 ms one way for the ~5,600 km New York → London great-circle distance, more in practice because cables don't follow great circles).
+- **Propagation**: the signal travelling the distance at about 2/3 of the speed of light in fibre, ~5 µs per km. New York to London is ~5,600 km on a great circle, about 28 ms one way, and more in practice because cables don't follow great circles.
 
 ### The end-to-end principle
 
-A design philosophy that explains why the internet looks the way it does. The network core (routers) is deliberately **simple and stateless** — "best effort" delivery of individual packets. Reliability, ordering, encryption and flow control are implemented at the **ends** (in hosts' TCP stacks and applications), because only the ends know what "correct" means for their application, and a smart network can't guarantee end-to-end correctness anyway. This is why the internet scaled: routers don't track your connections. (Middleboxes like NATs and firewalls do keep state, and they're a constant source of breakage — which is why QUIC encrypts almost everything.)
+A design philosophy that explains why the internet looks the way it does. The network core (routers) is deliberately **simple and stateless** — "best effort" delivery of individual packets. Reliability, ordering, encryption and flow control are implemented at the **ends** (in hosts' TCP stacks and applications). Only the ends know what "correct" means for their application, and a smart network can't guarantee end-to-end correctness anyway. This is why the internet scaled: routers don't track your connections. (Middleboxes like NATs and firewalls do keep state, and they're a constant source of breakage — which is why QUIC encrypts almost everything.)
 
 :::depth{level=advanced}
 ### Physical layer in one paragraph
 
-Copper Ethernet encodes bits as voltage patterns (e.g., PAM levels), fiber as light pulses at specific wavelengths, Wi-Fi as modulated radio (OFDM/QAM). Link speed is the rate bits can be placed on the medium; errors from noise are detected by a **CRC** in every frame (corrupted frames are dropped, never "fixed" at Layer 2 for Ethernet), and higher layers retransmit. Wireless links lose and reorder far more than wired ones, which is why Wi-Fi does its own link-layer retransmissions and why TCP performance on mobile networks is its own discipline.
+Copper Ethernet encodes bits as voltage patterns (e.g., PAM levels), fiber as light pulses at specific wavelengths, Wi-Fi as modulated radio (OFDM/QAM). Link speed is the rate at which bits can be placed on the medium. Errors from noise are detected by a **CRC** in every frame ([Error Detection](lesson:cn-error-detection)); corrupted Ethernet frames are dropped, never "fixed" at Layer 2, and higher layers retransmit. Wireless links lose and reorder far more than wired ones. That is why Wi-Fi does its own link-layer retransmissions, and why TCP performance on mobile networks is its own discipline.
 :::
 
 ## Example
@@ -198,6 +249,14 @@ The Ethernet/Wi-Fi frame header is replaced at every hop (new source/destination
 
 Functions like reliability, ordering and security should be implemented at the endpoints rather than in the network core, because only the endpoints can ensure correctness for the application and the core stays simple, stateless and scalable. It's why routers do best-effort forwarding and TCP/TLS live in hosts. Middleboxes that violate it (NATs, firewalls, TCP-modifying proxies) cause ossification — one reason QUIC runs over UDP and encrypts its headers.
 
+### [L1 · compare] What are the common network topologies, and which one does a modern office LAN use?
+
+Bus (one shared cable), star (everything to a central device), ring (each device to two neighbours), mesh (many direct links; a full mesh of n devices needs n(n − 1)/2 links) and tree (stars in a hierarchy). An office LAN is a star or tree of stars around switches: a broken cable affects one device, and each switch port is its own full-duplex link, so there are no collisions. The trade-off is that the switch is a single point of failure, which is why critical networks add redundant switches and links, a partial mesh.
+
+### [L2 · numerical] Why does sending a message as many packets cross several routers faster than sending it whole?
+
+Routers are store-and-forward: each must receive a whole unit before sending it on, so every hop costs one transmission time. A whole message pays that cost once per hop, in sequence. Packets pipeline: while the second router forwards packet 1, the first is already forwarding packet 2. N packets of L bits over Q links of rate R take (Q + N − 1) × L / R instead of Q × N × L / R. For 1 MB over 3 links at 1 Mb/s, that is 8.016 s instead of 24 s.
+
 ## Practice
 
 ### [mcq] Which device primarily uses destination IP addresses to forward traffic between networks?
@@ -215,6 +274,46 @@ Routers work at Layer 3.
 1,500 × 8 = 12,000 bits; 12,000 / 10⁹ bits/s = 12 × 10⁻⁶ s = **12 µs**.
 :::
 
+### [numeric 45] A full mesh connects every one of 10 routers directly to every other. How many links does it need?
+
+:::answer
+Each link joins a pair of routers, so count the pairs: 10 × 9 / 2 = **45** links. Doubling to 20 routers needs 190, which is why large networks use partial meshes and hierarchies instead.
+:::
+
+### [numeric 10 unit=ms] A signal travels through optical fibre at about 2 × 10⁸ m/s. What is the one-way propagation delay over 2,000 km of fibre, in milliseconds?
+
+:::answer
+2,000,000 m ÷ 2 × 10⁸ m/s = 0.01 s = **10** ms. Propagation depends only on distance, so a faster link doesn't reduce it.
+:::
+
+### [numeric 802.4 ±0.5 unit=ms] A 1,000,000-byte file is sent as 1,000 packets of 1,000 bytes across 4 store-and-forward links, each 10 Mb/s. Ignoring propagation and headers, how long until the last packet arrives, in milliseconds?
+
+:::answer
+One packet takes 8,000 bits ÷ 10⁷ bit/s = 0.8 ms per link. With Q = 4 links and N = 1,000 packets: (Q + N − 1) × 0.8 ms = 1,003 × 0.8 ms = **802.4** ms. Sent as one 8,000,000-bit message, it would take 4 × 0.8 s = 3.2 s.
+:::
+
+### [mcq] In an office wired as a star around one switch, the cable to one desktop is cut. What happens?
+
+- [ ] Every device on the LAN loses connectivity
+- [x] Only that desktop loses its connection
+- [ ] The switch floods all traffic until the cable is replaced
+- [ ] Devices on either side of the break can no longer reach each other
+
+In a star each device has its own cable to the centre, so a cable fault isolates one device. In a bus, a single cable fault cuts off everyone; in a ring, one break can stop the whole ring.
+
+### [exercise] Open the [encapsulation visualization](viz:encapsulation) and step the request across the router. List what the router changes and what it leaves alone. Why must the MAC addresses change at every hop, while the IP addresses stay the same?
+
+:::solution
+**The router changes:**
+- the whole Ethernet header: the new destination MAC is the next hop, and the new source MAC is the router's outgoing interface;
+- the IP TTL, decremented by 1;
+- the IP header checksum, recomputed because the TTL changed.
+
+**It leaves alone:** the source and destination IP addresses, the TCP header and the data (unless the router also does NAT, which rewrites the source address and port).
+
+**Why:** a MAC address only means something on one link: it names the next device that will physically receive the frame. Each hop is a different link with a different next device, so the frame is rebuilt every time. The IP addresses name the two ends of the whole journey, and every router needs the destination IP to choose its next hop, so they must survive the trip unchanged.
+:::
+
 ## Quick Revision
 
 - Packet switching: data split into packets sharing links; best effort; queues → delay and loss.
@@ -222,3 +321,5 @@ Routers work at Layer 3.
 - Switch = Layer 2 (MAC), router = Layer 3 (IP, next hop only, TTL−1, new frame each hop).
 - Delay = processing + queueing + transmission + propagation.
 - End-to-end principle: simple core, smart endpoints (TCP, TLS in hosts).
+- Store-and-forward: N packets of L bits over Q links of rate R take (Q + N − 1)·L/R; packets pipeline across hops, whole messages don't.
+- Network types: PAN, LAN, MAN, WAN. Topologies: bus, star, ring, mesh (full mesh = n(n − 1)/2 links), tree; office LANs are stars of switches.

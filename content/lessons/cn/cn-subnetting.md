@@ -91,6 +91,20 @@ Equal slices waste space when needs differ (a 2-host link doesn't need a /26). S
 5. Link 1 → `/30`: `172.16.0.224/30`; Link 2 → `172.16.0.228/30`.
 6. Remaining free: `172.16.0.232` – `.255` for growth.
 
+Each step splits the remaining space in half and keeps one half:
+
+```mermaid
+flowchart TD
+    A["172.16.0.0/24"] --> S["/25 .0–.127<br/>Sales, 100 hosts"]
+    A --> B["/25 .128–.255"]
+    B --> E["/26 .128–.191<br/>Engineering, 50 hosts"]
+    B --> C["/26 .192–.255"]
+    C --> O["/27 .192–.223<br/>Ops, 20 hosts"]
+    C --> D["/27 .224–.255"]
+    D --> K["/30 .224 and /30 .228<br/>two links"]
+    D --> F[".232–.255<br/>free for growth"]
+```
+
 ### Summarization
 
 Networks `10.1.4.0/24`, `10.1.5.0/24`, `10.1.6.0/24`, `10.1.7.0/24`: third octets 4–7 = `000001|00` to `000001|11` → first 22 bits common → **`10.1.4.0/22`**. A summary is valid only if the block is aligned (4 is a multiple of 4) and contiguous.
@@ -159,6 +173,10 @@ Largest first: 400 → 9 host bits (510) → /23: 10.0.0.0/23 (10.0.0.0–10.0.1
 
 No. A /22 covers blocks of 4 in the third octet starting at a multiple of 4: 12–15 or 16–19. 14–17 spans two /22 blocks; the smallest single summary covering it is 192.168.0.0/19 (which also includes many other networks) — or advertise 192.168.14.0/23 + 192.168.16.0/23.
 
+### [L2 · numerical] What prefix length gives a subnet at least 500 usable hosts, and how many does it actually give?
+
+You need h host bits with 2^h − 2 ≥ 500. 2⁸ − 2 = 254 is too few; 2⁹ − 2 = **510** is enough. 9 host bits leave 32 − 9 = **/23** (mask 255.255.254.0). A /23 spans two consecutive /24s starting at an even third octet, such as 10.0.4.0 – 10.0.5.255.
+
 ## Practice
 
 ### [exercise] Find network, broadcast and usable range for 172.20.200.77/21.
@@ -179,6 +197,33 @@ No. A /22 covers blocks of 4 in the third octet starting at a multiple of 4: 12�
 Mask 255.255.240.0 → 256 − 240 = **16**.
 :::
 
+### [numeric 23] What prefix length do you need for one subnet with at least 500 usable hosts?
+
+:::answer
+2⁹ − 2 = 510 ≥ 500 but 2⁸ − 2 = 254 isn't, so 9 host bits: 32 − 9 = **/23**.
+:::
+
+### [mcq] In VLSM, why do you allocate the largest subnets first?
+
+- [ ] Larger subnets need lower addresses to be routable
+- [x] Allocating big blocks first keeps every block aligned on a multiple of its size, so nothing overlaps and no space is stranded
+- [ ] Routers process larger subnets before smaller ones
+- [ ] It minimizes the number of broadcast addresses
+
+A /25 must start at .0 or .128. If small blocks were placed first, say a /30 at .0, a /25 could no longer start at .0, and the space below .128 would be left in awkward fragments.
+
+### [exercise] Using VLSM, carve 10.10.0.0/22 into subnets for 200 hosts, 100 hosts, 50 hosts and two point-to-point links. Give each subnet's network address and prefix, list what is left over, and check each block in the [subnet calculator](lab:subnet-calculator).
+
+:::solution
+Largest first:
+1. **200 hosts** need 8 host bits (254): **10.10.0.0/24** (.0.0 – .0.255).
+2. **100 hosts** need 7 bits (126): **10.10.1.0/25** (.1.0 – .1.127).
+3. **50 hosts** need 6 bits (62): **10.10.1.128/26** (.1.128 – .1.191).
+4. **Link 1**: **10.10.1.192/30**. **Link 2**: **10.10.1.196/30**.
+
+Left over: 10.10.1.200 – 10.10.1.255 and all of 10.10.2.0 – 10.10.3.255, about 56% of the /22. Every block starts on a multiple of its own size, so none overlap.
+:::
+
 ## Quick Revision
 
 - Block size = 256 − mask octet value; networks start at multiples of it.
@@ -186,3 +231,4 @@ Mask 255.255.240.0 → 256 − 240 = **16**.
 - N subnets → borrow ceil(log2 N) bits; H hosts → h bits with 2^h − 2 ≥ H.
 - VLSM: allocate largest first, keep aligned.
 - Summarize only aligned, contiguous blocks.
+- Hosts → prefix: smallest h with 2^h − 2 ≥ hosts; prefix = 32 − h (500 hosts → /23).

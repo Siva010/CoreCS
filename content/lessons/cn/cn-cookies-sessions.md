@@ -71,6 +71,23 @@ The trade-off is "where does the state live?" — on the server (easy to change 
 
 Common hybrid: short-lived **access tokens** (5–15 min JWTs) + long-lived **refresh tokens** stored server-side and rotated — fast stateless checks with bounded revocation delay.
 
+A server-side session, from login to the next request:
+
+```mermaid
+%%{init: {"sequence": {"width": 120, "actorMargin": 40}}}%%
+sequenceDiagram
+    participant B as Browser
+    participant A as App server
+    participant S as Session store (Redis)
+    B->>A: POST /login
+    A->>S: store q8W0 → user 42
+    A-->>B: Set-Cookie: sid=q8W0<br/>Secure, HttpOnly, SameSite
+    B->>A: GET /account<br/>Cookie: sid=q8W0
+    A->>S: look up q8W0
+    S-->>A: user 42
+    A-->>B: account page
+```
+
 ### Where to store tokens in browsers
 
 - **HttpOnly Secure SameSite cookie**: not readable by JS (XSS can't exfiltrate it, though it can still make requests as the user); automatically sent (needs CSRF protections).
@@ -156,6 +173,14 @@ HttpOnly hides the cookie from JavaScript, limiting theft through XSS. Secure se
 
 Keep access tokens short-lived (e.g., 5–10 minutes) and store refresh tokens server-side; logout-everywhere deletes/revokes all the user's refresh tokens so no new access tokens can be minted, and existing ones expire shortly. For immediate effect, maintain a per-user "tokens issued before T are invalid" timestamp or a denylist of token IDs checked by services (cached), accepting that this reintroduces a lookup.
 
+### [L2 · how] How do access tokens and refresh tokens work together?
+
+The access token is short-lived (5–15 minutes) and self-contained: every service can verify its signature without a lookup. The refresh token is long-lived, stored server-side (or tracked there), and only sent to the authorization server to get a new access token. Revoking a user means revoking the refresh token: their access token keeps working only until it expires. Rotating the refresh token on every use, and treating reuse of an old one as theft, limits the damage if one leaks.
+
+### [L2 · why] Why must the session ID change at login?
+
+To prevent session fixation. If the ID stays the same, an attacker who planted a known session ID in the victim's browser before login (through a crafted link or a subdomain cookie) shares the session once the victim authenticates. Issuing a new ID at login, and at any privilege change, makes the planted one worthless. Frameworks do this automatically (Spring Security's session-fixation protection, for example), provided it isn't turned off.
+
 ## Practice
 
 ### [mcq] Which cookie attribute prevents JavaScript from reading a session cookie?
@@ -176,9 +201,52 @@ HttpOnly cookies are sent with requests but hidden from document.cookie.
 
 Verification is stateless, so revocation requires extra state or short lifetimes.
 
+### [numeric 32] Access tokens last 15 minutes and are refreshed just as they expire. How many refreshes does one client make during an 8-hour working day?
+
+:::answer
+8 × 60 ÷ 15 = **32**. Shorter tokens shrink the window in which a stolen token works, at the cost of more refreshes; the refresh is a cheap call, so 5–15 minutes is common.
+:::
+
+### [numeric 24 unit=hours] A cookie is set with `Max-Age=86400`. For how many hours does the browser keep it?
+
+:::answer
+86,400 s ÷ 3,600 = **24** hours. Without Max-Age or Expires it would be a session cookie, deleted when the browser closes.
+:::
+
+### [mcq] A session cookie has `SameSite=Lax`. Which request from a page on another site still carries it?
+
+- [ ] A form POST to your site
+- [ ] A `fetch()` call to your API
+- [x] A top-level navigation (the user clicks a link to your site)
+- [ ] An `<img>` loading from your site
+
+Lax sends cookies only on top-level navigations with safe methods (GET), so links keep working while cross-site POSTs and subrequests arrive without the cookie, which defeats classic CSRF.
+
+### [mcq] What does the `__Host-` prefix on a cookie name guarantee?
+
+- [ ] The cookie is encrypted
+- [x] The cookie was set with Secure, Path=/ and no Domain attribute, so it is bound to this exact host
+- [ ] The cookie can only be read by JavaScript from the same host
+- [ ] The cookie expires when the host's certificate does
+
+Browsers reject `__Host-` cookies that don't meet those rules. That stops a compromised or less-trusted subdomain from setting or overwriting the session cookie for the main host.
+
+### [exercise] An app uses 24-hour JWT access tokens with no refresh tokens. Security asks for "log out everywhere" when a password changes. Explain why that is hard with this design, and propose two designs that make it work.
+
+:::solution
+**Why it's hard.** A JWT is valid until its expiry, and services verify it without asking anyone. After a password change, every token already issued keeps working for up to 24 hours.
+
+**Design 1: short access tokens plus server-side refresh tokens.** Access tokens of 5–15 minutes, refresh tokens stored in a database. A password change deletes the user's refresh tokens; within one access-token lifetime every session is gone. This is the common choice.
+
+**Design 2: a token version or denylist check.** Store a `tokensValidAfter` timestamp (or version number) per user, and put the issue time in the token. A password change bumps the timestamp, and services reject older tokens. That costs a lookup per request, usually a cached one, which brings back some of the state JWTs avoided.
+
+Both are simpler than either long-lived JWTs with a full denylist, or abandoning JWTs for opaque server-side sessions, which also solves it.
+:::
+
 ## Quick Revision
 
 - Cookie = browser-stored name/value sent automatically; attributes: Secure, HttpOnly, SameSite, Domain, Path, Max-Age, `__Host-`.
 - Session = server-side state keyed by random ID (Redis); revocable, needs shared store.
 - JWT = signed (not encrypted) claims; stateless verification; revocation/staleness hard → short access + rotated refresh tokens.
 - Store browser tokens in HttpOnly cookies (+ CSRF defense); rotate session ID at login; avoid sticky sessions.
+- Access token short (5–15 min) + refresh token server-side (rotate; reuse = theft); new session ID at login (fixation). SameSite=Lax: cookies only on top-level GET navigations from other sites. `__Host-` = Secure, Path=/, no Domain.

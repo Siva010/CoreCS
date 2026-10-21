@@ -12,7 +12,7 @@ stage: 3
 prerequisites: [cn-http-connections]
 related: [os-epoll-event-loops, cn-proxies-load-balancers, cn-tcp-termination, cn-http2]
 visualizations: [realtime-transports]
-tags: [polling, long polling, server-sent events, sse, websocket, upgrade, 101 switching protocols, full duplex, heartbeat, reconnect, backpressure, fan-out, pub/sub]
+tags: [polling, long polling, server-sent events, sse, websocket, upgrade, 101 switching protocols, full duplex, heartbeat, reconnect, backpressure, fan-out, pub/sub, java websocket client, java.net.http.websocket]
 ---
 
 ## Mental Model
@@ -81,6 +81,20 @@ Connection: Upgrade
 Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
 ```
 
+```mermaid
+%%{init: {"sequence": {"width": 110, "actorMargin": 40}}}%%
+sequenceDiagram
+    participant B as Browser
+    participant S as Server
+    B->>S: GET /chat, Upgrade websocket, Sec-WebSocket-Key
+    S-->>B: 101 Switching Protocols, Sec-WebSocket-Accept
+    Note over B,S: same TCP connection, now carrying WebSocket frames
+    B->>S: text frame (masked)
+    S-->>B: text frame
+    S-->>B: ping
+    B->>S: pong
+```
+
 After `101`, the TCP connection carries WebSocket **frames** (text, binary, ping, pong, close). Client-to-server frames are masked (to prevent cache-poisoning attacks on naive proxies). Browsers send `Origin`; servers must check it — WebSockets aren't covered by CORS, so **cross-site WebSocket hijacking** is a real risk with cookie auth.
 
 ### SSE on the wire
@@ -99,6 +113,28 @@ data: {"sym":"ACME","px":101.4}
 ```
 
 If the connection drops, `EventSource` reconnects (respecting a server-suggested `retry:`) and sends `Last-Event-ID: 42` so the server can resume.
+
+### A WebSocket client in Java
+
+The JDK's `HttpClient` can open WebSockets directly:
+
+```java
+HttpClient client = HttpClient.newHttpClient();
+WebSocket ws = client.newWebSocketBuilder()
+        .connectTimeout(Duration.ofSeconds(5))
+        .buildAsync(URI.create("wss://chat.example.com/ws"), new WebSocket.Listener() {
+            @Override
+            public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+                System.out.println("received: " + data);
+                webSocket.request(1);            // ask for the next message: built-in backpressure
+                return null;
+            }
+        })
+        .join();
+ws.sendText("{\"type\":\"join\",\"room\":\"42\"}", true);
+```
+
+The listener receives a message only after `request(1)`, so a slow consumer can't be flooded. Production clients also send pings, reconnect with jittered backoff, and resume from the last message they processed.
 
 ## Internal Mechanism
 
@@ -178,6 +214,14 @@ Stateless-ish gateway servers running event loops, each holding ~100k–500k con
 
 Rolling the gateways disconnected clients, which all reconnected at nearly the same time, each triggering token validation/auth lookups — a thundering herd. Mitigations: drain connections gradually, send reconnect hints with randomized delays, clients use exponential backoff with jitter, cache auth decisions or use self-validating tokens at connect, and rate-limit reconnect admission.
 
+### [L2 · compare] When would you choose SSE over WebSockets?
+
+When data flows only from server to client: notifications, dashboards, feeds, LLM tokens streamed to a browser. SSE is plain HTTP, so it works through proxies, CDNs and HTTP/2 multiplexing without special support, and `EventSource` reconnects and resumes with `Last-Event-ID` automatically. WebSockets earn their extra machinery (an upgraded connection, custom framing, your own reconnect logic) when the client also sends frequent messages: chat, collaborative editing, games.
+
+### [L3 · how] How do you avoid a reconnect storm after a WebSocket gateway restarts?
+
+Clients reconnect with exponential backoff plus random jitter, so 100,000 clients spread their attempts over tens of seconds instead of arriving in the same second. Servers drain gradually during deploys (close connections over a period, with a "reconnect elsewhere" close code), cap the rate of new handshakes and authentication calls, and make reconnection cheap with resumable sessions (a resume token or last-event ID) instead of a full login.
+
 ## Practice
 
 ### [mcq] Which mechanism provides built-in automatic reconnection with resume via Last-Event-ID?
@@ -198,9 +242,49 @@ EventSource handles it natively.
 
 101 Switching Protocols.
 
+### [numeric 2000 unit=requests/s] 10,000 browsers poll an endpoint every 5 seconds. How many requests per second does the server handle, even when nothing has changed?
+
+:::answer
+10,000 ÷ 5 = **2,000** requests per second, each with a full set of headers, mostly answered "nothing new". With SSE the same clients would hold 10,000 idle connections and generate traffic only when there is news.
+:::
+
+### [numeric 5 unit=s] With polling every 10 seconds, what is the average delay between an event happening and the client seeing it?
+
+:::answer
+An event lands at a random moment between polls, so on average it waits half the interval: **5** s (up to 10 s). Halving the delay doubles the polling load, the core trade-off push transports remove.
+:::
+
+### [numeric 3333 unit=connections/s] After a gateway restart, 100,000 clients reconnect with random jitter spread evenly over 30 seconds. About how many new connections per second does the fleet see?
+
+:::answer
+100,000 ÷ 30 ≈ **3,333** per second, instead of 100,000 in the first second without jitter. Each reconnect also costs a TLS handshake and an authentication check, which is usually the real bottleneck.
+:::
+
+### [exercise] In the [real-time transports visualization](viz:realtime-transports), compare the request count, header overhead and delivery latency of the four transports for the same events. For a stock ticker pushed to 100,000 browsers once a second, which would you choose and why?
+
+:::solution
+- **Short polling** sends a full request and response per interval, even with no news, and delivers events up to one interval late.
+- **Long polling** delivers promptly but still costs a full request and response per event, and the gap between a response and the next request can miss events.
+- **SSE** keeps one HTTP response open and sends a few bytes of framing per event.
+- **WebSocket** keeps one upgraded connection with 2–14 bytes of framing per message, in both directions.
+
+For the ticker, **SSE**: data flows only to the client, SSE runs over plain HTTP (and HTTP/2), and EventSource reconnects and resumes automatically. Polling would mean 100,000 requests per second of mostly empty responses. WebSockets would also work, but add a separate protocol and hand-written reconnect logic without any benefit, since the clients don't send anything.
+:::
+
+### [mcq] In the Java `WebSocket.Listener`, what is the purpose of calling `webSocket.request(1)` in `onText`?
+
+- [ ] It sends a ping to keep the connection alive
+- [x] It asks for one more incoming message, so the listener controls how fast messages are delivered to it
+- [ ] It acknowledges the message to the server
+- [ ] It closes the connection after one message
+
+The JDK WebSocket client applies backpressure: messages are delivered only as the listener requests them. Forgetting to call `request` stops delivery after the first message.
+
 ## Quick Revision
 
 - Polling (interval latency, waste) → long polling (request per event) → SSE (one-way stream, auto-reconnect, text) → WebSocket (full duplex, binary, upgrade via 101).
 - WebSocket: check `Origin` (not covered by CORS); ping/pong heartbeats.
 - At scale: event loops, fd limits, LB idle timeouts, pub/sub fan-out, backpressure, jittered reconnects, draining.
 - Pick the simplest transport that meets direction + latency needs.
+- Polling load = clients ÷ interval; average staleness = interval / 2. SSE for server→client streams; WebSocket for bidirectional. Reconnect with jittered backoff.
+- Java: `HttpClient.newWebSocketBuilder().buildAsync(uri, listener)`; `request(n)` = backpressure.

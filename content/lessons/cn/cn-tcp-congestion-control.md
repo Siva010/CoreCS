@@ -76,7 +76,21 @@ Each sender limits how much it has in flight with a congestion window: double it
 | 14 | | 4 |
 | 15 | | 7 → linear from here (capped at ssthresh) |
 
-The resulting cwnd graph is the famous **sawtooth**: linear climbs and halvings.
+The resulting cwnd graph is the famous **sawtooth**: linear climbs and halvings. The rules form a small state machine:
+
+```mermaid
+stateDiagram-v2
+    state "Slow start: cwnd doubles each RTT" as SS
+    state "Congestion avoidance: cwnd + 1 MSS each RTT" as CA
+    state "Fast recovery: cwnd = ssthresh" as FR
+    [*] --> SS
+    SS --> CA: cwnd reaches ssthresh
+    SS --> FR: 3 duplicate ACKs
+    CA --> FR: 3 duplicate ACKs, ssthresh = cwnd / 2
+    FR --> CA: ACK for new data
+    CA --> SS: timeout, cwnd = 1
+    FR --> SS: timeout, cwnd = 1
+```
 
 ### AIMD converges to fairness
 
@@ -209,6 +223,38 @@ ssthresh = cwnd / 2 = **10 MSS** (cwnd also becomes ~10 in fast recovery).
 
 BBR is available but CUBIC is the default.
 
+### [numeric 6] Slow start begins at cwnd = 1 MSS with no losses. After how many RTTs does cwnd first reach 64 MSS?
+
+:::answer
+cwnd doubles every RTT: 1, 2, 4, 8, 16, 32, 64. That is **6** RTTs. With the modern initial window of 10 it would reach 64 after 3 RTTs (10, 20, 40, 80).
+:::
+
+### [numeric 4] Reno has cwnd = 24 MSS when a retransmission timeout fires. ssthresh becomes 12 and cwnd restarts at 1. How many RTTs of slow start until cwnd is back at ssthresh?
+
+:::answer
+1 → 2 → 4 → 8 → 12 (capped at ssthresh instead of 16): **4** RTTs, after which growth is linear again. A timeout costs far more than a triple-duplicate-ACK loss, which would have set cwnd straight to 12.
+:::
+
+### [mcq] cwnd is 40 MSS when three duplicate ACKs arrive. What does TCP Tahoe do, and what does Reno do?
+
+- [ ] Both halve cwnd to 20 and continue in congestion avoidance
+- [x] Tahoe sets cwnd to 1 and slow-starts; Reno sets cwnd to 20 and continues in congestion avoidance
+- [ ] Tahoe halves cwnd; Reno sets it to 1
+- [ ] Both set cwnd to 1
+
+Both set ssthresh to 20. Tahoe treats every loss like a timeout and restarts from 1. Reno's fast recovery assumes duplicate ACKs mean packets are still flowing, so it only halves.
+
+### [exercise] In the [congestion window lab](lab:congestion), run Reno with a triple-duplicate-ACK loss and later a timeout, then run Tahoe with the same events. Sketch both cwnd curves and explain where they diverge.
+
+:::solution
+Both grow exponentially in slow start and linearly after reaching ssthresh, so up to the first loss the curves are identical.
+
+- **Triple duplicate ACK:** both set ssthresh to half of cwnd. **Reno** drops cwnd to that value and keeps growing linearly: the shallow "sawtooth" dip. **Tahoe** drops cwnd to 1 and slow-starts back up to ssthresh before growing linearly, a deep V that costs several RTTs of throughput.
+- **Timeout:** both set ssthresh to half and cwnd to 1, so here the two curves behave alike.
+
+The difference is all in how the duplicate-ACK loss is treated. Reno's insight was that duplicate ACKs prove later packets are still arriving, so the network is only mildly congested.
+:::
+
 ## Quick Revision
 
 - cwnd (sender, protects network) vs rwnd (receiver); in flight ≤ min.
@@ -217,3 +263,4 @@ BBR is available but CUBIC is the default.
 - 3 dup ACKs → ssthresh = cwnd/2, fast retransmit, (Reno) cwnd = ssthresh. Timeout → cwnd = 1, slow start.
 - Tahoe vs Reno; **CUBIC** default; **BBR** models bandwidth + RTT; ECN marks instead of drops; pacing.
 - Mathis: throughput ∝ MSS/(RTT·√p). Bufferbloat = huge queues + loss-based CC.
+- States: slow start → (cwnd ≥ ssthresh) congestion avoidance; 3 dup ACKs → fast recovery (Reno: cwnd = ssthresh = cwnd/2; Tahoe: cwnd = 1); timeout → cwnd = 1, slow start.

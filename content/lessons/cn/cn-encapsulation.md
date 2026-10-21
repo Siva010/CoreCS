@@ -12,7 +12,7 @@ stage: 1
 prerequisites: [cn-layered-models]
 related: [cn-sockets, cn-routing, cn-ethernet-switching, cn-mtu-congestion, os-syscalls-interrupts]
 visualizations: [encapsulation]
-tags: [encapsulation, decapsulation, headers, ethernet frame, ip header, tcp header, mtu, mss, nic, checksum]
+tags: [encapsulation, decapsulation, demultiplexing, protocol overhead, headers, ethernet frame, ip header, tcp header, mtu, mss, nic, checksum]
 ---
 
 ## Mental Model
@@ -82,7 +82,23 @@ The TCP header and payload are untouched (unless NAT or a proxy is involved).
 
 ### Inside the receiving host
 
-The NIC receives the frame, checks the CRC, DMAs it into a ring buffer, raises an interrupt; the driver passes it up; IP verifies the destination is local; TCP finds the socket by the 4-tuple, checks sequence numbers, places data in the **receive buffer**, sends an ACK, and wakes the process blocked in `read()` (or signals epoll) ([epoll & Event Loops](lesson:os-epoll-event-loops)).
+Going up, each layer must decide which layer above gets the data. Every header carries a field naming its contents, and following those fields is called **demultiplexing**:
+
+1. The NIC receives the frame, checks the CRC, DMAs it into a ring buffer and raises an interrupt.
+2. The link layer reads the **EtherType**: 0x0800 means "hand this to IPv4", 0x86DD to IPv6, 0x0806 to ARP.
+3. IP checks that the destination address is local, then reads the **protocol** field: 6 means TCP, 17 UDP, 1 ICMP.
+4. TCP looks up the socket by the 4-tuple (source and destination IP and port), checks sequence numbers, places the data in the socket's **receive buffer** and sends an ACK.
+5. The kernel wakes the process blocked in `read()`, or reports the socket ready to epoll ([epoll & Event Loops](lesson:os-epoll-event-loops)).
+
+```mermaid
+flowchart TD
+    F["Ethernet frame"] -->|"EtherType 0x0800"| I["IPv4 packet"]
+    F -->|"EtherType 0x0806"| A["ARP"]
+    I -->|"protocol 6"| T["TCP segment"]
+    I -->|"protocol 17"| U["UDP datagram"]
+    I -->|"protocol 1"| C["ICMP"]
+    T -->|"4-tuple lookup"| S["the socket of one process"]
+```
 
 ::viz{id=encapsulation}
 
@@ -161,6 +177,14 @@ MSS = 1,460 bytes. 100,000 / 1,460 ≈ 68.5 → **69 segments**.
 
 TCP segmentation offload (TSO/GSO): the kernel hands the NIC a large segment and the NIC splits it into MTU-sized packets on the wire. tcpdump captures at the kernel level before segmentation, so it sees the large buffer.
 
+### [L2 · compare] What is the difference between MTU and MSS?
+
+The MTU (maximum transmission unit) is the largest IP packet a link can carry, headers included: 1,500 bytes on standard Ethernet. The MSS (maximum segment size) is the largest TCP payload in one segment: the MTU minus the IP and TCP headers, 1,460 bytes for IPv4 without options, 1,440 for IPv6. Each side announces its MSS in the SYN. Tunnels reduce the effective MTU, so the MSS must shrink too, which is why VPNs clamp it.
+
+### [L3 · how] How does a receiving host know which protocol, and which program, should get an incoming frame?
+
+By following a "what's inside" field in each header (demultiplexing). The Ethernet EtherType says IPv4, IPv6 or ARP. The IP protocol field says TCP, UDP or ICMP. TCP then finds the socket whose 4-tuple matches (source IP and port, destination IP and port); a listening socket matches new connections on its port. If no socket matches, TCP replies with an RST, and UDP with an ICMP port-unreachable.
+
 ## Practice
 
 ### [numeric 1460] Standard Ethernet MTU is 1,500 bytes. With 20-byte IPv4 and 20-byte TCP headers (no options), what is the MSS?
@@ -178,6 +202,44 @@ TCP segmentation offload (TSO/GSO): the kernel hands the NIC a large segment and
 
 The link-layer header is rebuilt for each link.
 
+### [numeric 1440] An IPv6 path has a 1,500-byte MTU. The IPv6 header is 40 bytes and the TCP header 20 bytes (no options). What MSS should TCP announce?
+
+:::answer
+1,500 − 40 − 20 = **1,440** bytes. IPv6's fixed header is twice the size of IPv4's minimum, so each full segment carries 20 bytes less data.
+:::
+
+### [numeric 45] How many full-or-partial TCP segments does a 65,536-byte response need with an MSS of 1,460 bytes?
+
+:::answer
+65,536 ÷ 1,460 ≈ 44.9, so **45** segments: 44 full ones and a final one carrying 1,296 bytes.
+:::
+
+### [numeric 96.2 ±0.1 unit=%] A full-size frame carries 1,460 bytes of TCP payload. Counting the 14-byte Ethernet header, 4-byte FCS and 40 bytes of IP and TCP headers, what percentage of the frame is payload?
+
+:::answer
+The frame is 1,460 + 40 + 14 + 4 = 1,518 bytes, and 1,460 ÷ 1,518 = **96.2**%. Counting the 8-byte preamble and 12-byte gap between frames too, it drops to 94.9%. Large frames amortise headers well; a 1-byte payload would be about 1.6% efficient.
+:::
+
+### [mcq] `tcpdump` on a busy server shows outgoing TCP packets of 64 KB, although the interface MTU is 1,500. Why?
+
+- [ ] The kernel ignores the MTU for TCP traffic
+- [ ] The packets are fragmented by the first router
+- [x] The kernel hands large segments to the NIC, which splits them into MTU-sized packets (TSO/GSO)
+- [ ] tcpdump adds up several packets into one line
+
+With segmentation offload the kernel builds one large "super-segment" and the NIC (or GSO, just before the driver) cuts it into MSS-sized packets. tcpdump captures it before that split, so it shows sizes the wire never carries.
+
+### [exercise] Step through the [encapsulation visualization](viz:encapsulation). For the frame that arrives at the server, write down, layer by layer, the field the server reads to decide who gets the data next, and the value it finds. What would the server do if the destination port had no listening socket?
+
+:::solution
+- **Ethernet:** the EtherType, 0x0800, so the frame's payload goes to IPv4.
+- **IPv4:** first a check that the destination address is one of the server's own; then the protocol field, 6, so the payload goes to TCP.
+- **TCP:** the 4-tuple (client IP and port, server IP and port 80 or 443) selects the connection's socket, or the listening socket for a new connection.
+- **Socket:** the data goes into its receive buffer for the web server process.
+
+With no socket on that port, the server's TCP replies with an **RST** segment. The client sees "connection refused" immediately. That is different from a firewall silently dropping the SYN, which shows up as a timeout instead.
+:::
+
 ## Quick Revision
 
 - App data → TCP header (ports, seq/ack, flags, window) → IP header (IPs, TTL, protocol) → Ethernet (MACs, EtherType) + FCS.
@@ -185,3 +247,5 @@ The link-layer header is rebuilt for each link.
 - MTU 1,500 → MSS 1,460 (IPv4/TCP without options).
 - Offloads (TSO/GRO, checksum) change what captures show.
 - One write ≠ one packet (byte stream).
+- Demultiplexing on the way up: EtherType → IP protocol field → TCP/UDP port (4-tuple) → socket; no socket → RST (TCP) or ICMP port unreachable (UDP).
+- MSS = MTU − IP − TCP headers: 1,460 (IPv4), 1,440 (IPv6) on a 1,500 MTU.

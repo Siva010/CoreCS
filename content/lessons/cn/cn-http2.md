@@ -45,6 +45,22 @@ HTTP/2 is the same HTTP, cut into numbered frames so many requests can share one
 
 ### Streams and frames
 
+```mermaid
+%%{init: {"sequence": {"width": 120, "actorMargin": 40}}}%%
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    C->>S: HEADERS stream 1 (GET /app.js)
+    C->>S: HEADERS stream 3 (GET /style.css)
+    C->>S: HEADERS stream 5 (GET /api/me)
+    S-->>C: HEADERS + DATA stream 5 (small, ready first)
+    S-->>C: DATA stream 1 (part)
+    S-->>C: DATA stream 3 (end)
+    S-->>C: DATA stream 1 (end)
+```
+
+The same frames as they cross the connection:
+
 ```text
 One TCP connection:
 [HEADERS s1][HEADERS s3][DATA s1][DATA s5][HEADERS s5][DATA s3][DATA s1 END][DATA s3 END]...
@@ -77,7 +93,7 @@ Push let servers send resources before they were requested. In practice it often
 
 ### What HTTP/2 did not fix: TCP head-of-line blocking
 
-All streams share one TCP byte stream. If a packet carrying a DATA frame for stream 5 is lost, TCP will not deliver *any* later bytes — including complete frames for streams 1 and 3 that arrived — until the retransmission fills the gap ([TCP Reliability](lesson:cn-tcp-reliability)). On lossy networks (mobile, Wi-Fi), one HTTP/2 connection can perform **worse** than six HTTP/1.1 connections, where a loss stalls only one. This is the core motivation for **HTTP/3 over QUIC** ([HTTP/3 & QUIC](lesson:cn-http3-quic)).
+All streams share one TCP byte stream. Suppose a packet carrying a DATA frame for stream 5 is lost. TCP then delivers *no* later bytes until the retransmission fills the gap, not even complete frames for streams 1 and 3 that arrived ([TCP Reliability](lesson:cn-tcp-reliability)). On lossy networks (mobile, Wi-Fi), one HTTP/2 connection can perform **worse** than six HTTP/1.1 connections, where a loss stalls only one. This is the core motivation for **HTTP/3 over QUIC** ([HTTP/3 & QUIC](lesson:cn-http3-quic)).
 
 ::viz{id=hol-blocking}
 
@@ -85,7 +101,7 @@ All streams share one TCP byte stream. If a packet carrying a DATA frame for str
 ### HTTP/2 behind proxies and load balancers
 
 - Many deployments speak HTTP/2 to clients but HTTP/1.1 from the proxy to backends — fine for web traffic, but gRPC requires HTTP/2 end to end (trailers, streaming).
-- **L4 load balancing of long-lived HTTP/2 connections is uneven**: one connection carries many requests, so balancing *connections* doesn't balance *requests*. gRPC services behind L4 balancers often end up hot-spotting one backend; use L7 (per-request) balancing or client-side balancing ([Proxies & Load Balancers](lesson:cn-proxies-load-balancers)).
+- **L4 load balancing of long-lived HTTP/2 connections is uneven**: one connection carries many requests, so balancing *connections* doesn't balance *requests*. Services using gRPC behind L4 balancers often end up hot-spotting one backend. Use L7 (per-request) balancing or client-side balancing ([Proxies & Load Balancers](lesson:cn-proxies-load-balancers)).
 - Attacks on the new features: "Rapid Reset" (CVE-2023-44487) abused cheap stream creation + RST_STREAM to overload servers; HPACK bombs; settings floods. Servers limit concurrent streams (`SETTINGS_MAX_CONCURRENT_STREAMS`) and reset rates.
 :::
 
@@ -159,6 +175,14 @@ All HTTP/2 streams share one TCP connection; TCP delivers bytes in order, so a s
 
 gRPC uses long-lived HTTP/2 connections that multiplex many requests. An L4 balancer distributes connections, not requests, so a few clients' connections — and all their requests — land on one pod. Fix with L7 (HTTP/2-aware) load balancing, client-side load balancing across backends, or periodic connection recycling (max connection age) to rebalance.
 
+### [L2 · how] What is HPACK, and why did HTTP/2 need it?
+
+Requests on one connection repeat almost the same headers every time (cookies, user agent, accept headers, authorization), often more bytes than small request bodies. HPACK replaces header fields with indexes into a static table of common headers and a dynamic table built up during the connection, and Huffman-codes the rest. Repeated headers then cost a byte or two. It was designed after compression-oracle attacks (CRIME) on compressing headers together with attacker-controlled data, so it compresses each field separately. HTTP/3 uses the similar QPACK.
+
+### [L3 · how] How does a server shut down an HTTP/2 connection gracefully during a deploy?
+
+It sends a GOAWAY frame naming the last stream it will process. The client stops opening new streams on that connection and starts new requests on a fresh connection (to another instance), while in-flight streams up to that ID complete normally. Without GOAWAY, closing the connection would fail every in-flight request, and the client couldn't know which ones were processed.
+
 ## Practice
 
 ### [mcq] Which HTTP/2 feature reduces the size of repeated request headers?
@@ -179,6 +203,35 @@ HPACK uses static/dynamic tables and Huffman coding.
 
 Frames are interleaved on the connection.
 
+### [numeric 9] A client opens five streams on a new HTTP/2 connection. What is the ID of the fifth?
+
+:::answer
+Client-initiated streams use odd IDs in increasing order: 1, 3, 5, 7, **9**. Server-initiated streams (push) used even IDs.
+:::
+
+### [numeric 1] A browser loads 40 resources from one origin over HTTP/2. How many TCP connections does it normally use for them?
+
+:::answer
+**1**. All 40 requests are multiplexed as streams on a single connection; HTTP/1.1 would have used up to 6.
+:::
+
+### [mcq] One TCP packet carrying a DATA frame of stream 5 is lost. What happens to streams 1 and 3, whose frames arrived intact after it?
+
+- [ ] They are delivered, because HTTP/2 streams are independent
+- [x] They wait: TCP won't hand any later bytes to HTTP/2 until the lost packet is retransmitted
+- [ ] They are cancelled with RST_STREAM
+- [ ] The connection is reset
+
+HTTP/2 removed head-of-line blocking at the HTTP level but not at the TCP level, which is the problem HTTP/3 over QUIC solves.
+
+### [exercise] Use the [head-of-line blocking visualization](viz:hol-blocking) to compare HTTP/2 and HTTP/3 when one packet is lost. Then explain why HTTP/2 can perform worse than HTTP/1.1 with six connections on a lossy mobile network.
+
+:::solution
+In the visualization, HTTP/2 stalls **every** response after the lost packet until it is retransmitted, because all streams share one TCP byte stream. With HTTP/3, only the stream whose data was in the lost packet waits; the others are delivered.
+
+On a lossy network, HTTP/1.1 with six connections spreads the risk: a loss stalls only the one connection it hit, and the other five keep delivering. Each connection also has its own congestion window, so one loss halves only a sixth of the total sending rate. HTTP/2's single connection turns every loss into a stall for all requests, and halves its single window. At low loss HTTP/2 wins easily; at high loss it can lose, which is the gap HTTP/3 was built to close.
+:::
+
 ## Quick Revision
 
 - Same semantics; binary **frames** tagged with **stream IDs**, interleaved on **one TCP connection**.
@@ -186,3 +239,4 @@ Frames are interleaved on the connection.
 - **HPACK** header compression; per-stream flow control; priorities (RFC 9218).
 - Server push deprecated → 103 Early Hints.
 - **TCP HOL blocking remains** → HTTP/3/QUIC. L4 balancing of HTTP/2 connections is uneven → L7/client-side LB.
+- Client streams: odd IDs 1, 3, 5…; GOAWAY drains a connection gracefully. One lost TCP packet stalls all streams (TCP HOL).

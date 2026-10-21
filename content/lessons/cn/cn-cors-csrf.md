@@ -173,6 +173,14 @@ Cross-site request forgery tricks a logged-in user's browser into sending a stat
 
 Any website can make credentialed requests on behalf of a logged-in user and read the responses — exfiltrating personal data or tokens. Credentialed CORS must use an explicit allow-list of trusted origins.
 
+### [L2 · why] Why can't a server reply `Access-Control-Allow-Origin: *` to a request made with credentials?
+
+Because then any website could make the user's browser call the API with the user's cookies and read the private response. The browser refuses to expose a credentialed response unless the server names the exact requesting origin (and sends `Access-Control-Allow-Credentials: true`). A server that "fixes" this by echoing back whatever Origin arrives has recreated the wildcard, and is open to every site; it must check the origin against an allow-list.
+
+### [L2 · compare] Why doesn't CORS protect against CSRF?
+
+CORS only controls whether a script may *read* a cross-origin response; the browser still *sends* many cross-origin requests, including simple form POSTs, without asking first. A CSRF attack doesn't need to read the response: the damage (the transfer, the password change) is done when the server processes the request. CSRF is stopped by SameSite cookies, CSRF tokens, custom headers that force a preflight, and Origin checks on state-changing requests.
+
 ## Practice
 
 ### [mcq] Which pair of URLs is same-origin?
@@ -193,6 +201,59 @@ Same scheme, host and (default) port 443.
 
 Non-simple method, content type and header.
 
+### [numeric 6] A SPA calls `PUT /api/orders/{id}` on another origin many times an hour. The API answers preflights with `Access-Control-Max-Age: 600`. At most how many preflight requests does the browser send per hour for this method and header set?
+
+:::answer
+Each preflight result is cached for 600 s, so at most 3,600 ÷ 600 = **6** per hour. Browsers cap the cache time (Chrome at 2 hours), so very large values don't help further.
+:::
+
+### [mcq] Which cross-origin request does NOT trigger a preflight?
+
+- [ ] `PUT` with `Content-Type: application/json`
+- [ ] `GET` with an `Authorization` header
+- [x] `POST` with `Content-Type: application/x-www-form-urlencoded` and no custom headers
+- [ ] `DELETE` with no body
+
+Only "simple" requests skip the preflight: GET, HEAD or POST, with form or plain-text content types and no custom headers. That is exactly why HTML forms can still be used for CSRF.
+
+### [mcq] An API answers credentialed requests with `Access-Control-Allow-Origin: *` and `Access-Control-Allow-Credentials: true`. What happens in the browser?
+
+- [ ] The response is readable by any site
+- [x] The browser refuses to expose the response to the script
+- [ ] The browser sends the request without cookies
+- [ ] The preflight is skipped
+
+The wildcard is forbidden with credentials. The server must echo a specific, allow-listed origin and add `Vary: Origin`.
+
+### [exercise] A SPA on `https://app.example.com` calls `https://api.example.com/orders` with `fetch(url, {method: "PUT", credentials: "include", headers: {"Content-Type": "application/json"}})`. It fails with "Response to preflight request doesn't pass access control check". List what the API's responses must contain, for the preflight and for the actual request.
+
+:::solution
+**Preflight** (`OPTIONS /orders`, which must be answered without requiring authentication):
+- `Access-Control-Allow-Origin: https://app.example.com` (the exact origin, from an allow-list; no wildcard with credentials);
+- `Access-Control-Allow-Credentials: true`;
+- `Access-Control-Allow-Methods: PUT` (plus any others needed);
+- `Access-Control-Allow-Headers: Content-Type` (plus `Authorization` and any custom headers);
+- optionally `Access-Control-Max-Age: 600`, to cache the result.
+
+**Actual response** (`PUT /orders`):
+- the same `Access-Control-Allow-Origin` and `Access-Control-Allow-Credentials: true`;
+- `Vary: Origin`, so caches don't serve one origin's headers to another.
+
+A common cause of this exact error is an authentication filter that rejects the OPTIONS request with 401, since browsers never send credentials on preflights.
+:::
+
+### [exercise] Since the session cookie is `SameSite=Lax`, a developer proposes removing the CSRF tokens from all forms. When would that be unsafe?
+
+:::solution
+SameSite=Lax blocks cookies on cross-site POSTs and subrequests, which stops classic form-based CSRF from other *sites*. It is unsafe to rely on it alone when:
+- **State changes on GET**: Lax still sends cookies on top-level GET navigations, so `GET /account/delete?confirm=1` can be triggered by a link.
+- **Same-site attackers**: SameSite is about *sites*, not origins. A compromised or user-content subdomain (`forum.example.com`) counts as the same site as `app.example.com`, so its requests carry the cookie.
+- **Older or misconfigured clients** that don't apply SameSite defaults, or cookies explicitly set with `SameSite=None`.
+- **Login CSRF and other flows** that don't involve the session cookie.
+
+Keeping CSRF tokens (or requiring a custom header plus an Origin check) is defence in depth; SameSite is the first layer, not the only one.
+:::
+
 ## Quick Revision
 
 - Origin = scheme + host + port. SOP: read only same-origin responses.
@@ -200,3 +261,4 @@ Non-simple method, content type and header.
 - CORS isn't server-side security.
 - CSRF abuses auto-sent cookies → SameSite, CSRF tokens, custom headers, Origin checks, no state-changing GETs.
 - Site (SameSite) ≠ origin (CORS).
+- No `*` with credentials: echo an allow-listed origin + `Allow-Credentials: true` + `Vary: Origin`. CORS limits reading, not sending, so it doesn't stop CSRF. Preflights are cached for Max-Age.

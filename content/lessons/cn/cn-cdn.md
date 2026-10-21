@@ -169,6 +169,14 @@ Prefer versioned (fingerprinted) URLs so new content has new URLs and old caches
 
 Cache hit ratio and why requests miss: campaign URLs with unique tracking query parameters fragmenting the cache key, responses marked uncacheable (Set-Cookie, `private`, no-store), `Vary` on high-cardinality headers, very short TTLs, a recent purge, or uncached API endpoints the landing page calls. Fix with cache-key normalization, correct cache headers, origin shielding and request coalescing.
 
+### [L2 · numerical] Why does a small drop in cache hit ratio hurt the origin so much?
+
+The origin only sees misses. At a 99% hit ratio it serves 1% of requests; at 95% it serves 5%, five times as much, even though the hit ratio "only" fell four points. Capacity planning for the origin must assume the worst hit ratio it will see, for example right after a purge or a deploy that changes cache keys.
+
+### [L2 · how] How do surrogate keys (cache tags) make invalidation practical?
+
+The origin labels each response with the entities it contains (`Surrogate-Key: product-123 category-9`). When product 123 changes, one purge by tag removes every cached page that showed it: the product page, category listings, search results. Without tags you would need to know every URL that includes the product, or purge far too much.
+
 ## Practice
 
 ### [mcq] Which technique reduces the number of requests reaching the origin when many edge PoPs miss on the same object?
@@ -189,6 +197,37 @@ A shield layer consolidates misses before the origin.
 
 New content → new URL; nothing stale can be served.
 
+### [numeric 5] A CDN's hit ratio falls from 99% to 95%. By what factor does the request rate reaching the origin grow?
+
+:::answer
+Misses go from 1% to 5% of requests: the origin sees **5** times as many requests.
+:::
+
+### [numeric 2000 unit=requests/s] A site receives 100,000 requests per second at the edge with a 98% hit ratio. How many requests per second reach the origin (without shielding)?
+
+:::answer
+2% of 100,000 = **2,000** per second. A shield tier and request collapsing reduce it further, since many edges missing on the same object turn into one origin fetch.
+:::
+
+### [mcq] Many URLs differ only by tracking parameters (`?utm_source=…`), and the CDN's hit ratio is poor. What fixes it best?
+
+- [ ] A longer max-age
+- [ ] Purging the cache more often
+- [x] Normalizing the cache key: ignore or strip parameters that don't change the response
+- [ ] Turning off compression
+
+Each distinct URL is a separate cache entry, so tracking parameters fragment the cache. Excluding them from the cache key lets all the variants share one copy.
+
+### [exercise] Using the [HTTP caching simulator](lab:http-cache), configure the response headers you would use for (a) fingerprinted JS files, (b) the HTML page that references them, and (c) a product-list API that changes every minute and is the same for every user. Explain how each behaves at the CDN after a deploy.
+
+:::solution
+- **(a) `/assets/app.3f9a1c.js`:** `Cache-Control: public, max-age=31536000, immutable`. Cached for a year at the edge and in browsers. A deploy produces new file names, so nothing needs purging, and the old files simply stop being requested.
+- **(b) `/index.html`:** `Cache-Control: no-cache` with an ETag (or a short `s-maxage` plus a purge on deploy). Every request revalidates, usually getting a cheap 304, so the new HTML, pointing at the new asset names, is seen at once.
+- **(c) `/api/products`:** `Cache-Control: public, s-maxage=60, stale-while-revalidate=60`. The CDN serves it for a minute and refreshes in the background, so users never wait for the origin, and data is at most about two minutes old. Browsers can be kept out with `max-age=0`.
+
+After a deploy, (a) and (c) need no action, and (b) switches over immediately.
+:::
+
 ## Quick Revision
 
 - Edge PoPs near users; reached via anycast and/or GeoDNS.
@@ -196,3 +235,4 @@ New content → new URL; nothing stale can be served.
 - Controlled by Cache-Control (s-maxage, stale-while-revalidate), Vary, CDN rules; cache key normalization drives hit ratio.
 - Invalidate via versioned URLs (best), purges, surrogate keys.
 - Also: TLS/HTTP3 at edge, WAF, DDoS absorption, edge compute. Eventually consistent; never cache private data.
+- Origin load = (1 − hit ratio) × edge traffic (99% → 95% = 5× origin load). Normalize cache keys; purge by surrogate key; version static assets.

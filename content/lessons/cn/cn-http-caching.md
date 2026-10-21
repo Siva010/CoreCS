@@ -20,7 +20,7 @@ tags: [http caching, cache-control, max-age, s-maxage, no-cache, no-store, priva
 A cache holds a copy of a response and must answer two questions each time the resource is requested:
 
 1. **Is my copy still fresh?** If yes, serve it instantly — no network at all.
-2. **If it's stale, is it still correct?** Ask the origin cheaply: "I have version `"abc"` — has it changed?" If not, the origin replies **304 Not Modified** (no body) and the cache refreshes its copy's lifetime. If it changed, the origin sends the new version.
+2. **If it's stale, is it still correct?** Ask the origin cheaply whether version `"abc"` has changed. If not, the origin replies **304 Not Modified** (no body), and the cache refreshes its copy's lifetime. If it changed, the origin sends the new version.
 
 The origin controls both answers with headers: **`Cache-Control`** sets freshness, **validators** (`ETag`, `Last-Modified`) enable cheap revalidation.
 
@@ -212,6 +212,37 @@ The copy is stale (age 200 > 120) and has a validator, so it revalidates. (With 
 
 s-maxage applies only to shared caches.
 
+### [numeric 90 unit=s] A response arrives from a CDN with `Cache-Control: max-age=120` and `Age: 30`. For how many more seconds can the browser use it without revalidating?
+
+:::answer
+The response has already spent 30 s in the CDN's cache, and freshness counts from when the origin created it: 120 − 30 = **90** s.
+:::
+
+### [numeric 300 unit=s] A response carries `Cache-Control: max-age=60, s-maxage=300`. For how long may a shared cache (a CDN) serve it as fresh?
+
+:::answer
+**300** s: `s-maxage` overrides `max-age` in shared caches. The browser's own cache still uses 60 s.
+:::
+
+### [mcq] An API returns compressed or uncompressed JSON depending on `Accept-Encoding`. What must the response include so caches don't serve gzip to a client that can't read it?
+
+- [ ] `Cache-Control: private`
+- [x] `Vary: Accept-Encoding`
+- [ ] `ETag: W/"..."`
+- [ ] `Content-Encoding: identity`
+
+`Vary` adds the named request headers to the cache key, so compressed and uncompressed versions are stored separately.
+
+### [exercise] In the [HTTP caching simulator](lab:http-cache), set `max-age=60` with an ETag. Request at t = 30 s and t = 90 s, then change the content on the server and request again at t = 160 s. Give the outcome and status of each request.
+
+:::solution
+- **t = 30 s:** fresh hit, served from the cache with no network traffic.
+- **t = 90 s:** stale, so the cache revalidates with `If-None-Match`. The content is unchanged, the server returns **304**, and the copy is fresh again until t = 150 s.
+- **t = 160 s:** stale again; the cache revalidates, but the ETag no longer matches, so the server returns **200** with the new body and a new ETag.
+
+Between the change and t = 150 s, users kept getting the old version: freshness lifetime is a promise not to check. That is why HTML is usually served with `no-cache` (always revalidate) and static assets get versioned URLs.
+:::
+
 ## Quick Revision
 
 - Fresh → serve locally; stale + validator → conditional request → 304 (reuse) or 200 (replace).
@@ -219,3 +250,4 @@ s-maxage applies only to shared caches.
 - Validators: ETag (`If-None-Match`), Last-Modified (`If-Modified-Since`); `If-Match` + 412 for optimistic concurrency.
 - `Vary` for header-dependent responses.
 - Fingerprinted assets cached forever; HTML `no-cache`. Never cache private data in shared caches.
+- Remaining freshness = max-age − Age. s-maxage overrides max-age in shared caches. Vary adds request headers to the cache key.

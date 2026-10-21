@@ -12,12 +12,17 @@ stage: 2
 prerequisites: [cn-dns-fundamentals]
 related: [cn-cdn, cn-service-networking, cn-certificates-pki, cn-bgp-anycast]
 visualizations: [dns-resolver]
-tags: [a record, aaaa record, cname, mx, txt, ns, soa, srv, ptr, caa, alias, apex, dns load balancing, geodns, spf, dkim, dmarc, reverse dns]
+tags: [a record, aaaa record, cname, mx, txt, ns, soa, srv, ptr, caa, alias, apex, dns load balancing, geodns, spf, dkim, dmarc, reverse dns, in-addr.arpa, delegation]
 ---
 
 ## Mental Model
 
-A DNS zone is a small **key-value table** where the key is (name, type) and the value is a list of records, each with a TTL. Different record **types** answer different questions: *what's the IPv4 address?* (A), *what's the IPv6 address?* (AAAA), *what's this really called?* (CNAME), *where does mail go?* (MX), *who's in charge of this zone?* (NS), *what else should I know?* (TXT).
+A DNS zone is a small **key-value table** where the key is (name, type) and the value is a list of records, each with a TTL. Different record **types** answer different questions:
+- *what's the IPv4 address?* (A), and the IPv6 address (AAAA);
+- *what's this really called?* (CNAME);
+- *where does mail go?* (MX);
+- *who's in charge of this zone?* (NS);
+- *what else should I know?* (TXT).
 
 ## Definition
 
@@ -45,6 +50,19 @@ DNS is a lookup on (name, type). A asks for IPv4, AAAA for IPv6, CNAME says "loo
 :::
 
 ## How It Works
+
+### Zones and delegation
+
+The DNS namespace is a tree, and each **zone** is a part of it run by one operator. A parent zone delegates a child zone by publishing its name servers (NS records), plus **glue** addresses when the name servers live inside the child zone:
+
+```mermaid
+flowchart TD
+    R[". root zone"] -->|"NS records for com."| C["com. zone"]
+    C -->|"NS + glue for example.com."| E["example.com. zone<br/>SOA, NS, A, AAAA, MX, CNAME, TXT"]
+    E -->|"optional: NS for eu.example.com."| S["eu.example.com. zone"]
+```
+
+Every zone starts with an **SOA** (start of authority) record. It holds the primary name server, a contact address, and a serial number that secondaries compare to decide whether to copy the zone. It also holds refresh and retry intervals, and the TTL for caching negative answers.
 
 ### CNAME chains
 
@@ -161,6 +179,14 @@ By returning multiple A/AAAA records (round-robin), weighted answers, geographic
 
 Likely an inconsistent delegation: the registrar/TLD NS records still point to the old provider (or a mix), and resolvers with different cached NS sets query different servers — some of which no longer serve the zone or serve a different version. Fix: ensure the parent NS records match the new provider, keep the old provider serving an identical zone until NS TTLs (often 48 h) expire, and verify with `dig +trace` from multiple resolvers.
 
+### [L2 · how] How does reverse DNS work, and what name is queried for 203.0.113.7?
+
+Reverse lookups use PTR records in a special tree: the address's octets are reversed and `in-addr.arpa` is appended, so the query is a PTR for **7.113.0.203.in-addr.arpa**. Reversing puts the most general part (203) at the top of the tree, so blocks of addresses can be delegated to their owners, just like forward zones. IPv6 uses `ip6.arpa` with one label per hex digit. Reverse records are set by whoever owns the IP block (often the ISP or cloud provider), and mail servers commonly check them.
+
+### [L2 · conceptual] What is in an SOA record, and why does it matter for caching?
+
+The SOA (start of authority) heads every zone: the primary name server, the administrator's address, a serial number (secondary servers copy the zone when it increases), refresh/retry/expire timers for those secondaries, and the **negative-caching TTL**: how long resolvers may remember that a name doesn't exist. A large negative TTL makes a record created just after someone queried for it invisible to that user for a long time.
+
 ## Practice
 
 ### [mcq] Which record type tells other mail servers where to deliver email for a domain?
@@ -181,8 +207,50 @@ MX records list mail exchangers with priorities.
 
 PTR records live under in-addr.arpa (IPv4) and ip6.arpa (IPv6).
 
+### [numeric 20 unit=s] A resolver follows the chain `www.shop.com` CNAME (TTL 300) → `shop.cdn.net` CNAME (TTL 60) → `edge.cdn.net` A (TTL 20). For how long can it serve the whole answer from cache without re-resolving any part of it?
+
+:::answer
+The answer is only valid as long as its shortest-lived part: **20** s, the A record's TTL. After that the resolver must at least re-resolve `edge.cdn.net`; the longer-lived CNAMEs can still come from its cache.
+:::
+
+### [mcq] A domain has MX records with preferences 20, 10 and 5. Which mail server does a sender try first?
+
+- [ ] The one with preference 20
+- [ ] The one with preference 10
+- [x] The one with preference 5
+- [ ] A random one, for load balancing
+
+Lower preference numbers are tried first; higher ones are fallbacks. Equal preferences share the load.
+
+### [exercise] Write the reverse-DNS query name for the IPv4 address 198.51.100.42, and explain why the octets are reversed.
+
+:::solution
+The PTR query is for **42.100.51.198.in-addr.arpa**.
+
+DNS names grow more specific from right to left (`www.example.com`), while IP addresses grow more specific from left to right (198 → 198.51 → 198.51.100). Reversing the octets puts the most general part next to `in-addr.arpa`, so the `in-addr.arpa` tree can be delegated just like forward zones: `198.in-addr.arpa`, then `51.198.in-addr.arpa`, down to the organization that owns `100.51.198.in-addr.arpa`.
+:::
+
+### [mcq] What does a DKIM record publish?
+
+- [ ] The list of IP addresses allowed to send mail for the domain
+- [x] A public key that receiving servers use to verify signatures in outgoing mail headers
+- [ ] The policy telling receivers what to do with mail that fails checks
+- [ ] The mail server that accepts mail for the domain
+
+SPF lists the permitted senders, DKIM publishes signature-checking keys, DMARC states the policy and reporting address, and MX names the receiving servers ([Email & File Transfer](lesson:cn-email-file-transfer)).
+
+### [exercise] In the [DNS resolution simulator](lab:dns-resolver), resolve a name that is a CNAME into another zone. List every query the resolver sends and explain why a CNAME into a different zone costs extra lookups.
+
+:::solution
+The resolver first resolves the original name: root, TLD and the authoritative server for the first zone. That server answers with a **CNAME** pointing into another domain, not with an address. The resolver must then resolve the *target* name as a new question: it may need the target's TLD and authoritative servers too, unless their referrals are already cached. Only the final server returns the A record, and the resolver returns the whole chain to the client.
+
+Each hop into a new zone can add a full walk down the hierarchy. That is why long CNAME chains (common with CDNs and SaaS hosting) add latency on cold caches, and why the shortest TTL in the chain limits how long the result stays cached.
+:::
+
 ## Quick Revision
 
 - A (IPv4), AAAA (IPv6), CNAME (alias; exclusive at its name; not at apex → ALIAS/flattening), MX (mail), NS (delegation), SOA (zone meta + negative TTL), TXT (SPF/DKIM/DMARC, verification), SRV (host+port), PTR (reverse), CAA (allowed CAs).
 - DNS load balancing: multiple A, weighted, GeoDNS, health-checked — TTL-bound and coarse.
 - Provider migrations: registrar NS + overlap for NS TTL; lame delegation = partial outages.
+- Zones delegate children with NS (+ glue); SOA holds serial, timers and the negative-caching TTL.
+- Reverse DNS: PTR at reversed-octets.in-addr.arpa (203.0.113.7 → 7.113.0.203.in-addr.arpa). MX: lowest preference first.

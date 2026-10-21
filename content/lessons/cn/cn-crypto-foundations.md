@@ -12,7 +12,7 @@ stage: 2
 prerequisites: [cn-http-fundamentals]
 related: [cn-certificates-pki, cn-tls-handshake, cn-cookies-sessions]
 visualizations: [tls-handshake]
-tags: [encryption, symmetric encryption, asymmetric encryption, aes, chacha20, rsa, ecc, hash, sha-256, mac, hmac, aead, digital signature, diffie-hellman, ecdhe, forward secrecy, public key, private key]
+tags: [encryption, symmetric encryption, asymmetric encryption, aes, chacha20, rsa, ecc, hash, sha-256, mac, hmac, aead, digital signature, diffie-hellman, ecdhe, forward secrecy, public key, private key, gcm, block cipher, stream cipher, ecb, java cryptography]
 ---
 
 ## Mental Model
@@ -46,7 +46,7 @@ TLS glues them together: **asymmetric crypto** (slow, but works between stranger
 **The core puzzle.** Encryption needs a shared secret key — but you've never met the server, and anyone can read what you send to set one up. How do two strangers agree on a secret in public? Public-key cryptography is the answer to exactly that puzzle; everything else (hashes, MACs, AEAD) handles integrity once a secret exists.
 
 :::callout[That's all it is]{type=insight}
-Use slow public-key maths for a moment at the start — to prove who the server is and to agree on a secret key — then use fast symmetric encryption with that key for all the data.
+Use slow public-key maths for a moment at the start, to prove who the server is and to agree on a secret key. Then use fast symmetric encryption with that key for all the data.
 :::
 
 ## How It Works
@@ -84,6 +84,47 @@ TLS 1.3 no longer uses RSA key transport (encrypting the session key with the se
 - Hashes detect accidental or malicious changes when the digest is obtained securely; they're also the basis of signatures (sign the hash) and of content addressing (Git, ETags).
 - A plain hash of a message doesn't authenticate it (an attacker can recompute it); a **MAC** requires the key.
 - **Passwords** must be stored with slow, salted password-hashing functions (bcrypt, scrypt, Argon2), not SHA-256 — fast hashes make brute force cheap.
+
+The pieces fit together in every TLS connection:
+
+```mermaid
+flowchart TD
+    H["handshake: ephemeral Diffie–Hellman<br/>agrees a shared secret"] --> K["key derivation (HKDF)<br/>turns it into session keys"]
+    C["certificate + signature<br/>prove the server's identity"] --> H
+    K --> D["data: symmetric AEAD (AES-GCM or ChaCha20-Poly1305)<br/>encrypts and authenticates every record"]
+```
+
+### Block ciphers, stream ciphers and modes
+
+- **AES** is a **block cipher**: it encrypts one 16-byte block at a time with a key of 128, 192 or 256 bits. A **mode** turns it into something that can encrypt a whole message.
+- **ECB** mode encrypts each block independently, so equal plaintext blocks give equal ciphertext blocks, and patterns show through. Never use it.
+- **CBC** chains blocks together but needs padding, and was the source of padding-oracle attacks.
+- **GCM** turns AES into a stream cipher (counter mode) and adds an authentication tag: it is an **AEAD** (authenticated encryption with associated data), which encrypts and detects tampering in one step. Its 96-bit nonce must **never repeat** under the same key, or both confidentiality and authenticity fail.
+- **ChaCha20-Poly1305** is an AEAD built on a **stream cipher**, fast on CPUs without AES instructions (many phones).
+
+TLS 1.3 allows only AEAD ciphers.
+
+### RSA and Diffie–Hellman with small numbers
+
+Real keys are hundreds of digits long, but the arithmetic is the same.
+
+**RSA.** Pick primes p = 3 and q = 11. Then n = 33 and φ(n) = (p − 1)(q − 1) = 20. Choose e = 3; d is its inverse mod 20, so d = 7 (3 × 7 = 21 = 1 mod 20). The public key is (e, n) = (3, 33) and the private key is d = 7.
+
+```text
+encrypt m = 4:   c = 4³ mod 33 = 64 mod 33 = 31
+decrypt c = 31:  m = 31⁷ mod 33 = 4
+```
+
+Security rests on factoring: given n, recovering p and q (and so d) is easy for 33 and infeasible for a 2,048-bit n.
+
+**Diffie–Hellman.** Public values: prime p = 23 and generator g = 5. Alice secretly picks a = 6, Bob picks b = 15.
+
+```text
+Alice sends A = 5⁶ mod 23 = 8          Bob sends B = 5¹⁵ mod 23 = 19
+Alice computes 19⁶ mod 23 = 2          Bob computes 8¹⁵ mod 23 = 2
+```
+
+Both reach the shared secret 2. An eavesdropper sees 23, 5, 8 and 19, but recovering a or b from them is the discrete logarithm problem.
 
 ## Internal Mechanism
 
@@ -171,6 +212,14 @@ Forward secrecy means recording encrypted traffic and later stealing the server'
 
 SHA-256 is designed to be fast, so attackers who steal the database can test billions of guesses per second on GPUs, and unsalted hashes enable precomputed tables. Password storage needs salted, deliberately slow, memory-hard functions (Argon2id, scrypt, bcrypt) with tunable cost.
 
+### [L2 · numerical] Walk through RSA with p = 3, q = 11, e = 3, encrypting m = 4.
+
+n = pq = 33 and φ(n) = (p − 1)(q − 1) = 20. The private exponent d is the inverse of e modulo 20: 3 × 7 = 21 ≡ 1, so d = 7. Encrypt: c = mᵉ mod n = 4³ mod 33 = 64 mod 33 = 31. Decrypt: m = c^d mod n = 31⁷ mod 33 = 4. The public key (3, 33) can be shared freely; anyone who could factor 33 into 3 × 11 could compute d, which is why real moduli are 2,048 bits or more.
+
+### [L2 · why] What is AEAD, and why must an AES-GCM nonce never repeat?
+
+AEAD (authenticated encryption with associated data) encrypts the data and produces an authentication tag over it and over unencrypted associated data (such as headers), so one operation gives confidentiality and tamper detection. AES-GCM encrypts by XORing the data with a keystream derived from the key and the nonce. Reusing a nonce with the same key reuses the keystream: XORing two ciphertexts cancels it and leaks the XOR of the plaintexts, and it also lets an attacker forge authentication tags. Implementations use a counter or a random 96-bit nonce per message, and rotate keys long before random nonces could collide.
+
 ## Practice
 
 ### [mcq] Which key does a server use to create a digital signature in the TLS handshake?
@@ -191,6 +240,52 @@ The client verifies it with the public key from the certificate.
 
 It must be combined with authentication (signatures) to stop man-in-the-middle attacks.
 
+### [numeric 31] RSA with n = 33 and public exponent e = 3. What is the ciphertext for the message m = 4?
+
+:::answer
+c = 4³ mod 33 = 64 mod 33 = **31**. With the private exponent d = 7, 31⁷ mod 33 gives back 4.
+:::
+
+### [numeric 27] RSA with p = 5, q = 11 and e = 3. What is the private exponent d?
+
+:::answer
+φ(n) = 4 × 10 = 40, and d must satisfy 3d ≡ 1 (mod 40). 3 × 27 = 81 = 2 × 40 + 1, so d = **27**. (Check: encrypting 9 gives 9³ mod 55 = 14, and 14²⁷ mod 55 = 9.)
+:::
+
+### [numeric 2] Diffie–Hellman with p = 23 and g = 5. Alice's secret is 6 and Bob's is 15. What shared secret do they compute?
+
+:::answer
+Alice sends 5⁶ mod 23 = 8 and Bob sends 5¹⁵ mod 23 = 19. Alice computes 19⁶ mod 23 = 2 and Bob computes 8¹⁵ mod 23 = 2: the shared secret is **2**.
+:::
+
+### [mcq] Why is AES in ECB mode unsafe for real data?
+
+- [ ] AES keys are too short in ECB mode
+- [x] Identical plaintext blocks encrypt to identical ciphertext blocks, so patterns in the data remain visible
+- [ ] ECB can't decrypt messages longer than one block
+- [ ] ECB uses a public key
+
+The well-known "ECB penguin" image, encrypted with ECB, still shows the penguin's outline. Use an AEAD mode such as GCM instead.
+
+### [exercise] A payment provider signs each webhook with HMAC-SHA256 over the raw request body, using a shared secret, and sends the result in a header. Write the Java check, and explain why a plain SHA-256 hash of the body would be useless, and why the comparison must be constant-time. Then find where HMAC and signatures appear in the [TLS handshake visualization](viz:tls-handshake).
+
+:::solution
+```java
+static boolean validWebhook(byte[] rawBody, byte[] receivedTag, byte[] secret) throws GeneralSecurityException {
+    Mac mac = Mac.getInstance("HmacSHA256");
+    mac.init(new SecretKeySpec(secret, "HmacSHA256"));
+    byte[] expected = mac.doFinal(rawBody);                // over the exact bytes received, before parsing
+    return MessageDigest.isEqual(expected, receivedTag);   // constant-time comparison
+}
+```
+
+- **Why not a plain hash:** anyone can compute SHA-256 of a forged body; only someone with the secret can compute the HMAC. The key is what makes it authentication rather than just integrity.
+- **Why constant-time:** `Arrays.equals` stops at the first different byte. By timing many attempts, an attacker could learn how many leading bytes of a guessed tag were right, and build a valid tag byte by byte. `MessageDigest.isEqual` takes the same time whatever the input.
+- **Also:** compute it over the raw body bytes, since re-serialized JSON may differ, and reject old timestamps to stop replays.
+
+In the TLS handshake, the server's **CertificateVerify** is a *signature* (with the certificate's private key) over the transcript, and both **Finished** messages are HMACs over the transcript with keys derived from the handshake.
+:::
+
 ## Quick Revision
 
 - Confidentiality (encryption), integrity (MAC/AEAD), authentication (signatures + certs), key agreement (DH).
@@ -198,3 +293,6 @@ It must be combined with authentication (signatures) to stop man-in-the-middle a
 - Hash (unkeyed) vs MAC (shared key) vs signature (private sign / public verify).
 - Ephemeral (EC)DHE → forward secrecy; TLS 1.3 dropped RSA key transport.
 - Passwords → Argon2/bcrypt/scrypt with salt. Don't roll your own crypto.
+- AES = block cipher; never ECB; GCM / ChaCha20-Poly1305 = AEAD (encrypt + authenticate); never reuse a GCM nonce with the same key.
+- RSA: n = pq, φ = (p−1)(q−1), d = e⁻¹ mod φ, c = mᵉ mod n (p=3, q=11, e=3, m=4 → c=31, d=7). DH: A = gᵃ mod p, shared = Bᵃ = Aᵇ.
+- Java: `Mac` (HMAC) + `MessageDigest.isEqual` (constant time); `Cipher.getInstance("AES/GCM/NoPadding")`.

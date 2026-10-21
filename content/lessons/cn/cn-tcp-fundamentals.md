@@ -17,7 +17,7 @@ tags: [tcp, reliable delivery, byte stream, segment, tcp header, sequence number
 
 ## Mental Model
 
-IP delivers postcards that can be lost, duplicated, reordered or delayed. TCP builds on top of it the illusion of a **pipe**: bytes written at one end come out at the other end **in order, exactly once, without gaps** — or the connection breaks and both ends learn about it.
+IP delivers postcards that can be lost, duplicated, reordered or delayed. TCP builds on top of it the illusion of a **pipe**: bytes written at one end come out at the other end **in order, exactly once, without gaps**. Or else the connection breaks, and both ends learn about it.
 
 TCP achieves this with a handful of mechanisms, each solving one problem:
 
@@ -118,23 +118,27 @@ A direct consequence of "number bytes, not messages": TCP has **no message bound
 - length prefixes (HTTP `Content-Length`, HTTP/2 frames, Kafka and PostgreSQL wire protocols: a length field then the payload),
 - chunked encoding.
 
-```python
-# WRONG: assumes one recv() == one message
-msg = sock.recv(4096)
+In Java:
 
-# RIGHT: read a 4-byte length prefix, then exactly that many bytes
-def recv_exact(sock, n):
-    buf = b""
-    while len(buf) < n:
-        chunk = sock.recv(n - len(buf))
-        if not chunk:
-            raise ConnectionError("peer closed")
-        buf += chunk
-    return buf
+```java
+// WRONG: assumes one read() returns exactly one message
+int n = socket.getInputStream().read(buf);        // may return 150 of 200 bytes, or two messages at once
 
-length = int.from_bytes(recv_exact(sock, 4), "big")
-msg = recv_exact(sock, length)
+// RIGHT: send a 4-byte length prefix, then the payload
+DataOutputStream out = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
+out.writeInt(payload.length);                     // big-endian length
+out.write(payload);
+out.flush();
+
+// ...and read exactly that many bytes on the other side
+DataInputStream in = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
+int length = in.readInt();                        // blocks until all 4 bytes have arrived
+if (length < 0 || length > MAX_MESSAGE) throw new IOException("bad length " + length);
+byte[] msg = new byte[length];
+in.readFully(msg);                                // loops over read(); EOFException if the peer closes
 ```
+
+The length check matters: without it, a corrupted or malicious length of 2 billion makes the server allocate 2 GB.
 
 ### What "reliable" does and does not mean
 
@@ -231,6 +235,10 @@ Unknown. The request may have been received and processed before the reset, or l
 
 Framing (length-prefixed messages), disabling Nagle (`TCP_NODELAY`) to avoid batching delays, long-lived persistent connections (no per-request handshakes), heartbeats to detect dead peers faster than TCP keep-alive defaults, application-level sequence numbers and idempotent resend/replay semantics for reconnects, tuned socket buffers, and monitoring retransmissions. Consider whether TCP's head-of-line blocking is acceptable versus UDP-based protocols with custom recovery.
 
+### [L2 · how] How do you send discrete messages over a TCP socket in Java?
+
+Frame them yourself, because TCP delivers a byte stream with no boundaries. The usual way is a length prefix: write the length with `DataOutputStream.writeInt` and then the bytes. The reader calls `DataInputStream.readInt` and then `readFully`, which keeps calling `read()` until exactly that many bytes have arrived, and throws `EOFException` if the connection closes first. Validate the length against a maximum before allocating. Alternatives are delimiters (lines, `\r\n`) or an existing framed protocol such as HTTP/2, gRPC or Kafka's wire format.
+
 ## Practice
 
 ### [numeric 1801] Client ISN = 1000. After the handshake it sends 500 bytes, then 300 bytes, and all arrive. What acknowledgment number does the server send?
@@ -248,6 +256,41 @@ The SYN consumes 1000, so data starts at 1001. Bytes 1001–1800 received → AC
 
 The receiver advertises how much buffer space it has.
 
+### [numeric 6201] After the handshake, the server (ISN 5000) sends 1,200 bytes of data in one segment. What acknowledgment number does the client send back?
+
+:::answer
+The server's SYN consumed sequence number 5000, so its data occupies bytes 5001–6200. The client acknowledges the next byte it expects: **6201**.
+:::
+
+### [numeric 32 unit=bytes] A TCP header's data offset field is 8. How long is the header?
+
+:::answer
+The data offset counts 32-bit words: 8 × 4 = **32** bytes, so 12 bytes of options follow the 20-byte fixed part. Typical options are MSS, SACK permitted, timestamps and window scale.
+:::
+
+### [numeric 60 unit=bytes] What is the largest possible TCP header?
+
+:::answer
+The data offset field is 4 bits, so at most 15 words: 15 × 4 = **60** bytes, leaving 40 bytes for options. This limit is why one ACK can carry at most 4 SACK blocks of received data, or 3 when timestamps take up option space too.
+:::
+
+### [mcq] A client calls `send()` twice with 100 bytes each. Which of these can the server's `recv()` calls return?
+
+- [ ] Only exactly 100 bytes, then 100 bytes
+- [ ] Only 200 bytes at once
+- [x] Any split: 100 + 100, 200, 150 + 50, or even 1 byte at a time
+- [ ] 100 bytes, then nothing, because the second send is a separate connection
+
+TCP is a byte stream: segment boundaries are chosen by the sender's kernel and the network, and receive calls return whatever is in the buffer. Applications must frame their own messages.
+
+### [exercise] In the [TCP connection simulator](lab:tcp-handshake), open a connection, send a few chunks of data and close it. Note the sequence and acknowledgement numbers on every segment. Which segments consume a sequence number without carrying data, and why?
+
+:::solution
+The **SYN** and the **FIN** each consume one sequence number, although neither carries data. That is how they get acknowledged: ACK = ISN + 1 confirms the SYN, and ACK = last data byte + 2 confirms the FIN. Without a sequence number of their own, a lost SYN or FIN couldn't be told apart from one that arrived.
+
+Pure ACKs consume nothing: their sequence number stays put, because there is nothing in them to acknowledge, which is also why ACKs are never acknowledged themselves. Each data segment advances the sequence number by its length, and the other side's ACK number always names the next byte it expects.
+:::
+
 ## Quick Revision
 
 - TCP = reliable, ordered, full-duplex **byte stream** over IP; connection = 4-tuple.
@@ -255,3 +298,5 @@ The receiver advertises how much buffer space it has.
 - No message boundaries → application framing.
 - Reliable ≠ processed by the app ≠ exactly-once requests → idempotency.
 - Costs: handshake RTT, head-of-line blocking, per-connection state → pools, QUIC.
+- Framing over TCP in Java: `DataOutputStream.writeInt(len)` + bytes; `DataInputStream.readInt()` + `readFully()`; cap the length.
+- SYN and FIN each consume one sequence number; pure ACKs consume none. Header = data offset × 4 bytes (20–60).

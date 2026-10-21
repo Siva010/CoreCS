@@ -11,12 +11,12 @@ relevance: high
 stage: 2
 prerequisites: [cn-tcp-fundamentals, os-file-descriptors]
 related: [cn-tcp-handshake, os-epoll-event-loops, os-io-models, cn-tcp-termination, x-connection-management]
-tags: [socket, bind, listen, accept, connect, backlog, accept queue, syn queue, send buffer, receive buffer, ephemeral port, so_reuseaddr, so_reuseport, tcp_nodelay]
+tags: [socket, bind, listen, accept, connect, backlog, accept queue, syn queue, send buffer, receive buffer, ephemeral port, so_reuseaddr, so_reuseport, tcp_nodelay, java sockets, serversocket, connect timeout, read timeout, so_timeout]
 ---
 
 ## Mental Model
 
-A socket is a **file descriptor with a network endpoint behind it**. To your program it's just an fd you `read` and `write`. Inside the kernel it's a bundle of state: addresses and ports, TCP state (sequence numbers, windows, timers), a **send buffer** holding bytes not yet acknowledged by the peer, and a **receive buffer** holding bytes that arrived but your program hasn't read yet.
+A socket is a **file descriptor with a network endpoint behind it**. To your program it's just an fd you `read` and `write`. Inside the kernel it's a bundle of state: addresses and ports, and TCP state (sequence numbers, windows, timers). It also holds a **send buffer** of bytes not yet acknowledged by the peer, and a **receive buffer** of bytes that arrived but your program hasn't read yet.
 
 `write()` doesn't send data onto the network — it copies bytes into the send buffer and returns. `read()` doesn't fetch from the network — it copies from the receive buffer (or waits until something is there). The kernel's TCP stack moves bytes between the buffers and the wire on its own schedule.
 
@@ -30,7 +30,7 @@ A **socket** is an endpoint for communication created by `socket(domain, type, p
 
 **The idea.** Reuse the interface programs already know: files. The Berkeley sockets API (1983) gave Unix programs a uniform way to use networks: the same file-descriptor model as files and pipes, with a few extra calls for addressing. Nearly every language's networking library wraps it.
 
-**Why buffers sit in the middle.** The application and the network run at different speeds and at different times — the app may be busy when a packet arrives, and the network may be slow when the app wants to write. Buffers in the kernel let each side work at its own pace.
+**Why buffers sit in the middle.** The application and the network run at different speeds and at different times. The app may be busy when a packet arrives, and the network may be slow when the app wants to write. Buffers in the kernel let each side work at its own pace.
 
 :::callout[That's all it is]{type=insight}
 A socket is a file descriptor backed by two kernel buffers. `write` puts bytes in the send buffer, `read` takes bytes from the receive buffer, and TCP moves data between those buffers and the network on its own.
@@ -75,7 +75,7 @@ The kernel completes handshakes **without the application**. Completed connectio
 - **Receive buffer**: incoming data waits here. `read()` blocks if it's empty (unless non-blocking). If the app doesn't read, the buffer fills, the advertised TCP window shrinks to zero, and the sender stops — **flow control reaching all the way to the application** ([Flow Control](lesson:cn-tcp-flow-control)).
 - **Send buffer**: `write()` copies into it and returns. It blocks (or returns `EAGAIN`) only when the buffer is full — i.e., when the peer or network isn't keeping up. **A successful write means "queued locally", not "delivered".**
 
-For epoll: a socket is **readable** when the receive buffer has data (or EOF/FIN arrived, or an error occurred); **writable** when there's space in the send buffer; a listening socket is readable when the accept queue is non-empty.
+For epoll, a socket is **readable** when the receive buffer has data, or EOF (a FIN) arrived, or an error occurred. It is **writable** when there's space in the send buffer, and a listening socket is readable when the accept queue is non-empty.
 
 ```bash
 $ ss -tnp state established '( dport = :5432 )'
@@ -103,31 +103,56 @@ A connection is identified by its 4-tuple, so two connections to the same server
 | `SO_LINGER` | Control close behavior (0 = abortive close with RST) | Rarely; avoid unless you understand RST semantics |
 | `TCP_USER_TIMEOUT` | Max time unacknowledged data may remain before failing the connection | Faster failure detection |
 
+In Java the same options are methods on `Socket` and `ServerSocket`: `setReuseAddress`, `setTcpNoDelay`, `setKeepAlive`, `setReceiveBufferSize`, `setSendBufferSize`, and `setSoLinger`. The per-socket keep-alive timings are `jdk.net.ExtendedSocketOptions.TCP_KEEPIDLE`, `TCP_KEEPINTERVAL` and `TCP_KEEPCOUNT`, set with `setOption` (JDK 11+, on Linux and macOS).
+
+### Timeouts: the two a Java client must set
+
+A blocking socket call waits as long as the operating system lets it, and the defaults are long:
+
+| Call | Default wait | Set it with |
+|---|---|---|
+| `connect()` to a host that doesn't answer | Until the kernel gives up on SYN retries: about 127 s on Linux | `socket.connect(address, timeoutMillis)` |
+| `read()` on a connection whose peer went silent | Forever (TCP sends nothing on an idle connection) | `socket.setSoTimeout(timeoutMillis)`: `read()` then throws `SocketTimeoutException` |
+
+```java
+Socket socket = new Socket();
+socket.connect(new InetSocketAddress("db.internal", 5432), 2_000);  // give up connecting after 2 s
+socket.setSoTimeout(5_000);              // each read() waits at most 5 s
+socket.setTcpNoDelay(true);              // small request/response messages go out at once
+socket.setKeepAlive(true);               // probe idle connections (tune with ExtendedSocketOptions)
+```
+
+Without them, one unreachable dependency leaves request threads stuck in `connect()` or `read()`. The thread pool fills up, and the whole service stops answering although its CPU is idle. HTTP clients and JDBC drivers expose the same two settings under their own names ([Networking in Java](lesson:cn-java-networking)).
+
 :::depth{level=advanced}
 ### Zero-copy and kernel bypass
 
-`sendfile()`/`splice()` send file data to sockets from the page cache without user-space copies; `MSG_ZEROCOPY` avoids copying user buffers on send for large writes; io_uring batches socket operations; kernel-bypass stacks (DPDK, user-space TCP) skip the kernel entirely for extreme packet rates at the cost of reimplementing TCP.
+`sendfile()` and `splice()` send file data to sockets from the page cache without user-space copies. `MSG_ZEROCOPY` avoids copying user buffers on send for large writes, and io_uring batches socket operations. Kernel-bypass stacks (DPDK, user-space TCP) skip the kernel entirely for extreme packet rates, at the cost of reimplementing TCP.
 :::
 
 ## Example
 
-A minimal TCP echo server (Python, blocking, one connection at a time — for clarity):
+A minimal TCP echo server in Java (blocking, one connection at a time, for clarity):
 
-```python
-import socket
-
-srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-srv.bind(("0.0.0.0", 9000))
-srv.listen(128)                    # backlog
-while True:
-    conn, addr = srv.accept()      # new socket per client
-    with conn:
-        while data := conn.recv(4096):   # b"" means the peer closed (FIN)
-            conn.sendall(data)           # sendall loops until everything is queued
+```java
+try (ServerSocket server = new ServerSocket()) {
+    server.setReuseAddress(true);                          // SO_REUSEADDR: restart without waiting out TIME_WAIT
+    server.bind(new InetSocketAddress(9000), 128);         // backlog 128
+    while (true) {
+        try (Socket conn = server.accept();                // a new socket per client
+             InputStream in = conn.getInputStream();
+             OutputStream out = conn.getOutputStream()) {
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = in.read(buf)) != -1) {             // -1 means the peer closed (FIN)
+                out.write(buf, 0, n);                      // write() blocks until every byte is queued
+            }
+        }
+    }
+}
 ```
 
-`sendall` exists because `send` may queue only part of the data when the send buffer is nearly full.
+Java's `OutputStream.write` loops internally until all the bytes are in the send buffer, so there is no partial write to handle. The C `send()` call, by contrast, can queue only part of the data when the buffer is nearly full. A real server would hand each accepted socket to a thread pool, or to a virtual thread per connection (Java 21), so that one slow client doesn't block the others.
 
 ## Complexity & Performance
 
@@ -190,6 +215,10 @@ The accept queue is full: handshakes complete in the kernel but the application 
 
 It exhausted its ephemeral ports: each connection to the same destination IP:port needs a unique local port, and closed connections linger in TIME_WAIT for the client (the active closer), keeping ports unavailable. Fix: reuse connections (keep-alive/pooling), widen `ip_local_port_range`, use multiple source IPs or destinations, and enable `tcp_tw_reuse` for outgoing connections if appropriate.
 
+### [L2 · how] Which timeouts must a Java client set on a socket, and what happens without them?
+
+The connect timeout (`socket.connect(address, millis)`) and the read timeout (`setSoTimeout`). Without a connect timeout, connecting to a host that drops SYNs waits until the kernel gives up, about two minutes on Linux. Without a read timeout, `read()` on a connection whose peer silently vanished blocks forever, because TCP sends nothing on an idle connection. Either way, request threads pile up waiting, the pool is exhausted and the service stops responding although its CPU is idle. Every client library (HTTP clients, JDBC drivers, Redis clients) has its own names for the same two timeouts.
+
 ## Practice
 
 ### [mcq] A socket in an epoll set is reported readable, and read() returns 0. What does it mean?
@@ -210,6 +239,49 @@ A zero-byte read on a stream socket is EOF.
 
 127.0.0.1 inside the container is the container's own loopback, not reachable via port publishing.
 
+### [numeric 128] A Java server calls `bind(address, 1024)`, but the host's `net.core.somaxconn` is 128. How many completed connections can wait in its accept queue?
+
+:::answer
+The accept queue is min(backlog, somaxconn) = min(1,024, 128) = **128**. Older kernels defaulted somaxconn to 128 (5.4+ use 4,096), so a large backlog in the application was silently capped. Once the queue is full, new handshakes are dropped and clients see slow or failed connects.
+:::
+
+### [numeric 28232] Linux's default ephemeral port range is 32,768–60,999. How many local ports can a client use for simultaneous connections to one server IP and port?
+
+:::answer
+60,999 − 32,768 + 1 = **28,232**. Connections to the same destination differ only in their local port, so this is the ceiling, including sockets still in TIME_WAIT.
+:::
+
+### [numeric 127 unit=s] A Linux client calls `connect()` with no timeout to a host that silently drops SYNs. The first retry comes after 1 s and the wait doubles each time, with `tcp_syn_retries` = 6. Roughly how long until `connect()` fails?
+
+:::answer
+The SYN is sent, then retried 6 times, with waits of 1 + 2 + 4 + 8 + 16 + 32 s before the retries, plus a final 64 s wait for an answer to the last one: **127** s. A Java client without a connect timeout ties up a thread for that long.
+:::
+
+### [mcq] `InputStream.read()` on a Java socket returns −1. What happened?
+
+- [ ] The read timeout expired
+- [ ] The receive buffer is momentarily empty
+- [x] The peer closed its side of the connection (a FIN arrived)
+- [ ] The connection was reset
+
+−1 is end of stream: no more data will ever come. A timeout throws `SocketTimeoutException`, a reset throws `SocketException: Connection reset`, and an empty buffer simply makes `read()` block.
+
+### [exercise] A Java service calls a partner API with `new Socket(host, 443)` and plain `read()`s. One night the partner's load balancer starts dropping packets. Within minutes every request thread is stuck and the service stops answering health checks, though its CPU is at 2%. Explain what the threads are doing, and fix the code. Then lose the SYN in the [TCP connection simulator](lab:tcp-handshake) and connect the retransmission you see to the first problem.
+
+:::solution
+**What the threads are doing.** The `new Socket(host, 443)` constructor connects with no timeout. When SYNs are dropped, each thread waits in `connect()` while the kernel retransmits the SYN (1, 2, 4, 8… s), about 2 minutes in total. Threads that did connect then block in `read()` without a timeout and wait forever for a response. New requests take more threads, until the pool is exhausted. Health checks fail because no thread is free to answer them, although the CPU has nothing to do.
+
+**The fix:**
+```java
+Socket s = new Socket();
+s.connect(new InetSocketAddress(host, 443), 1_000);   // fail fast when nobody answers
+s.setSoTimeout(3_000);                                // never wait more than 3 s for data
+```
+Better still, use an HTTP client with connect and request timeouts, and a circuit breaker so that a failing dependency is skipped quickly. Keep a separate thread pool for the partner, so it can't starve the rest of the service.
+
+**In the simulator.** A lost SYN is retransmitted after a timeout, and the timeout doubles each time. That growing wait is exactly what an unbounded `connect()` sits through.
+:::
+
 ## Quick Revision
 
 - Socket = fd + kernel state (4-tuple, TCP state, send/receive buffers).
@@ -219,3 +291,5 @@ A zero-byte read on a stream socket is EOF.
 - Readable = data/EOF/error; writable = send-buffer space.
 - Ephemeral ports (~28K default) per destination + TIME_WAIT → exhaustion.
 - Options: SO_REUSEADDR/PORT, TCP_NODELAY, SO_KEEPALIVE, buffers, TCP_USER_TIMEOUT.
+- Java: `ServerSocket.bind(addr, backlog)`, `accept()` → new `Socket`; `read()` returns −1 at FIN; `write()` queues everything.
+- Always set both timeouts: `connect(addr, ms)` and `setSoTimeout(ms)`; defaults are ~2 min (connect) and forever (read).

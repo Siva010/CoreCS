@@ -10,7 +10,7 @@ minutes: 40
 relevance: high
 stage: 2
 prerequisites: [cn-tcp-reliability]
-related: [cn-tcp-congestion-control, cn-latency-bandwidth, cn-sockets, os-epoll-event-loops]
+related: [cn-tcp-congestion-control, cn-latency-bandwidth, cn-sockets, os-epoll-event-loops, cn-arq-protocols]
 visualizations: [sliding-window]
 labs: [network-calculator]
 tags: [flow control, sliding window, receive window, rwnd, send window, window scaling, zero window, persist timer, silly window syndrome, nagle, delayed ack, bandwidth-delay product]
@@ -18,7 +18,7 @@ tags: [flow control, sliding window, receive window, rwnd, send window, window s
 
 ## Mental Model
 
-The receiver has a bucket (its **receive buffer**) and tells the sender, with every ACK, how much room is left: "I can take 64 KB more." The sender may have at most that many **unacknowledged bytes in flight**. As the receiving application drains the bucket, the advertised room grows again. If the application stops reading, the bucket fills, the advertised room reaches zero, and the sender must stop — no matter how fast the network is.
+The receiver has a bucket (its **receive buffer**) and tells the sender, with every ACK, how much room is left (say, 64 KB more). The sender may have at most that many **unacknowledged bytes in flight**. As the receiving application drains the bucket, the advertised room grows again. If the application stops reading, the bucket fills, the advertised room reaches zero, and the sender must stop — no matter how fast the network is.
 
 The allowed range slides forward over the byte stream as acknowledgments arrive: a **sliding window**.
 
@@ -35,7 +35,7 @@ The allowed range slides forward over the byte stream as acknowledgments arrive:
 
 **Without it.** Without flow control, the receiver would drop data it can't buffer, forcing retransmissions that waste the network.
 
-**The idea.** The receiver is the only one who knows how much room it has — so let it say so on every ACK, and forbid the sender from having more unacknowledged data in flight than that. The limit moves forward as data is acknowledged, which is why it's called a sliding window.
+**The idea.** The receiver is the only one who knows how much room it has. So let it say so on every ACK, and forbid the sender from having more unacknowledged data in flight than that. The limit moves forward as data is acknowledged, which is why it's called a sliding window.
 
 :::callout[That's all it is]{type=insight}
 The receiver advertises "I have room for N more bytes"; the sender never has more than N unacknowledged bytes out. If the receiving app stops reading, N drops to zero and the sender waits.
@@ -62,7 +62,16 @@ The receiver advertises "I have room for N more bytes"; the sender never has mor
 
 An edge case the basic rule doesn't handle. If the receiving application stops reading, rwnd hits **0**. The sender stops sending data but starts a **persist timer** and periodically sends a tiny **window probe** — otherwise, if the receiver's "window reopened" update were lost, both sides would wait forever (a deadlock). When the app reads, the receiver advertises a non-zero window and transfer resumes.
 
-This is backpressure in action: a slow consumer → full socket receive buffer → zero window → sender's send buffer fills → sender's `write()` blocks → the producing application slows down.
+This is backpressure in action, passing from the slow reader all the way back to the writer:
+
+```mermaid
+flowchart TD
+    C["consumer reads slowly"] --> R["receiver's socket buffer fills"]
+    R --> Z["advertised window shrinks to 0"]
+    Z --> S["sender's socket buffer fills"]
+    S --> W["sender's write() blocks"]
+    W --> P["producing application slows down"]
+```
 
 ### Throughput is bounded by window / RTT
 
@@ -101,7 +110,7 @@ Autotuning grows the receive buffer as the connection proves a large BDP. Memory
 
 ## Example
 
-Two 50 KB windows compared on a transatlantic path (RTT 80 ms):
+Two windows compared on a transatlantic path (RTT 80 ms):
 
 | Window | Max throughput |
 |---|---|
@@ -195,6 +204,37 @@ Nagle's algorithm on the client delays sending the last small part of a request 
 
 Negotiated in the SYN; multiplies the window field by 2^scale.
 
+### [numeric 52.4 ±0.3 unit=Mb/s] A connection's window is capped at 256 KB (262,144 bytes) and the RTT is 40 ms. What is its maximum throughput in Mb/s?
+
+:::answer
+262,144 × 8 bits ÷ 0.04 s = 52,428,800 bit/s ≈ **52.4** Mb/s, regardless of how fast the link is.
+:::
+
+### [numeric 8] To advertise a window of at least 12.5 MB, what is the smallest window-scale shift that works with the 16-bit window field (maximum 65,535)?
+
+:::answer
+65,535 × 2^s ≥ 12,500,000 needs 2^s ≥ 190.7. 2⁷ = 128 is too small; 2⁸ = 256 gives 16.8 MB. The shift is **8**. It is agreed in the SYN, so it can't change later in the connection.
+:::
+
+### [mcq] A receiver's application stops reading and the advertised window reaches 0. What keeps the connection from stalling forever once the application reads again?
+
+- [ ] The receiver sends a new SYN
+- [x] The sender's persist timer sends periodic window probes, which the receiver answers with its current window
+- [ ] The sender keeps sending at a minimum rate of one MSS per RTT
+- [ ] The connection is reset after a fixed timeout
+
+If the window update after the application reads were lost, both sides would wait for each other. The window probes make the sender ask again until the window opens.
+
+### [exercise] In the [sliding window lab](lab:sliding-window), set "App reads / round" to 0 so the receiving application stalls, run rounds until the advertised window reaches 0, then let the application read again. Explain at each step what the sender may send, and connect it to what a Java producer writing to a socket experiences.
+
+:::solution
+- **Shrinking window:** unread data fills the receiver's buffer, so each ACK advertises a smaller rwnd. The right edge of the sender's window stops moving forward. Bytes already in flight are still acknowledged, but the "can send now" region shrinks, so the sender sends less per round trip.
+- **Window 0:** the sender may send nothing new, only window probes when its persist timer fires. Unsent data piles up in the sender's socket buffer.
+- **Opening again:** the receiver advertises a larger window (in an ACK, or in reply to a probe), and the sender resumes, up to the new right edge.
+
+In Java, the producer sees this as its `OutputStream.write()` call blocking once the send buffer is full (or a non-blocking channel's `write()` returning 0). No error occurs; the producer is simply slowed to the consumer's pace. That is backpressure, and it is also why a single slow client can tie up a thread in a thread-per-connection server that has no write timeout.
+:::
+
 ## Quick Revision
 
 - Receiver advertises **rwnd** (free buffer); sender keeps in-flight ≤ min(rwnd, cwnd).
@@ -203,3 +243,4 @@ Negotiated in the SYN; multiplies the window field by 2^scale.
 - Throughput ≤ window / RTT; need window ≥ **BDP** = bandwidth × RTT; **window scaling** + autotuning.
 - Nagle + delayed ACK → ~40 ms stalls → `TCP_NODELAY` for request/response.
 - Flow control ≠ congestion control.
+- Window-scale shift s: window = field × 2^s, agreed in the SYN (12.5 MB needs s = 8). Zero window → persist timer → window probes.

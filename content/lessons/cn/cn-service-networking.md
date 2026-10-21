@@ -86,6 +86,18 @@ Each sidecar adds CPU and memory per pod and two extra proxy hops per call (typi
 - **Retries** only for idempotent requests, bounded by budgets; otherwise a slow dependency triggers retry storms that multiply load ([Overloaded Servers](lesson:x-overloaded-server)).
 - **Timeouts** should shrink along the call path (deadline propagation) — a 30 s timeout at every hop means a user request can wait minutes.
 - **Circuit breakers** fail fast when a dependency is unhealthy, preserving the caller's threads/pools and giving the dependency room to recover.
+
+```mermaid
+stateDiagram-v2
+    state "Closed: calls pass through, failures counted" as C
+    state "Open: calls fail at once, no traffic sent" as O
+    state "Half-open: a few trial calls allowed" as H
+    [*] --> C
+    C --> O: failure rate over the threshold
+    O --> H: wait time elapses
+    H --> C: trial calls succeed
+    H --> O: a trial call fails
+```
 :::
 
 ## Example
@@ -160,6 +172,14 @@ It transparently intercepts a service's inbound and outbound traffic and applies
 
 Start with observability-only mode on a few non-critical namespaces to measure latency/CPU overhead; enable permissive mTLS (accept both plain and mTLS) cluster-wide, then migrate to strict per namespace once all clients have sidecars; introduce default timeouts and conservative retry budgets centrally and remove conflicting library retries; add authorization policies incrementally with audit mode first; keep the control plane highly available and version-pinned; plan for certificate rotation and CA resilience; and provide a fast opt-out for incidents. Measure p99 impact per hop.
 
+### [L2 · how] How does a circuit breaker work?
+
+It wraps calls to one dependency and has three states. **Closed**: calls go through and failures are counted over a sliding window. When the failure rate (or slow-call rate) crosses a threshold, it goes **open**: calls fail immediately without touching the dependency, which frees the caller's threads and gives the dependency time to recover. After a wait it goes **half-open** and lets a few trial calls through: if they succeed it closes again, otherwise it reopens. In Java, Resilience4j implements this; meshes do it per destination in the sidecar.
+
+### [L2 · why] Why should timeouts shrink along a call chain?
+
+If every hop uses the same generous timeout, a request can outlive the user waiting for it: the edge times out at 2 s, but downstream services keep working on it for 30 s more, wasting capacity exactly when the system is overloaded. With deadline propagation, the edge sets a deadline and each hop passes on what is left, minus its own work, so downstream calls give up as soon as the answer can no longer be used. gRPC propagates deadlines automatically.
+
 ## Practice
 
 ### [mcq] Kubernetes ClusterIP Services balance traffic at which granularity by default?
@@ -180,6 +200,39 @@ kube-proxy DNATs connections; long-lived connections stick to one pod.
 
 Identities (e.g., SPIFFE IDs) are embedded in certificates.
 
+### [numeric 4 unit=ms] A request makes 4 sequential calls between services, each through two mesh sidecars (one at the caller, one at the callee) that add 0.5 ms each. How much latency do the sidecars add to the request?
+
+:::answer
+4 calls × 2 sidecars × 0.5 ms = **4** ms. Fan-out in parallel would add only the one slowest path; long sequential chains are where sidecar overhead shows up at p99.
+:::
+
+### [numeric 100 unit=requests/s] A client sends 1,000 requests per second to a dependency and has a retry budget of 10%. At most how many retries per second may it send when the dependency fails?
+
+:::answer
+10% of 1,000 = **100** retries per second, however many requests fail. Without the budget, a failing dependency could receive up to 2,000–3,000 requests per second from the same clients, precisely when it is struggling.
+:::
+
+### [mcq] A circuit breaker is open. What happens to a call?
+
+- [ ] It is queued until the dependency recovers
+- [x] It fails immediately (or returns a fallback) without being sent
+- [ ] It is retried with backoff
+- [ ] It is sent to the dependency with a shorter timeout
+
+Failing fast is the point: threads and connection pools aren't tied up waiting on a dependency that is known to be failing.
+
+### [exercise] Calls go user → API gateway (timeout 2 s) → orders (timeout 5 s to inventory) → inventory (timeout 10 s to its database). The database stalls. Describe what happens to resources in each service, and redesign the timeouts.
+
+:::solution
+**What happens.** After 2 s the gateway gives up and returns an error to the user, but orders is still waiting up to 5 s on inventory, and inventory up to 10 s on the database. Each user request keeps threads, connections and database sessions busy for up to 10 s after the user has given up. Retries from users and the gateway add more of these zombie requests, so the stalled database gets *more* load, and the services exhaust their thread and connection pools.
+
+**Redesign:**
+- **Propagate a deadline** from the gateway (2 s): orders gets about 1.8 s, inventory about 1.5 s, the database query about 1.2 s. Each hop subtracts its own work and passes on the rest (gRPC deadlines, or a header in HTTP).
+- **Time out downstream before upstream**: every inner timeout below its caller's.
+- **Add circuit breakers** on orders → inventory and inventory → database, so a stalled dependency fails fast instead of holding threads.
+- **Bound retries**: one layer only, with a budget.
+:::
+
 ## Quick Revision
 
 - Discovery: DNS, registries, orchestrator VIPs, mesh control planes.
@@ -187,3 +240,4 @@ Identities (e.g., SPIFFE IDs) are embedded in certificates.
 - North-south (edge) vs east-west (service-to-service, dominant).
 - Mesh sidecar: interception, mTLS identity, authz, L7 LB, timeouts, retries (budgeted), circuit breaking, canaries, telemetry; costs latency/CPU/complexity; ambient/eBPF/proxyless reduce it.
 - Deadline propagation and retry budgets prevent storms.
+- Circuit breaker: closed → (failures) open → (wait) half-open → closed or open. Deadlines shrink inward; retry budgets cap extra load (10% of 1,000 rps = 100).

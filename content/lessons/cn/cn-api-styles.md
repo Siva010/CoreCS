@@ -35,7 +35,10 @@ Webhooks flip the direction: the **server calls you** when something happens.
 
 **The problem.** Two programs need to talk over HTTP, but HTTP only says "send a request, get a response". It doesn't say how to name operations, shape data, or evolve the interface without breaking callers.
 
-**Why three styles.** Each style is optimised for a different kind of caller. Different consumers have different needs: public APIs value simplicity, cacheability and universal tooling (REST); internal microservices value performance, strict contracts and streaming (gRPC); UI-heavy clients with many views value fetching exactly the data needed in one round trip (GraphQL).
+**Why three styles.** Each style is optimised for a different kind of caller. Different consumers have different needs:
+- public APIs value simplicity, cacheability and universal tooling (REST);
+- internal microservices value performance, strict contracts and streaming (gRPC);
+- UI-heavy clients with many views value fetching exactly the data needed in one round trip (GraphQL).
 
 :::callout[That's all it is]{type=insight}
 REST: nouns at URLs, HTTP verbs on them. gRPC: typed function calls over HTTP/2. GraphQL: one endpoint where the client describes the exact data shape it wants. Webhooks: the server calls you.
@@ -56,6 +59,16 @@ REST: nouns at URLs, HTTP verbs on them. gRPC: typed function calls over HTTP/2.
 | Over/under-fetching | Common | Designed per call | Solved — client picks fields |
 | Errors | HTTP status codes | gRPC status codes (+ HTTP 200) | Usually HTTP 200 with `errors` array |
 | Typical home | Public APIs, CRUD services | Internal service-to-service | Frontend-facing aggregation (BFF) |
+
+Which style fits depends mostly on who calls the API:
+
+```mermaid
+flowchart LR
+    Q["who calls the API?"] -->|"third parties, the public web"| R["REST + JSON<br/>(caching, tooling, browsers)"]
+    Q -->|"your own UI, many different screens"| G["GraphQL or a BFF<br/>(one round trip per screen)"]
+    Q -->|"internal services, low latency, streaming"| P["gRPC + protobuf"]
+    Q -->|"you notify someone else's system"| W["webhooks<br/>(signed, retried, idempotent)"]
+```
 
 ### A gRPC service definition
 
@@ -83,7 +96,7 @@ query {
 }
 ```
 
-One round trip fetches what REST might need 3–4 calls for. The server-side cost: naive resolvers cause the **N+1 query problem** (one query for items, then one per item for its product) — solved with batching (DataLoader) — and clients can craft **expensive queries**, so servers enforce depth/complexity limits and timeouts.
+One round trip fetches what REST might need 3–4 calls for. The server-side cost is real, though. Naive resolvers cause the **N+1 query problem** (one query for items, then one per item for its product), solved with batching (DataLoader). And clients can craft **expensive queries**, so servers enforce depth and complexity limits and timeouts.
 
 ### Webhooks
 
@@ -142,6 +155,7 @@ This is why many architectures use GraphQL or a REST "backend for frontend" at t
 - Public APIs: REST + OpenAPI, idempotency keys, cursor pagination, rate limits.
 - Internal: gRPC with deadlines, retries policies, mTLS via service mesh.
 - Frontend aggregation: GraphQL with persisted queries, DataLoader, complexity limits.
+- From Java: REST calls go through `HttpClient` with explicit timeouts ([Java Networking](lesson:cn-java-networking)). grpc-java sets a deadline per call with `stub.withDeadlineAfter(300, TimeUnit.MILLISECONDS)`, and the deadline travels to the server in the `grpc-timeout` header.
 
 ## Deeper Connections
 
@@ -171,6 +185,14 @@ Offset pagination (`LIMIT 50 OFFSET 100000`) makes the database scan and discard
 
 Verify the HMAC signature and timestamp (reject replays), respond 2xx quickly after persisting the event (e.g., to a queue/table) rather than processing inline, make processing idempotent using the event ID (deduplicate), handle out-of-order delivery (compare versions/timestamps), monitor failures, and support reconciliation by polling the provider's API for missed events.
 
+### [L2 · how] How does a gRPC call map onto HTTP/2?
+
+Each call is one HTTP/2 stream: a POST to `/package.Service/Method` with `content-type: application/grpc`, a body of length-prefixed protobuf messages (one for unary calls, many for streaming), and the result status in **trailers** (`grpc-status`, `grpc-message`) after the response body. Because the HTTP status is 200 even for failed calls, proxies and monitoring must read the trailers. Deadlines travel as the `grpc-timeout` header, so each service knows how long its caller will wait.
+
+### [L3 · design] How do you evolve a protobuf/gRPC API without breaking existing clients?
+
+Only make additive changes: add new fields with new field numbers, and never reuse or change the type of an existing number. Removed fields have their numbers (and names) marked `reserved`. Old clients ignore unknown fields, and new clients see defaults for fields old servers don't send, so both directions keep working. Breaking changes get a new method or a new package version (`orders.v2`), run side by side until clients move.
+
 ## Practice
 
 ### [mcq] Which API style natively supports bidirectional streaming over HTTP/2 with protobuf?
@@ -191,8 +213,41 @@ gRPC supports unary and three streaming modes.
 
 Batching collapses per-item lookups into one query.
 
+### [numeric 300 unit=ms] A mobile screen needs 3 REST calls that must be made one after another, on a network with a 150 ms round trip. A GraphQL query fetches the same data in one request (the server's internal calls are fast). How much time does GraphQL save?
+
+:::answer
+REST: 3 × 150 = 450 ms of round trips. GraphQL: 1 × 150 = 150 ms. Saving: **300** ms, because the fan-out happens inside the data centre, where calls take a millisecond or two.
+:::
+
+### [numeric 49950] Offset pagination with 50 items per page: how many rows must the database read and throw away to return page 1,000?
+
+:::answer
+Page 1,000 starts at offset (1,000 − 1) × 50 = **49,950**, and the database must walk past all of them before returning the next 50. Cursor (keyset) pagination, `WHERE id > :last_seen ORDER BY id LIMIT 50`, reads only the 50 rows it returns.
+:::
+
+### [mcq] A gRPC call fails with "deadline exceeded", but the access logs show HTTP 200. Why?
+
+- [ ] The proxy rewrote the status
+- [x] gRPC reports the call's result in trailers (`grpc-status`), and the HTTP status stays 200
+- [ ] The server succeeded and the client failed to parse the reply
+- [ ] HTTP/2 doesn't have status codes
+
+HTTP-level monitoring sees 200 for most gRPC failures. Dashboards and alerts must be built on `grpc-status`.
+
+### [exercise] Design a reliable webhook consumer for payment events that may arrive late, twice, or out of order.
+
+:::solution
+1. **Verify** the HMAC signature over the raw body, and reject stale timestamps to stop replays ([Crypto Foundations](lesson:cn-crypto-foundations)).
+2. **Respond fast:** store the event (with its provider event ID) and return 2xx immediately; process it asynchronously from a queue. Slow responses cause the provider to time out and resend.
+3. **Deduplicate:** a unique constraint on the event ID makes a second delivery a no-op. Providers deliver at least once, never exactly once.
+4. **Handle ordering:** don't assume events arrive in order. Compare each event's version or timestamp with the stored state and ignore older ones, or fetch the current state from the provider's API when an event arrives.
+5. **Reconcile:** periodically list recent events or objects from the provider to catch anything missed during an outage.
+:::
+
 ## Quick Revision
 
 - REST = resources + HTTP semantics + caching; gRPC = typed RPC, protobuf, HTTP/2, streaming, deadlines; GraphQL = client-shaped queries, one endpoint, N+1 & cost limits; webhooks = provider → you, at-least-once, verify + idempotent.
 - For all: deadlines, idempotent retries with backoff/jitter, idempotency keys, cursor pagination, backward-compatible evolution, 429 + Retry-After.
 - gRPC needs L7/client-side LB.
+- gRPC = HTTP/2 POST + length-prefixed protobuf + status in trailers (HTTP 200 even on errors); evolve with new field numbers only, `reserved` for removed ones.
+- Offset pagination reads (page − 1) × size rows to skip; prefer keyset pagination. Webhooks: verify, ack fast, dedupe by event ID, don't trust order.

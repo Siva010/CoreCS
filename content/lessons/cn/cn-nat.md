@@ -12,7 +12,7 @@ stage: 2
 prerequisites: [cn-routing]
 related: [cn-vpn-nat-traversal, cn-tcp-termination, cn-container-networking, cn-ipv6]
 visualizations: [routing]
-tags: [nat, pat, snat, dnat, masquerade, conntrack, port exhaustion, carrier-grade nat, cgnat, port forwarding, nat gateway]
+tags: [nat, pat, snat, dnat, masquerade, conntrack, port exhaustion, carrier-grade nat, cgnat, port forwarding, nat gateway, static nat, dynamic nat]
 ---
 
 ## Mental Model
@@ -56,9 +56,19 @@ sequenceDiagram
 
 Every packet in both directions is rewritten (addresses, ports, and checksums recomputed). Entries expire after inactivity: TCP entries after a long timeout for established connections (hours on Linux by default, often minutes on consumer routers and cloud NAT gateways), UDP entries after tens of seconds to minutes.
 
+### Kinds of NAT
+
+| Kind | Mapping | Typical use |
+|---|---|---|
+| **Static NAT** | One private address ↔ one fixed public address, permanently | A server inside that must be reachable at a known public address |
+| **Dynamic NAT** | Private addresses borrow public addresses from a pool, one each, while in use | Rare today: needs as many public addresses as active hosts |
+| **PAT** (port address translation, NAPT, "masquerade") | Many private addresses share one public address, told apart by port | Home routers, cloud NAT gateways: what "NAT" usually means |
+
+By direction: **SNAT** rewrites the source of outgoing traffic (a home router, a NAT gateway), and **DNAT** rewrites the destination of incoming traffic (port forwarding, a load balancer's virtual IP, Kubernetes Services).
+
 ### Port exhaustion
 
-The table distinguishes inside devices by the *port* it assigns them on the shared address — and ports are a 16-bit number. So the table has a size limit. One public IP has ~64K ports per protocol **per destination** (entries are distinguished by the full 5-tuple, but many NATs allocate ports more conservatively). When many internal clients open many connections to the **same** destination IP:port — e.g., hundreds of pods all calling one external API — the NAT can run out of source ports for that destination, and new connections fail or time out. Cloud NAT gateways document per-destination connection limits for exactly this reason. Remedies: more NAT IPs, connection reuse/pooling, keep-alive, shorter idle timeouts.
+The table distinguishes inside devices by the *port* it assigns them on the shared address — and ports are a 16-bit number. So the table has a size limit. One public IP has ~64K ports per protocol **per destination** (entries are distinguished by the full 5-tuple, but many NATs allocate ports more conservatively). When many internal clients open many connections to the **same** destination IP:port, the NAT can run out of source ports for that destination, and new connections fail or time out. Hundreds of pods all calling one external API is the typical case. Cloud NAT gateways document per-destination connection limits for exactly this reason. Remedies: more NAT IPs, connection reuse/pooling, keep-alive, shorter idle timeouts.
 
 ### Types of NAT behavior (why P2P is hard)
 
@@ -157,6 +167,10 @@ Likely port exhaustion toward a single destination: many concurrent connections 
 
 The middlebox's idle timeout expired and it dropped the flow's state; the next packet is dropped or rejected with RST. Fix: TCP keep-alive (or application-level pings) with an interval shorter than the timeout, pool settings that validate or retire idle connections (maxLifetime/idle timeout below the NAT timeout), or increase the middlebox timeout.
 
+### [L2 · compare] Static NAT vs dynamic NAT vs PAT?
+
+Static NAT permanently maps one private address to one public address, so an inside server is reachable from outside at a fixed address. Dynamic NAT gives each active inside host a public address from a pool, one-to-one while in use, so it still needs as many public addresses as active hosts. PAT (port address translation, also called NAPT or masquerading) lets many inside hosts share one public address by giving each connection its own public port. PAT is what home routers and cloud NAT gateways do, and what people usually mean by "NAT".
+
 ## Practice
 
 ### [mcq] Which NAT operation does a home router perform for outbound web browsing?
@@ -177,6 +191,46 @@ Many private hosts share one public IP using different ports.
 
 New flows can't be tracked, so their packets are dropped.
 
+### [numeric 129024] A NAT gateway has 2 public IPs and may use source ports 1,024–65,535 on each. At most how many simultaneous TCP connections can it hold to one destination IP and port?
+
+:::answer
+Connections to one destination differ only in the public source address and port. Each IP has 65,535 − 1,024 + 1 = 64,512 ports, so 2 × 64,512 = **129,024**. Spreading traffic over more destination IPs, or adding public IPs, raises the limit.
+:::
+
+### [numeric 32] A carrier-grade NAT gives each customer a block of 2,000 ports on a shared public IP that has 64,512 usable ports. How many customers can share that IP?
+
+:::answer
+64,512 ÷ 2,000 = 32.3, so **32** whole blocks. A customer that opens more than 2,000 connections at once runs out of ports, even though the IP as a whole has some left.
+:::
+
+### [mcq] A company wants its mail server, at 10.0.0.25 inside, always reachable from the internet at 198.51.100.25. Which kind of NAT fits?
+
+- [x] Static NAT
+- [ ] Dynamic NAT from a pool
+- [ ] PAT on the router's single address
+- [ ] No NAT is possible for inbound traffic
+
+A fixed one-to-one mapping is static NAT. Dynamic NAT and PAT create mappings only for connections started from inside, so an outside client couldn't reliably reach the server.
+
+### [mcq] Two laptops, each behind its own NAT, try a direct UDP connection using addresses learned from a STUN server. It fails only when one NAT gives a new public port for every destination. What kind of NAT behaviour is that?
+
+- [ ] Endpoint-independent mapping
+- [x] Address- and port-dependent ("symmetric") mapping
+- [ ] Static NAT
+- [ ] Hairpinning
+
+The port STUN observed is not the one the NAT uses toward the other peer, so the peer sends to the wrong port. Such pairs fall back to a relay (TURN).
+
+### [exercise] In the [routing simulator](lab:routing), send a packet from host A to the remote server and find the hop where NAT happens. Write down the source address and port before and after it, what the server sees, and how the reply finds its way back to host A.
+
+:::solution
+At the edge router, the packet leaves the private network:
+- **before:** source 192.168.1.20 (host A's private address), port 51514;
+- **after:** source 198.51.100.7 (the router's public address), port 40001, with a conntrack entry recording the mapping.
+
+The server sees 198.51.100.7:40001 and never learns host A's private address. Its reply goes to 198.51.100.7:40001. The edge router looks that port up in its translation table, rewrites the destination back to host A's private address and port, and forwards the reply on the LAN. If the mapping had expired, the reply would be dropped, which is why idle connections through NAT need keep-alives.
+:::
+
 ## Quick Revision
 
 - NAT rewrites addresses; **PAT** also rewrites ports so many hosts share one IP.
@@ -185,3 +239,4 @@ New flows can't be tracked, so their packets are dropped.
 - Port exhaustion toward one destination; conntrack table full; idle timeouts killing long connections → keep-alives.
 - NAT blocks unsolicited inbound (not a real firewall); CGNAT = NAT at the ISP.
 - Kubernetes Services & Docker `-p` are DNAT.
+- Static NAT (1:1 fixed), dynamic NAT (1:1 from a pool), PAT/NAPT (many:1 by port; what "NAT" usually means). SNAT rewrites sources (outbound), DNAT destinations (port forwarding, Service VIPs).

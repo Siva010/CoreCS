@@ -10,8 +10,8 @@ minutes: 30
 relevance: medium
 stage: 1
 prerequisites: [cn-encapsulation]
-related: [cn-arp-dhcp, cn-routing, cn-container-networking]
-tags: [ethernet, mac address, frame, switch, mac learning, cam table, broadcast, broadcast domain, collision domain, csma/cd, vlan, 802.1q, spanning tree]
+related: [cn-arp-dhcp, cn-routing, cn-container-networking, cn-mac-protocols, cn-error-detection]
+tags: [ethernet, mac address, oui, frame, switch, store-and-forward, cut-through, mac learning, cam table, broadcast, broadcast domain, collision domain, csma/cd, vlan, 802.1q, spanning tree]
 ---
 
 ## Mental Model
@@ -78,6 +78,28 @@ sequenceDiagram
     S->>A: reply (forwarded<br/>only to port 1)
 ```
 
+### MAC addresses
+
+A MAC address is 48 bits, written as six bytes in hex: `3c:22:fb:9a:10:4e`.
+
+- The first 3 bytes are the **OUI**, the manufacturer's prefix assigned by the IEEE (`3c:22:fb` belongs to one vendor). The last 3 bytes are the device's number within it.
+- The lowest bit of the first byte marks **multicast** (1) or unicast (0). `01:00:5e:…` addresses carry IPv4 multicast.
+- The next bit marks a **locally administered** address (1), one not burned in at the factory. Phones use random local MACs on Wi-Fi for privacy, and VMs and containers get generated ones.
+- `ff:ff:ff:ff:ff:ff` is **broadcast**: every device on the LAN accepts it.
+
+### Store-and-forward vs cut-through switching
+
+A switch can wait for the whole frame or start sending it on early:
+
+| | Store-and-forward | Cut-through |
+|---|---|---|
+| Starts forwarding | After the whole frame arrives and its FCS checks out | As soon as the destination MAC (first 6 bytes after the preamble) arrives |
+| Corrupted frames | Dropped at this switch | Forwarded; the next store-and-forward device or the receiver drops them |
+| Added latency | One frame's transmission time per switch (12 µs for 1,500 bytes at 1 Gb/s) | Well under a microsecond, independent of frame size |
+| Typical use | Most campus and enterprise switches | Low-latency data-centre and trading networks |
+
+*Fragment-free* switching is a middle ground: it waits for the first 64 bytes, where collision fragments would show up on old shared Ethernet.
+
 ### Broadcast vs collision domains
 
 | Device | Splits collision domains? | Splits broadcast domains? |
@@ -86,7 +108,7 @@ sequenceDiagram
 | Switch | Yes — each port is its own (and full-duplex removes collisions entirely) | No (unless VLANs) |
 | Router | Yes | **Yes** |
 
-**CSMA/CD** (carrier sense multiple access with collision detection) was half-duplex Ethernet's rule: listen before sending, detect collisions, back off randomly (exponential backoff). Modern full-duplex switched Ethernet doesn't need it — but the idea of randomized exponential backoff lives on in Wi-Fi (CSMA/CA) and in retry logic everywhere.
+**CSMA/CD** (carrier sense multiple access with collision detection) was half-duplex Ethernet's rule: listen before sending, detect collisions, back off randomly (exponential backoff). Modern full-duplex switched Ethernet doesn't need it — but the idea of randomized exponential backoff lives on in Wi-Fi (CSMA/CA) and in retry logic everywhere. ALOHA, CSMA/CD's minimum frame size and Wi-Fi's collision avoidance are worked through in [Sharing a Link](lesson:cn-mac-protocols).
 
 ### VLANs
 
@@ -169,6 +191,14 @@ A VLAN logically partitions a switched network into separate broadcast domains u
 
 A Layer-2 loop: broadcast and unknown-unicast frames are flooded around the loop endlessly (Ethernet has no TTL), multiplying each time — a broadcast storm that saturates links and switch CPUs, and MAC tables flap as the same source appears on different ports. The network becomes unusable until the loop is broken.
 
+### [L2 · compare] Store-and-forward vs cut-through switching?
+
+A store-and-forward switch receives the whole frame and checks its FCS before forwarding, so it never passes on a corrupted frame, at the cost of one frame's transmission time per switch (12 µs for 1,500 bytes at 1 Gb/s). A cut-through switch starts forwarding as soon as it has read the destination MAC, adding well under a microsecond regardless of frame size, but it forwards corrupted frames, which a later device must drop. Low-latency data-centre and trading networks use cut-through; most others use store-and-forward.
+
+### [L2 · numerical] A router connects two switches. Switch 1 has 4 PCs. Switch 2 has 3 PCs and a hub, and the hub has 2 more PCs. How many broadcast domains and collision domains are there?
+
+**2 broadcast domains**: each router interface starts a new one, and switches and hubs don't split them. **10 collision domains**: every switch port and router port is its own. Count them: the 2 router-to-switch links, 4 PC ports on switch 1, and 3 PC ports plus 1 hub port on switch 2. The hub and its 2 PCs share that last one, because a hub repeats everything to every port.
+
 ## Practice
 
 ### [mcq] A switch receives a frame whose destination MAC is not in its table. What does it do?
@@ -189,6 +219,52 @@ Unknown unicast is flooded; the reply teaches the switch where the host is.
 
 Broadcasts don't cross routers.
 
+### [numeric 2] A router connects two switches. Switch 1 has 4 PCs; switch 2 has 3 PCs and a hub with 2 more PCs on it. How many broadcast domains are there?
+
+:::answer
+**2**. Each router interface bounds a broadcast domain; switches and hubs forward broadcasts to every port, so they don't split it.
+:::
+
+### [numeric 10] Same network: how many collision domains are there?
+
+:::answer
+Each switch port and router port is its own collision domain: 2 (router to each switch) + 4 (switch 1's PCs) + 3 (switch 2's PCs) + 1 (switch 2's port to the hub, shared by the hub and its 2 PCs) = **10**.
+:::
+
+### [numeric 1522 unit=bytes] What is the largest standard Ethernet frame carrying an 802.1Q VLAN tag, counting from the destination MAC through the FCS?
+
+:::answer
+6 (destination MAC) + 6 (source MAC) + 4 (VLAN tag) + 2 (EtherType) + 1,500 (payload) + 4 (FCS) = **1,522** bytes. Without the tag it is 1,518.
+:::
+
+### [mcq] Which MAC address is a multicast address?
+
+- [ ] `3c:22:fb:9a:10:4e`
+- [x] `01:00:5e:00:00:fb`
+- [ ] `00:1a:2b:3c:4d:5e`
+- [ ] `02:42:ac:11:00:02`
+
+The lowest bit of the first byte marks multicast: `01` is odd, so `01:00:5e:…` is multicast (it is the IPv4 multicast range). `02:42:…` has that bit clear but the next bit set: a locally administered unicast address, the kind Docker generates.
+
+### [exercise] A switch has just booted with an empty MAC table. Hosts A (port 1), B (port 2) and C (port 3) are connected. In order: A sends a frame to B; B replies to A; C sends a broadcast; A sends a frame to C. For each frame, say which ports it goes out of and what the switch learns.
+
+:::solution
+1. **A → B:** the switch learns A is on port 1. B is unknown, so the frame is flooded out of ports 2 and 3.
+2. **B → A:** it learns B is on port 2. A is known on port 1, so the frame goes out of port 1 only.
+3. **C → broadcast:** it learns C is on port 3. Broadcasts are always flooded: out of ports 1 and 2.
+4. **A → C:** nothing new to learn. C is known on port 3, so the frame goes out of port 3 only.
+
+After four frames the table holds all three hosts, and only broadcasts (and frames to unknown hosts) are still flooded.
+:::
+
+### [exercise] Step through the [encapsulation visualization](viz:encapsulation) to the laptop's link-layer step. Is the frame addressed to the web server's MAC address, or to someone else's? Then step past the home router: which addresses changed, and which stayed the same all the way?
+
+:::solution
+The frame goes to the **router's** MAC (00:1a:2b:3c:4d:5e), which ARP resolved from the gateway address 192.168.1.1. The laptop never learns the server's MAC: the server is on another network, many hops away.
+
+The router removes the frame and builds a new one, with its own WAN MAC as the source and the next router's MAC as the destination. Every later hop does the same. The destination IP stays the same end to end, and the source IP changes once, at the NAT. So MAC addresses are hop-by-hop and IP addresses are end-to-end: a switch only ever delivers frames within one broadcast domain.
+:::
+
 ## Quick Revision
 
 - Ethernet frame: dst MAC, src MAC, (VLAN tag), EtherType, payload 46–1,500, FCS.
@@ -196,3 +272,5 @@ Broadcasts don't cross routers.
 - Collision domain (hubs, half-duplex) vs **broadcast domain** (bounded by routers/VLANs).
 - VLAN (802.1Q, 12-bit ID): separate broadcast domain; inter-VLAN traffic needs routing.
 - Loops → broadcast storms → STP (or avoid L2 sprawl).
+- MAC = 48 bits: OUI (vendor, 24 bits) + device; first byte's lowest bit = multicast, next bit = locally administered; ff:ff:ff:ff:ff:ff = broadcast.
+- Store-and-forward (checks FCS, adds one frame time per hop) vs cut-through (forwards after the destination MAC; sub-µs; passes bad frames).

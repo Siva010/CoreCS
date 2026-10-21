@@ -11,8 +11,9 @@ relevance: medium
 stage: 2
 prerequisites: [cn-routing]
 related: [cn-mtu-congestion, cn-routing, cn-ipv6, cn-udp]
+labs: [error-detection]
 visualizations: [routing]
-tags: [ip header, ttl, fragmentation, df bit, icmp, ping, traceroute, destination unreachable, time exceeded, path mtu discovery, checksum]
+tags: [ip header, ttl, fragmentation, df bit, icmp, ping, traceroute, destination unreachable, time exceeded, path mtu discovery, checksum, fragment offset, ihl, header checksum]
 ---
 
 ## Mental Model
@@ -63,7 +64,7 @@ If a packet is too big for the next link, the router has two choices: drop it or
 - Fragments: data 0–1479 (offset 0), 1480–2959 (offset 185), 2960–3979 (offset 370, MF=0).
 - Only the **destination** reassembles.
 
-Why it's avoided: loss of any fragment loses the whole packet (amplifying loss), reassembly costs memory and is an attack surface, middleboxes can't see ports in non-first fragments, and fragments often get dropped by firewalls. Modern TCP avoids fragmentation using **Path MTU Discovery**: send with **DF (don't fragment)** set; if a router can't forward without fragmenting, it drops the packet and returns ICMP "Fragmentation Needed" with the next-hop MTU; the sender lowers its packet size. IPv6 routers never fragment at all ([MTU & Network Bottlenecks](lesson:cn-mtu-congestion)).
+Why it's avoided: loss of any fragment loses the whole packet (amplifying loss), reassembly costs memory and is an attack surface, middleboxes can't see ports in non-first fragments, and fragments often get dropped by firewalls. Modern TCP avoids fragmentation using **Path MTU Discovery**. It sends with **DF (don't fragment)** set. A router that can't forward a packet without fragmenting it drops it and returns ICMP "Fragmentation Needed" with the next-hop MTU, and the sender lowers its packet size. IPv6 routers never fragment at all ([MTU & Network Bottlenecks](lesson:cn-mtu-congestion)).
 
 ### ICMP messages
 
@@ -87,7 +88,7 @@ The reply's TTL (56) hints the remote OS started at 64 and the packet crossed 8 
 
 ### How traceroute works
 
-Routers don't tell you the path — but every router *does* send an error when a packet's TTL runs out on it. So make packets run out on purpose, one hop further each time. Send probes with **TTL = 1, 2, 3, …**. The router where TTL hits 0 drops the probe and returns **ICMP Time Exceeded**, revealing its address and the round-trip time to it. When a probe finally reaches the destination, it answers differently (ICMP Port Unreachable for UDP probes to a high port, an Echo Reply, or a TCP SYN-ACK/RST for TCP traceroute) — so traceroute knows it's done.
+Routers don't tell you the path — but every router *does* send an error when a packet's TTL runs out on it. So make packets run out on purpose, one hop further each time. Send probes with **TTL = 1, 2, 3, …**. The router where TTL hits 0 drops the probe and returns **ICMP Time Exceeded**, revealing its address and the round-trip time to it. When a probe finally reaches the destination, it answers differently, so traceroute knows it's done. A UDP probe to a high port gets ICMP Port Unreachable, an ICMP probe gets an Echo Reply, and a TCP probe gets a SYN-ACK or RST.
 
 ```text
 TTL=1 → router A: "time exceeded"   → hop 1 = A
@@ -97,6 +98,24 @@ TTL=3 → destination: "port unreachable" → done
 
 Caveats: `* * *` means a router didn't reply (rate-limited or filtered ICMP) — not necessarily loss; per-hop RTTs include the router's (low-priority) ICMP generation time; different probes can take different ECMP paths.
 
+```mermaid
+%%{init: {"sequence": {"width": 100, "actorMargin": 30}}}%%
+sequenceDiagram
+    participant H as Your host
+    participant A as Router A
+    participant B as Router B
+    participant D as Destination
+    H->>A: probe, TTL 1
+    A-->>H: ICMP Time Exceeded (hop 1 = A)
+    H->>A: probe, TTL 2
+    A->>B: TTL 1
+    B-->>H: ICMP Time Exceeded (hop 2 = B)
+    H->>A: probe, TTL 3
+    A->>B: TTL 2
+    B->>D: TTL 1
+    D-->>H: ICMP Port Unreachable (done)
+```
+
 ::viz{id=routing}
 
 ## Internal Mechanism
@@ -104,7 +123,7 @@ Caveats: `* * *` means a router didn't reply (rate-limited or filtered ICMP) —
 :::depth{level=advanced}
 ### Don't block all ICMP
 
-Blocking ICMP wholesale "for security" breaks Path MTU Discovery (connections hang when large packets are silently dropped — the classic "PMTU black hole": the TCP handshake works, small requests work, large responses stall), hides unreachable errors (turning fast failures into long timeouts), and breaks diagnostics. Allow at least type 3 code 4 (fragmentation needed) for IPv4 and ICMPv6 Packet Too Big, and rate-limit rather than drop echo.
+Blocking ICMP wholesale "for security" causes three problems. It breaks Path MTU Discovery: connections hang when large packets are silently dropped (the classic "PMTU black hole": the handshake works, small requests work, large responses stall). It hides unreachable errors, turning fast failures into long timeouts. And it breaks diagnostics. Allow at least type 3 code 4 (fragmentation needed) for IPv4 and ICMPv6 Packet Too Big, and rate-limit rather than drop echo.
 :::
 
 ## Example
@@ -178,6 +197,10 @@ A PMTU black hole: the VPN adds encapsulation overhead so the path MTU is smalle
 
 No real loss: loss that doesn't propagate to subsequent hops is the hop's router rate-limiting or deprioritizing ICMP responses to itself, while forwarding transit traffic normally. Real loss appears at a hop and persists to the destination.
 
+### [L2 · why] Why does every router recompute the IPv4 header checksum, and why did IPv6 drop the checksum?
+
+The checksum covers only the IPv4 header, and every router changes the header by decrementing the TTL, so it must update the checksum at every hop. That is per-packet work on every router. IPv6 removed the header checksum because the link layer (Ethernet's CRC) already catches corruption on each link, and TCP and UDP checksums cover the data end to end (UDP's checksum is mandatory in IPv6). Removing it simplified fast forwarding.
+
 ## Practice
 
 ### [numeric 3] How many fragments result from sending an IPv4 packet with 3,980 bytes of payload (20-byte header) over a link with MTU 1,500?
@@ -195,6 +218,44 @@ Each fragment carries up to 1,480 data bytes (multiple of 8): 1,480 + 1,480 + 1,
 
 Routers return Time Exceeded when TTL hits zero.
 
+### [numeric 4] An IPv4 packet with a 20-byte header and 2,960 bytes of data must cross a link with an MTU of 1,000 bytes. How many fragments are created?
+
+:::answer
+Each fragment can carry 1,000 − 20 = 980 data bytes, rounded down to a multiple of 8: 976. 2,960 = 976 + 976 + 976 + 32, so **4** fragments.
+:::
+
+### [numeric 366] Same packet: what is the value of the fragment offset field in the last fragment?
+
+:::answer
+The last fragment starts at data byte 3 × 976 = 2,928, and the offset is counted in 8-byte units: 2,928 ÷ 8 = **366**. Its MF (more fragments) flag is 0; the earlier three have MF = 1 and offsets 0, 122 and 244.
+:::
+
+### [numeric 32 unit=bytes] An IPv4 header's IHL field is 8. How long is the header?
+
+:::answer
+IHL counts 32-bit words: 8 × 4 = **32** bytes, so this header carries 12 bytes of options. The minimum is IHL 5 (20 bytes) and the maximum IHL 15 (60 bytes).
+:::
+
+### [mcq] Which ICMP message does `ping` send, and which does it expect back?
+
+- [ ] Time Exceeded, then Destination Unreachable
+- [x] Echo Request (type 8), then Echo Reply (type 0)
+- [ ] Redirect (type 5), then Echo Reply
+- [ ] Echo Request, then Time Exceeded
+
+ping sends Echo Requests and measures the time until each Echo Reply. Time Exceeded is what traceroute relies on.
+
+### [exercise] Use the trace mode of the [routing simulator](lab:routing) to run a traceroute to the remote server. Explain where each line of output comes from, and why the final line looks different from the others.
+
+:::solution
+Traceroute sends probes with TTL 1, 2, 3 and so on:
+- The probe with TTL 1 dies at the first router, which returns an **ICMP Time Exceeded** from its own address: that is line 1.
+- TTL 2 dies at the second router: line 2, and so on, one router per line.
+- The last probe has enough TTL to reach the destination host itself, and the simulator marks it as reached. A real traceroute knows it has arrived because the answer changes: the destination doesn't send Time Exceeded. The probe hits a UDP port nobody listens on (or is an Echo Request, depending on the tool), so the host answers with **Port Unreachable** (or an Echo Reply).
+
+Lines showing `* * *` would mean a router didn't answer, often because it rate-limits ICMP, not that packets are lost.
+:::
+
 ## Quick Revision
 
 - IPv4 header: addresses, TTL, protocol (6 TCP, 17 UDP, 1 ICMP), length, fragmentation fields, checksum, DSCP/ECN.
@@ -202,3 +263,5 @@ Routers return Time Exceeded when TTL hits zero.
 - Fragmentation (data in 8-byte units, reassembled at destination) is avoided via DF + **PMTUD**; IPv6 routers never fragment.
 - ICMP: echo (ping), unreachable (incl. fragmentation needed), time exceeded (traceroute).
 - Don't block all ICMP → PMTU black holes. Mid-path mtr loss that doesn't persist = rate limiting.
+- Fragmentation: data per fragment = (MTU − header) rounded down to a multiple of 8; offset in 8-byte units; MF = 1 on all but the last.
+- IHL × 4 = header length (20–60 bytes).

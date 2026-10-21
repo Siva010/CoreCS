@@ -44,6 +44,9 @@ const WIDGETS: Record<string, ComponentType> = {
   "realtime-transports": lazy(() => import("./cn/RealtimeTransports")),
   "network-calculator": lazy(() => import("./cn/NetworkCalculator")),
   "hol-blocking": lazy(() => import("./cn/HolBlocking")),
+  "error-detection": lazy(() => import("./cn/ErrorDetection")),
+  "arq-protocols": lazy(() => import("./cn/ArqProtocols")),
+  "routing-algorithms": lazy(() => import("./cn/RoutingAlgorithms")),
   // Databases
   "sql-playground": lazy(() => import("./db/SqlPlayground")),
   "query-plan": lazy(() => import("./db/QueryPlan")),

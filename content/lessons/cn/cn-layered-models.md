@@ -11,7 +11,7 @@ relevance: essential
 stage: 1
 prerequisites: [cn-how-data-travels]
 related: [cn-encapsulation, cn-tcp-fundamentals, cn-http-fundamentals, cn-proxies-load-balancers]
-tags: [osi model, tcp/ip model, layers, application layer, transport layer, network layer, data link layer, physical layer, protocols by layer, l4, l7]
+tags: [osi model, tcp/ip model, layers, network devices, hub, bridge, gateway, connection-oriented, connectionless, application layer, transport layer, network layer, data link layer, physical layer, protocols by layer, l4, l7]
 ---
 
 ## Mental Model
@@ -58,6 +58,36 @@ Each layer solves one problem — signal, next hop, any host, right program, app
 | 1 | Physical | Link | Bits as signals | bits | — | Copper, fiber, radio |
 
 \*ARP straddles layers 2 and 3 — a reminder that the model is a guide, not a law.
+
+### Which device works at which layer
+
+A device "works at layer N" when layer N's header is the highest one it reads to decide what to do. Everything above that is just payload to it.
+
+```mermaid
+flowchart TD
+    A["7 Application: HTTP, DNS, SMTP<br/>proxies, L7 load balancers, API gateways"] --> T["4 Transport: TCP, UDP, QUIC<br/>L4 load balancers, stateful firewalls"]
+    T --> N["3 Network: IP, ICMP<br/>routers, layer-3 switches"]
+    N --> D["2 Data link: Ethernet, Wi-Fi<br/>switches, bridges, access points"]
+    D --> P["1 Physical: copper, fibre, radio<br/>hubs, repeaters, cables"]
+```
+
+- A **hub** or **repeater** regenerates bits and copies them out of every port. It understands no addresses at all.
+- A **bridge** or **switch** reads MAC addresses and forwards each frame only where it needs to go ([Ethernet & Switching](lesson:cn-ethernet-switching)).
+- A **router** reads IP addresses and moves packets between networks ([Routing](lesson:cn-routing)).
+- A **gateway**, in the textbook sense, joins networks that speak different protocols and translates between them at any layer up to the application. A proxy or an email gateway is one; so, loosely, is your "default gateway" router.
+
+### Connection-oriented and connectionless service
+
+A layer can offer its users either kind of service:
+
+| | Connection-oriented | Connectionless |
+|---|---|---|
+| Before data | Set up a connection (handshake) | Nothing: just send |
+| State | Both ends keep per-connection state | Each unit is independent |
+| Typical guarantees | Ordering, reliability, flow control | Best effort |
+| Examples | TCP; a telephone call; virtual circuits | UDP, IP; posting a letter |
+
+The internet's network layer (IP) is connectionless, and TCP builds a connection-oriented service on top of it, in the end hosts only.
 
 ### "L4" and "L7" in industry speech
 
@@ -157,6 +187,14 @@ Between the transport and application layers: it runs over a reliable transport 
 
 Check bottom-up: Is the client online (link, Wi-Fi)? Does DNS resolve (`dig`)? Is the IP reachable (`ping`/`traceroute`, possibly blocked by ICMP filtering)? Is the port open (`nc -vz host 443`)? Does TLS succeed (`openssl s_client -connect host:443 -servername host` — certificate errors, protocol mismatch)? Does HTTP return a valid response (`curl -v`) — status codes, redirects, timeouts? Isolate the failing layer, then look at server/CDN logs for that layer.
 
+### [L1 · conceptual] Which network devices work at which layer?
+
+Hubs and repeaters work at layer 1: they regenerate and copy bits without reading any address. Switches and bridges work at layer 2: they forward frames by MAC address. Routers work at layer 3: they forward packets by IP address between networks. L4 load balancers and stateful firewalls track TCP/UDP connections, and proxies and L7 load balancers read the application protocol, such as HTTP. A device "works at" the highest layer whose header it reads to make its decision.
+
+### [L2 · compare] What is the difference between connection-oriented and connectionless service? Give an example at each layer.
+
+A connection-oriented service sets up state at both ends before data flows (a handshake) and can then offer ordering, reliability and flow control. TCP is the example at the transport layer. A connectionless service sends each unit independently with no setup: IP at the network layer, UDP at the transport layer, and Ethernet at the link layer. The internet deliberately builds TCP's connections only in the end hosts, on top of connectionless IP, so routers keep no per-connection state.
+
 ## Practice
 
 ### [mcq] At which TCP/IP layer are port numbers used?
@@ -177,6 +215,47 @@ Ports identify processes on a host — a transport-layer concept.
 
 ICMP is carried in IP and reports network-layer errors.
 
+### [mcq] A device receives a frame, looks at the destination MAC address, and sends the frame out of only one port. What is it?
+
+- [ ] A hub
+- [x] A switch
+- [ ] A router
+- [ ] A repeater
+
+A hub and a repeater work at layer 1 and copy bits out of every port. A router reads the IP header and rebuilds the frame for the next link. Forwarding a frame by MAC address to a single port is a layer-2 switch.
+
+### [numeric 158 unit=bytes] An application sends 100 bytes over TCP, IPv4 and Ethernet. With 20-byte TCP and IP headers (no options), a 14-byte Ethernet header and a 4-byte FCS, how many bytes does the frame occupy on the wire, not counting the preamble?
+
+:::answer
+100 + 20 (TCP) + 20 (IP) + 14 (Ethernet header) + 4 (FCS) = **158** bytes. Only 100 of them, 63%, are the application's data. Small messages pay heavily for headers, which is one reason protocols batch small writes.
+:::
+
+### [numeric 9.09 ±0.05 unit=%] A 1,000-byte message passes down a stack of 5 layers, and each layer adds a 20-byte header. What percentage of the transmitted bytes are headers?
+
+:::answer
+Headers total 5 × 20 = 100 bytes, and the transmitted unit is 1,100 bytes. 100 ÷ 1,100 = **9.09**%. Halve the message to 500 bytes and the share rises to 16.7%.
+:::
+
+### [exercise] Users report "the website doesn't load". For each finding, name the layer where the problem lies and the next thing to check: (a) the laptop has the IP address 169.254.12.7; (b) `ping 8.8.8.8` works but `ping example.com` says "unknown host"; (c) `curl https://example.com` fails with "certificate has expired"; (d) `ping` to the server works but `curl` times out on port 443. Then open the [encapsulation visualization](viz:encapsulation) and name which header each failure is about.
+
+:::solution
+- **(a) Network layer address assignment.** 169.254.x.x is a self-assigned link-local address, so DHCP didn't answer. Check the Wi-Fi or cable link, then the DHCP server ([ARP & DHCP](lesson:cn-arp-dhcp)). Header: none yet; the host never got a usable IP header.
+- **(b) Application layer, DNS.** IP routing works (the ping to an address succeeds), but names don't resolve. Check the configured resolver and try `dig example.com @1.1.1.1`. Header: the DNS query inside a UDP datagram.
+- **(c) TLS, between transport and application.** The TCP connection works, but certificate validation fails. Renew the certificate on the server, or check the client's clock. Header: the TLS records above TCP.
+- **(d) Transport layer.** The host is reachable at the IP layer, but nothing completes the TCP handshake on port 443: the service is down, or a firewall drops the SYN. Check with `nc -vz example.com 443` and the firewall rules. Header: the TCP header's destination port.
+
+Working bottom-up separates "can't reach the machine" from "can reach it, but the service or protocol fails".
+:::
+
+### [mcq] Which statement about connection-oriented and connectionless service is correct?
+
+- [ ] IP is connection-oriented, because routers track each TCP connection
+- [x] TCP provides a connection-oriented service on top of connectionless IP
+- [ ] UDP becomes connection-oriented once you call `connect()` on the socket
+- [ ] Connectionless protocols can't carry more than one packet between two hosts
+
+Routers forward each IP packet independently and keep no per-connection state. TCP's connection exists only in the two end hosts. Calling `connect()` on a UDP socket just fixes the default peer; no handshake or delivery guarantee is added.
+
 ## Quick Revision
 
 - Layers = contracts: each uses the one below, serves the one above.
@@ -185,3 +264,5 @@ ICMP is carried in IP and reports network-layer errors.
 - L4 LB = IP/port; L7 LB = understands HTTP.
 - TLS, ARP, QUIC and tunnels straddle layers.
 - Troubleshoot bottom-up.
+- Devices: hub/repeater (L1, no addresses), switch/bridge (L2, MAC), router (L3, IP), L4 LB/firewall (ports, connections), proxy/L7 LB/gateway (application).
+- Connection-oriented (TCP: handshake, state, ordering) vs connectionless (IP, UDP: independent units, best effort).

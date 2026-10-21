@@ -16,7 +16,7 @@ tags: [network namespace, veth, linux bridge, docker networking, port publishing
 
 ## Mental Model
 
-A container's **network namespace** is a **private network stack in a box**: its own interfaces, routing table, iptables rules and `localhost`. To connect the box to the world, you run a **virtual cable** (a **veth pair**) from inside the box to the host, plug the host end into a **virtual switch** (a Linux bridge) or route it directly, and use **NAT** when leaving the host.
+A container's **network namespace** is a **private network stack in a box**: its own interfaces, routing table, iptables rules and `localhost`. To connect the box to the world, you run a **virtual cable** (a **veth pair**) from inside the box to the host. The host end plugs into a **virtual switch** (a Linux bridge) or is routed directly, and traffic leaving the host goes through **NAT**.
 
 Kubernetes adds one rule that shapes everything: **every pod gets its own IP, and every pod can reach every other pod without NAT**, on any node. How the underlying network achieves that (routing, overlays, eBPF) is the CNI plugin's job. On top, **Services** give stable virtual IPs and DNS names to changing sets of pods.
 
@@ -96,7 +96,7 @@ sequenceDiagram
 
 ### Cluster DNS
 
-CoreDNS answers `service.namespace.svc.cluster.local`. Pods' `/etc/resolv.conf` includes search domains and `options ndots:5`: any name with fewer than 5 dots is first tried with each search suffix — so resolving `api.stripe.com` may generate several NXDOMAIN lookups first (`api.stripe.com.default.svc.cluster.local`, …), multiplying DNS load and latency. Fixes: fully qualified names with a trailing dot, lower `ndots`, NodeLocal DNSCache ([DNS](lesson:cn-dns-fundamentals)).
+CoreDNS answers `service.namespace.svc.cluster.local`. Pods' `/etc/resolv.conf` includes search domains and `options ndots:5`: any name with fewer than 5 dots is first tried with each search suffix. So resolving `api.stripe.com` may generate several NXDOMAIN lookups first (`api.stripe.com.default.svc.cluster.local`, …), multiplying DNS load and latency. Fixes: fully qualified names with a trailing dot, lower `ndots`, NodeLocal DNSCache ([DNS](lesson:cn-dns-fundamentals)).
 
 ## Internal Mechanism
 
@@ -183,6 +183,14 @@ Overlays encapsulate pod packets (e.g., VXLAN) between node IPs, so pod IPs need
 
 Known causes: UDP DNS packets dropped due to conntrack insertion races or table pressure when parallel A/AAAA queries share a socket through DNAT (resolver retries after a 5 s timeout), ndots search expansion multiplying queries, CoreDNS overload or upstream resolver slowness. Check conntrack `insert_failed` counters, CoreDNS metrics, packet captures; mitigate with NodeLocal DNSCache, `single-request-reopen`/TCP for DNS, lower ndots/FQDNs, and scaling CoreDNS.
 
+### [L2 · how] How does an external client reach a pod through a Service of type LoadBalancer?
+
+The cloud provider creates a load balancer whose targets are the cluster's nodes on the Service's **NodePort** (or, with VPC-native setups, the pod IPs directly). A packet arrives at some node's NodePort; kube-proxy's rules (or eBPF) DNAT it to one of the Service's ready pods, which may be on a different node, in which case it is forwarded again. `externalTrafficPolicy: Local` sends traffic only to nodes running a pod for the Service, avoiding the extra hop and preserving the client's source IP, at the cost of uneven balancing.
+
+### [L2 · debugging] Why does resolving `api.example.com` from a pod sometimes take several lookups, and how do you fix it?
+
+With `ndots:5`, any name with fewer than 5 dots is tried with each search domain first: `api.example.com.default.svc.cluster.local`, `api.example.com.svc.cluster.local`, `api.example.com.cluster.local`, and only then `api.example.com` itself, each for both A and AAAA records. That is up to 8 queries, and conntrack races on UDP can make some of them time out after 5 s. Fixes: use fully qualified names with a trailing dot (`api.example.com.`), lower `ndots` in the pod's `dnsConfig`, or run NodeLocal DNSCache.
+
 ## Practice
 
 ### [mcq] What connects a container's network namespace to the host?
@@ -203,6 +211,48 @@ One end inside the namespace, the other on the host (often attached to a bridge)
 
 Names with fewer than 5 dots are treated as relative first.
 
+### [numeric 4] A pod with `ndots:5` and the search domains `default.svc.cluster.local`, `svc.cluster.local` and `cluster.local` resolves `api.example.com`, which only exists as an external name. How many different names does it try for each record type before finding the answer?
+
+:::answer
+`api.example.com` has 2 dots, fewer than 5, so the 3 search domains are tried first, and the name itself last: **4** names. With A and AAAA queries for each, that is up to 8 DNS queries for one lookup.
+:::
+
+### [numeric 256] A cluster's pod CIDR is a /16, and each node is given a /24 of it. At most how many nodes can the cluster have?
+
+:::answer
+From /16 to /24 is 8 bits: 2⁸ = **256** nodes, each with 256 addresses for pods (110 pods per node by default). Planning a bigger cluster means a bigger pod CIDR or smaller per-node blocks.
+:::
+
+### [mcq] What does `kubectl port-forward` or a ClusterIP Service's virtual IP have in common with a Docker port publish `-p 8080:80`?
+
+- [ ] They all create a new network interface
+- [x] They all rely on address translation (DNAT or a proxy) to map an address and port that nothing listens on to a real container's address and port
+- [ ] They all use VXLAN
+- [ ] They all require NodePorts
+
+The ClusterIP and the host's published port aren't assigned to any process; rules (iptables/IPVS/eBPF) or a proxy rewrite the destination to a real pod or container.
+
+### [exercise] A pod can reach another pod by its IP, but not through the Service name `payments.prod`. List, in order, the layers you would check and the command or object for each.
+
+:::solution
+1. **DNS**: does `payments.prod` resolve to the Service's ClusterIP? `nslookup payments.prod` (or `payments.prod.svc.cluster.local`) from the pod; check CoreDNS pods and logs.
+2. **Service definition**: `kubectl get svc payments -n prod`: the right port and targetPort?
+3. **Endpoints**: `kubectl get endpointslices -n prod -l kubernetes.io/service-name=payments`. Empty means no pod matches the Service's selector, or none passes its readiness probe.
+4. **Service rules on the node**: kube-proxy (iptables/IPVS) or the eBPF datapath running and in sync; `iptables -t nat -L KUBE-SERVICES | grep payments`.
+5. **NetworkPolicy**: does a policy allow traffic from the client's namespace and labels to the payments pods on that port?
+6. **The app**: is it listening on the targetPort, on `0.0.0.0` rather than `127.0.0.1`?
+
+Pod-to-pod by IP already works, so the overlay and routing are fine; the fault is in the Service layer above them.
+:::
+
+### [exercise] In the [routing lab](lab:routing), send a packet from host A to the web server (93.184.215.14) and read what R1 does. Map each part of that path onto a Docker container reaching the internet: what plays host A, what plays R1, and which rule does R1's job?
+
+:::solution
+R1 rewrites the source from 192.168.1.20:51514 to its public 198.51.100.7:40001, records the mapping in its connection-tracking table, and updates the checksums. The web server only ever sees the public address.
+
+For a container, host A is the container, with a private address such as 172.17.0.2 on the docker0 bridge. R1 is the host, which routes the packet from the bridge out of its real interface. The iptables **MASQUERADE** rule does R1's NAT, rewriting the source to the host's own address, and conntrack maps the replies back. Port publishing (`-p 8080:80`) is the other direction: a DNAT rule rewrites the *destination* of incoming packets to the container.
+:::
+
 ## Quick Revision
 
 - Network namespace = private stack; veth pair = virtual cable; bridge = virtual switch; NAT out, DNAT for published ports.
@@ -210,3 +260,4 @@ Names with fewer than 5 dots are treated as relative first.
 - Services: ClusterIP = NAT rules/eBPF (per-connection balancing), NodePort, LoadBalancer, Ingress/Gateway for L7.
 - CoreDNS + ndots search expansion pitfalls; conntrack limits; NetworkPolicy for isolation.
 - kube-proxy iptables → IPVS → eBPF (Cilium) for scale.
+- ndots:5 → names with < 5 dots try every search domain first (use FQDNs with a trailing dot). Pod CIDR /16 with /24 per node → 256 nodes. LoadBalancer → NodePort → DNAT to a pod.

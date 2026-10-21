@@ -23,7 +23,7 @@ Ending a TCP conversation politely takes both sides saying goodbye **separately*
 - …B may keep talking for a while (**half-close**)…
 - B: "I'm done too." (FIN) — A: "Noted." (ACK)
 
-Then A, who hung up first, **waits around for a while** (TIME_WAIT) in case its last "Noted" got lost and B repeats its goodbye, and to make sure stray old packets die before anyone reuses the same line.
+Then A, who hung up first, **waits around for a while** (TIME_WAIT). Its last "Noted" may have got lost, in which case B repeats its goodbye, and stray old packets must die before anyone reuses the same line.
 
 A **RST** is hanging up abruptly: "This connection doesn't exist / is aborted" — no waiting, no graceful drain.
 
@@ -41,7 +41,7 @@ A **RST** is hanging up abruptly: "This connection doesn't exist / is aborted" �
 
 **Why so many steps.** Each direction needs its own "I'm done" (FIN) and its own "got it" (ACK) — hence four messages. Graceful close guarantees all data in both directions is delivered before the connection disappears.
 
-**Why the waiting.** TIME_WAIT prevents two real problems: a lost final ACK (the peer would retransmit its FIN and get an RST, reporting an error instead of a clean close) and **old delayed segments** from this connection being accepted by a new connection with the same 4-tuple.
+**Why the waiting.** TIME_WAIT prevents two real problems. A lost final ACK would make the peer retransmit its FIN and get an RST, reporting an error instead of a clean close. And **old delayed segments** from this connection could be accepted by a new connection with the same 4-tuple.
 
 :::callout[That's all it is]{type=insight}
 Each side says FIN when it has nothing more to send, and the other acknowledges. The side that closed first lingers for a minute (TIME_WAIT) so late packets die out. RST skips all of this and just kills the connection.
@@ -76,7 +76,7 @@ B often sends its ACK and FIN together (three segments). `shutdown(fd, SHUT_WR)`
 
 - It sits on the **active closer**. If clients close, clients hold TIME_WAIT; if servers close (common for HTTP/1.0-style "close after response"), servers accumulate it.
 - Cost per socket: small kernel memory — cheap. The real problem is the **4-tuple being unavailable** for 60 s. A client making thousands of **short-lived connections per second to the same server IP:port** burns ephemeral ports: ~28,000 ports / 60 s ≈ **~470 new connections/s sustained** before exhaustion (`connect: Cannot assign requested address`).
-- Fixes, in order of preference: **reuse connections** (HTTP keep-alive, pooling), let the other side close, `net.ipv4.tcp_tw_reuse=1` (allows reusing TIME_WAIT sockets for new *outgoing* connections when timestamps make it safe), widen `ip_local_port_range`, spread across more destination IPs/ports. (Never use the removed `tcp_tw_recycle`, which broke clients behind NAT.)
+- Fixes, in order of preference: **reuse connections** (HTTP keep-alive, pooling), or let the other side close. Then `net.ipv4.tcp_tw_reuse=1`, which allows reusing TIME_WAIT sockets for new *outgoing* connections when timestamps make it safe. Then widen `ip_local_port_range`, or spread across more destination IPs and ports. (Never use the removed `tcp_tw_recycle`, which broke clients behind NAT.)
 
 ### CLOSE_WAIT — almost always an application bug
 
@@ -201,6 +201,46 @@ The LB silently drops idle flows after 350 s; the next request hits a dead conne
 
 CLOSE_WAIT persists until the local app calls close().
 
+### [numeric 90 unit=s] A socket uses keep-alive settings TCP_KEEPIDLE = 60 s, TCP_KEEPINTVL = 10 s, TCP_KEEPCNT = 3. The peer's machine loses power while the connection is idle. How long until the connection is declared dead?
+
+:::answer
+60 s of idleness before the first probe, then 3 unanswered probes 10 s apart: 60 + 3 × 10 = **90** s.
+:::
+
+### [numeric 7875 unit=s] With Linux's defaults (7,200 s idle, 75 s between probes, 9 probes), how many seconds does the same detection take?
+
+:::answer
+7,200 + 9 × 75 = **7,875** s, about 2 hours 11 minutes. That's why services set their own keep-alive values, or use application-level heartbeats.
+:::
+
+### [mcq] Which side of a TCP connection ends up in TIME_WAIT?
+
+- [ ] Always the server
+- [ ] Always the client
+- [x] Whichever side closes first (the active closer)
+- [ ] Both sides, for 2×MSL each
+
+TIME_WAIT protects the last ACK and keeps old segments from leaking into a new connection with the same 4-tuple, and it is the active closer that sends that last ACK.
+
+### [exercise] A Java service reads from a partner over a socket, and after a few days `ss` shows 15,000 sockets in CLOSE_WAIT and the process hits its file-descriptor limit. The code is `InputStream in = socket.getInputStream(); String s = readAll(in); if (s.isEmpty()) return;` inside a request handler. Explain CLOSE_WAIT, find the bug and fix it. Then step through a close in the [TCP connection simulator](lab:tcp-handshake) to see the states.
+
+:::solution
+**CLOSE_WAIT** means the peer has sent its FIN, the kernel has acknowledged it, and *this* application has not yet called `close()`. The kernel can't finish the connection until the application does, so the socket and its file descriptor stay allocated forever.
+
+**The bug.** The handler never closes the socket. On the early-return path (and on any exception) nothing calls `socket.close()`. Every partner disconnect leaves one more socket in CLOSE_WAIT, until the process runs out of file descriptors.
+
+**The fix:** close on every path with try-with-resources:
+```java
+try (Socket s = socket; InputStream in = s.getInputStream()) {
+    String body = readAll(in);
+    if (body.isEmpty()) return;
+    handle(body);
+}
+```
+
+In the simulator, the side that receives the first FIN moves to CLOSE_WAIT and stays there until its application closes. Only then does it send its own FIN and go to LAST_ACK.
+:::
+
 ## Quick Revision
 
 - Close: FIN → ACK → (half-close) → FIN → ACK. Active closer → **TIME_WAIT** (2×MSL, 60 s Linux).
@@ -209,3 +249,4 @@ CLOSE_WAIT persists until the local app calls close().
 - RST: closed port, unknown connection, unread data on close, SO_LINGER 0, middlebox timeouts.
 - TCP keep-alive default 2 h → tune or use app heartbeats; refresh NAT/LB timers. ≠ HTTP keep-alive.
 - `TCP_USER_TIMEOUT` bounds hangs with unacknowledged data.
+- Keep-alive detection = idle + count × interval (60 + 3 × 10 = 90 s; Linux default ≈ 2 h 11 min). CLOSE_WAIT in Java = a socket or stream not closed on some path: use try-with-resources.
