@@ -34,6 +34,15 @@ The gold standard is **serializability**: whatever the interleaving, the outcome
 | **Read skew** | T1 reads related items at different times, seeing an inconsistent combination | sees A after a transfer but B before it: money looks missing |
 | **Write skew** | T1 and T2 read an overlapping set, each checks a condition, then write *different* rows, jointly violating the condition | two doctors both go off call; nobody is on call |
 
+Textbooks such as Elmasri & Navathe use older names for four of these, and exams still use them:
+
+| Textbook name | Modern name |
+|---|---|
+| Lost update problem | lost update |
+| Temporary update (dirty read) problem | dirty read |
+| Incorrect summary problem | read skew: an aggregate mixes values from before and after another transaction's update |
+| Unrepeatable read problem | non-repeatable read |
+
 ## Why It Exists
 
 **The problem.** Running transactions strictly one at a time would be trivially correct and hopelessly slow. Databases interleave them; every interleaving that isn't equivalent to a serial one is a potential bug.
@@ -41,12 +50,22 @@ The gold standard is **serializability**: whatever the interleaving, the outcome
 **Why name them.** "Isolation" is too vague to choose between options. Naming the anomalies gives us a vocabulary to state what each isolation level guarantees ([Isolation Levels](lesson:db-isolation-levels)) — and to recognise which one your bug actually is.
 
 :::callout[That's all it is]{type=insight}
-An anomaly is a result you could never get if transactions ran one after another. Each has a short story: reading someone's uncommitted change, a value changing under you, rows appearing, two writers overwriting each other, or two transactions each breaking a rule the other was checking.
+An anomaly is a result you could never get if transactions ran one after another. Each has a short story: reading someone's uncommitted change, a value changing under you, or rows appearing. Or two writers overwrite each other, or two transactions each break a rule the other was checking.
 :::
 
 ## How It Works
 
 Timelines below: time flows downward; `R(x)` = read, `W(x)` = write.
+
+### Dirty write
+
+```text
+T1: W(A = 10)
+T2:              W(A = 20)       -- overwrites T1's uncommitted value
+T1: ROLLBACK                     -- restore A to what? Its old value would wipe out T2's write too
+```
+
+Every mainstream database prevents dirty writes, even at Read Uncommitted: a writer holds the row's lock until it commits, so T2 waits.
 
 ### Dirty read
 
@@ -89,6 +108,22 @@ T2: W(stock = 9);  COMMIT        -- two items sold, stock decreased by one
 
 This is the application-level read-modify-write race: values computed in application code from an earlier read and written back. Fixes: atomic updates (`SET stock = stock - 1`), `SELECT … FOR UPDATE`, optimistic version checks, or an isolation level that detects it (PostgreSQL Repeatable Read aborts T2 with a serialization error) ([Optimistic vs Pessimistic](lesson:db-optimistic-pessimistic)).
 
+In Java services this race usually hides inside an ORM. JPA reads the entity, the code changes a field, and at commit Hibernate writes the computed value back:
+
+```java
+@Transactional
+public void sellOne(long productId) {
+    Product p = em.find(Product.class, productId);   // SELECT ... → stock = 10
+    p.setStock(p.getStock() - 1);                     // computed in Java
+}                                                     // commit: UPDATE product SET stock = 9 ...
+```
+
+Two concurrent calls at Read Committed both write 9. Each fix above has a JPA form:
+
+- a `@Version` field on the entity: the second commit matches no row and fails with `OptimisticLockException`, so it can retry;
+- `em.find(Product.class, productId, LockModeType.PESSIMISTIC_WRITE)`: the read becomes a locking read, and the second call waits;
+- a bulk JPQL update, `UPDATE Product p SET p.stock = p.stock - 1 WHERE p.id = :id AND p.stock > 0`, which the database runs atomically.
+
 ### Read skew
 
 ```text
@@ -112,7 +147,11 @@ T2:         UPDATE doctors SET on_call = false WHERE name = 'Bob';   COMMIT
 -- nobody is on call
 ```
 
-Each transaction saw a consistent snapshot and wrote a **different** row, so there was no write–write conflict to detect. Snapshot isolation (PostgreSQL Repeatable Read, Oracle "Serializable") allows this. Only true Serializable (SSI or strict 2PL with predicate locks), or explicit locking of the rows read (`SELECT … FOR UPDATE` on the on-call doctors), or a constraint that captures the invariant, prevents it.
+Each transaction saw a consistent snapshot and wrote a **different** row, so there was no write–write conflict to detect. Snapshot isolation (PostgreSQL Repeatable Read, Oracle "Serializable") allows this. Three things prevent it:
+
+- true Serializable (SSI, or strict 2PL with predicate locks);
+- explicit locks on the rows read (`SELECT … FOR UPDATE` on the on-call doctors);
+- a constraint that captures the invariant.
 
 Other write-skew bugs: double-booking a meeting room (each checks "no overlapping booking", each inserts one), usernames claimed twice without a unique constraint, overspending a budget split across rows.
 
@@ -141,7 +180,7 @@ Write skew in graph terms: T1 reads what T2 writes (T1 →rw T2) and T2 reads wh
 
 ### Why the SQL standard's definitions are incomplete
 
-The ANSI SQL-92 levels are defined by three phenomena (dirty read, non-repeatable read, phantom). Berenson et al. ("A Critique of ANSI SQL Isolation Levels", 1995) showed this misses dirty writes, lost updates, read skew and write skew, and that snapshot isolation satisfies the standard's "Repeatable Read" description while still allowing write skew. That's why vendors' levels with the same names behave differently.
+The ANSI SQL-92 levels are defined by three phenomena (dirty read, non-repeatable read, phantom). Berenson et al. ("A Critique of ANSI SQL Isolation Levels", 1995) showed that this misses dirty writes, lost updates, read skew and write skew. They also showed that snapshot isolation satisfies the standard's "Repeatable Read" description while still allowing write skew. That's why vendors' levels with the same names behave differently.
 :::
 
 ## Example
@@ -180,6 +219,7 @@ Preventing more anomalies costs more coordination: more locks held longer (block
 
 - Most concurrency bugs surface only under load or at scale, rarely in tests. Code review should flag every "read, decide in code, write" sequence and ask what happens if two run at once.
 - Serialization failures (SQLSTATE `40001`) and deadlocks (`40P01`) are expected under strong isolation — applications must retry the whole transaction.
+- Check invariants after the fact, too. Schedule queries that should always return nothing, and alert when they don't: double bookings (`SELECT show_id, seat FROM seat_bookings GROUP BY 1, 2 HAVING count(*) > 1`), negative stock, or account balances that don't match the sum of their ledger entries. An anomaly that slipped through then shows up within minutes, not at month-end.
 
 ## Deeper Connections
 
@@ -217,6 +257,10 @@ Read skew: one transaction reads two related items at different moments and sees
 ### [L2 · scenario] Two users book the same meeting room for overlapping times, and both bookings succeed. Which anomaly is this and how do you prevent it in PostgreSQL?
 
 Write skew (a phantom-style one): each transaction checked "no overlapping booking exists" and inserted its own row, and neither saw the other's uncommitted insert. Prevent it with an exclusion constraint (`EXCLUDE USING gist (room_id WITH =, tstzrange(start_at, end_at) WITH &&)`), which the database enforces atomically; or run the check-and-insert at Serializable and retry on failure; or lock a parent row (the room) with `SELECT … FOR UPDATE` before checking.
+
+### [L2 · how] In a Spring and JPA service, where do lost updates usually come from, and how do you fix them?
+
+From managed entities. A method loads an entity, changes a field in Java (`p.setStock(p.getStock() - 1)`), and Hibernate's dirty checking writes the computed value at commit. Two concurrent requests at Read Committed both read the old value and both write their result, so one change vanishes. Fixes, from cheapest to strongest guarantee: an atomic bulk update (`UPDATE Product p SET p.stock = p.stock - 1 WHERE ...`); a `@Version` field, so the second commit fails with `OptimisticLockException` and can be retried; or a pessimistic read (`LockModeType.PESSIMISTIC_WRITE`, which becomes a `SELECT ... FOR UPDATE`-style lock) when conflicts are frequent.
 
 ## Practice
 
@@ -275,6 +319,23 @@ Now nobody is on call: **write skew**. Each transaction's check was valid in its
 Fixes: run both at **SERIALIZABLE** (PostgreSQL's SSI detects the read-write dependency cycle and aborts one, which retries and sees count = 1); or lock the rows the decision depends on, `SELECT … FROM doctors WHERE on_call FOR UPDATE`, so the second transaction waits for the first and then re-reads. A third option is to materialize the conflict: make both update a shared row (a per-shift counter) so they collide.
 :::
 
+### [mcq] In Elmasri & Navathe's terms, a report sums all account balances while a transfer runs, and counts the money in transit twice. Which problem is this, and what is its modern name?
+
+- [ ] The lost update problem, also called write skew
+- [ ] The temporary update problem, also called a dirty read
+- [x] The incorrect summary problem, also called read skew
+- [ ] The phantom problem, also called a non-repeatable read
+
+The report read some balances before the transfer and others after it: each value was committed, but the combination never existed. One snapshot for the whole report (Repeatable Read) prevents it.
+
+### [exercise] A JPA service runs `sellOne` (above) for the same product from two requests at once, at Read Committed, starting from stock 10. What does the database hold afterwards? Add a `@Version` field and describe what happens to each request, and what the service must do.
+
+:::solution
+Without a version, both requests read 10, both set 9, and both commits succeed: stock ends at **9** although two units were sold. That is a lost update.
+
+With `@Version long version` on `Product`, suppose both requests read version 5. Hibernate's update becomes `UPDATE product SET stock = 9, version = 6 WHERE id = ? AND version = 5`. The first commit matches the row and succeeds. The second matches nothing, because the version is now 6, so Hibernate throws `OptimisticLockException` and the transaction rolls back. The service must retry the whole method, in a new transaction: it reloads stock 9 and writes 8. The retry has to wrap the transactional method from outside, because retrying inside a transaction that has already failed can't work.
+:::
+
 ## Quick Revision
 
 - Serializable = equivalent to some serial order. Anomalies = interleavings that aren't.
@@ -283,3 +344,5 @@ Fixes: run both at **SERIALIZABLE** (PostgreSQL's SSI detects the read-write dep
 - Snapshot isolation prevents all but write skew (and some phantom-based write skew).
 - Fix locally: atomic updates, FOR UPDATE, constraints — or use Serializable with retries.
 - Lost update = two read-modify-writes, one overwrites the other. Read skew = inconsistent reads across time (snapshots fix). Write skew = disjoint writes breaking a shared invariant (Serializable, locks or constraints fix).
+- Textbook names: lost update problem, temporary update (dirty read), incorrect summary (read skew), unrepeatable read.
+- In JPA, lost updates hide in "load entity, change field, commit". Fix with a bulk update, `@Version`, or `PESSIMISTIC_WRITE`.

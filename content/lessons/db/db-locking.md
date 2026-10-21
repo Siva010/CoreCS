@@ -44,7 +44,7 @@ Compatibility:
 
 **The idea.** Borrow the oldest tool in concurrency: a mutex. Before touching a piece of data, take its lock; anyone who wants a conflicting lock waits. Locks are the pessimistic way: make the second transaction **wait** until the first finishes, turning a potential anomaly into a delay.
 
-**Why hold locks until commit.** If a transaction released a row's lock mid-way, another could change the row and the first might then read or overwrite a different value than it decided on. Holding locks to the end (strict two-phase locking) is what makes the interleaving equivalent to a serial order.
+**Why hold locks until commit.** Suppose a transaction released a row's lock mid-way. Another could change the row, and the first might then read or overwrite a different value than the one it decided on. Holding locks to the end (strict two-phase locking) is what makes the interleaving equivalent to a serial order.
 
 :::callout[That's all it is]{type=insight}
 Writers lock the rows they change until commit; readers can share, writers can't. Conflicts wait in a queue, and when two transactions wait on each other the database kills one. Everything else is about what exactly gets locked (rows, ranges, tables).
@@ -91,6 +91,45 @@ UPDATE jobs SET status = 'done' WHERE id = ANY($ids);
 COMMIT;
 ```
 
+The same worker in Java, with plain JDBC:
+
+```java
+/** Claims up to `batch` pending jobs; other workers skip the rows this one has locked. */
+static List<Long> claimAndRun(Connection c, int batch, LongConsumer job) throws SQLException {
+    c.setAutoCommit(false);
+    List<Long> ids = new ArrayList<>();
+    try (PreparedStatement ps = c.prepareStatement(
+            "SELECT id FROM jobs WHERE status = 'pending' ORDER BY created_at LIMIT ? FOR UPDATE SKIP LOCKED")) {
+        ps.setInt(1, batch);
+        try (ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) ids.add(rs.getLong(1));
+        }
+    }
+    for (long id : ids) job.accept(id);              // keep this short: the rows stay locked until commit
+    try (PreparedStatement done = c.prepareStatement("UPDATE jobs SET status = 'done' WHERE id = ANY (?)")) {
+        done.setArray(1, c.createArrayOf("bigint", ids.toArray()));
+        done.executeUpdate();
+    }
+    c.commit();
+    return ids;
+}
+```
+
+If the worker crashes, its transaction rolls back, the locks disappear, and the jobs become `pending` for someone else: the database is the queue's failure detector.
+
+### Locks from JPA and Spring Data
+
+JPA asks for the same row locks through lock modes:
+
+| JPA | What PostgreSQL receives |
+|---|---|
+| `LockModeType.PESSIMISTIC_WRITE` | an exclusive row lock: `FOR UPDATE`, or a close variant the dialect chooses |
+| `LockModeType.PESSIMISTIC_READ` | a shared row lock: `FOR SHARE` |
+| lock timeout hint `jakarta.persistence.lock.timeout` = 0 | `NOWAIT` |
+| Hibernate's timeout value −2 (`LockOptions.SKIP_LOCKED`) | `SKIP LOCKED` |
+
+In Spring Data, put `@Lock(LockModeType.PESSIMISTIC_WRITE)` on a repository query method. The lock lasts until the surrounding transaction ends, not until the repository method returns. So the method must run inside a transaction, and that transaction should be short.
+
 ### Table locks and the DDL queue
 
 Every statement takes a table-level lock of some mode: `SELECT` takes ACCESS SHARE, DML takes ROW EXCLUSIVE, most `ALTER TABLE` forms take **ACCESS EXCLUSIVE** (conflicts with everything). Locks are granted in **queue order**: an `ALTER TABLE` waiting behind a long `SELECT` blocks every later query on the table, even though those queries don't conflict with the `SELECT`. Result: a "harmless" migration stalls the site ([DML & DDL](lesson:sql-dml-ddl)). Use `lock_timeout` for DDL.
@@ -126,7 +165,19 @@ T2: UPDATE accounts … WHERE id = 1;   -- waits for T1 → cycle
 
 Detection: PostgreSQL checks the waits-for graph after a transaction has waited `deadlock_timeout` (1 s by default); InnoDB checks immediately on each wait. One transaction is chosen as the victim and aborted (`ERROR: deadlock detected`, SQLSTATE 40P01); the other proceeds. The application must retry the victim.
 
-Prevention (the OS deadlock conditions again — [Deadlock Handling](lesson:os-deadlock-handling)): **lock in a consistent global order** (e.g., ascending id), keep transactions short, lock everything needed up front, and make sure locking statements use indexes.
+The victim's error spells out the cycle:
+
+```text
+ERROR:  deadlock detected
+DETAIL:  Process 4711 waits for ShareLock on transaction 9182; blocked by process 4802.
+         Process 4802 waits for ShareLock on transaction 9181; blocked by process 4711.
+HINT:  See server log for query details.
+CONTEXT:  while updating tuple (0,2) in relation "accounts"
+```
+
+Each `DETAIL` line is one edge of the waits-for graph. A row wait shows up as a wait for the other *transaction*, because PostgreSQL keeps row locks in the tuple header and the waiter queues on the locker's transaction id. The server log adds both statements, which tells you which two code paths lock the same rows in opposite orders.
+
+Prevention is the OS story again ([Deadlock Handling](lesson:os-deadlock-handling)). **Lock in a consistent global order** (e.g., ascending id), keep transactions short, lock everything needed up front, and make sure locking statements use indexes.
 
 ::lab{id=db-locks}
 
@@ -242,6 +293,14 @@ It maintains a wait-for graph — an edge from each waiting transaction to the o
 
 Acquire locks in a consistent global order (e.g., update accounts in ascending id), keep transactions short and free of network calls, lock what you'll update at read time (`FOR UPDATE`) instead of upgrading later, make locking statements use indexes so they don't lock extra rows or gaps, and retry deadlock victims automatically. Use `lock_timeout` so a blocked request fails fast instead of piling up.
 
+### [L2 · how] How do you take a row lock from JPA or Spring Data, and how long is it held?
+
+Use a pessimistic lock mode: `em.find(Account.class, id, LockModeType.PESSIMISTIC_WRITE)`, a query with `setLockMode(...)`, or `@Lock(LockModeType.PESSIMISTIC_WRITE)` on a Spring Data repository method. Hibernate turns it into an exclusive row lock (`FOR UPDATE` or a close variant); `PESSIMISTIC_READ` becomes a shared lock. A lock timeout hint of 0 gives `NOWAIT`, and Hibernate's −2 gives `SKIP LOCKED`. The lock belongs to the database transaction, so it is held until that transaction commits or rolls back, not until the repository call returns. Pessimistic locks need an active transaction, so keep that transaction short and free of remote calls.
+
+### [L2 · debugging] What does a PostgreSQL deadlock report tell you, and how do you get from it to a fix?
+
+The `DETAIL` lines list the cycle: each process, the transaction it waits for, and the process blocking it. The server log adds each process's statement, and `CONTEXT` names the relation and tuple. From the two statements, find the two code paths and the order in which each locks rows: typically one updates A then B, the other B then A, or a batch updates rows in arrival order. The fix is to make every path lock in the same order (sort ids, or lock all rows up front with one ordered `SELECT ... FOR UPDATE`), keep the retry for 40P01, and watch `pg_stat_database.deadlocks` to confirm the rate drops.
+
 ## Practice
 
 ### [mcq] T1 holds a shared lock on row R. Which request is granted immediately?
@@ -301,6 +360,31 @@ COMMIT;
 Now both transactions request row 1 first; the second simply waits for the first to commit — a queue, never a cycle. Keep a retry for deadlock errors anyway (SQLSTATE 40P01), since other code paths may lock differently.
 :::
 
+### [mcq] A Spring Data repository method annotated `@Lock(LockModeType.PESSIMISTIC_WRITE)` is called from a `@Transactional` service method, which then spends 2 seconds calling a payment API before returning. How long is the row locked?
+
+- [ ] Only while the repository method runs
+- [x] Until the service method's transaction ends, so for the whole 2-second API call as well
+- [ ] Until Hibernate flushes the entity
+- [ ] It isn't locked: Spring Data ignores `@Lock` on query methods
+
+Row locks belong to the database transaction. Every other writer of that row waits behind the payment API, which is why remote calls don't belong inside a locking transaction.
+
+### [exercise] The server log shows the deadlock report above, plus the two statements: process 4711 ran `UPDATE accounts SET balance = balance + 100 WHERE id = 2` and process 4802 ran `UPDATE accounts SET balance = balance + 100 WHERE id = 1`. Both come from a `transfer(from, to)` method that updates `from` and then `to`. Explain the deadlock and fix the method.
+
+:::solution
+Process 4711 was transferring from account 1 to account 2. It had already updated account 1, so it held that row, and it was waiting to update account 2. Process 4802 was transferring from 2 to 1: it held account 2 and was waiting for account 1. Each waited for the other's transaction, and the detector aborted one.
+
+The method locks rows in the order of the transfer's *direction*, so opposite transfers take them in opposite orders. Lock both rows in id order first:
+
+```sql
+SELECT id FROM accounts WHERE id IN (:from, :to) ORDER BY id FOR UPDATE;
+UPDATE accounts SET balance = balance - :amount WHERE id = :from;
+UPDATE accounts SET balance = balance + :amount WHERE id = :to;
+```
+
+Now both transfers lock account 1 first; the second waits instead of deadlocking. Keep retrying on 40P01 anyway, for code paths you haven't fixed yet.
+:::
+
 ## Quick Revision
 
 - S shared with S; X exclusive. Intention locks connect row and table granularity.
@@ -310,3 +394,6 @@ Now both transactions request row 1 first; the second simply waits for the first
 - Deadlock = waits-for cycle → victim aborted → retry. Prevent with consistent lock order and short transactions.
 - DDL needs ACCESS EXCLUSIVE; lock queues make waiting DDL block everyone → lock_timeout.
 - Deadlock detection = cycle in the wait-for graph → abort a victim → retry. Prevent with consistent lock order, short transactions, FOR UPDATE instead of upgrades, indexed locking statements.
+- Java queue worker: `SELECT ... FOR UPDATE SKIP LOCKED` in a transaction; a crash rolls back and frees the jobs.
+- JPA: `PESSIMISTIC_WRITE` → exclusive row lock, `PESSIMISTIC_READ` → `FOR SHARE`; timeout 0 → `NOWAIT`. Locks last until the transaction ends.
+- A deadlock report's `DETAIL` lines are the waits-for cycle; the server log names the statements.

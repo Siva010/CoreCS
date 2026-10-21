@@ -119,7 +119,31 @@ Plain VACUUM doesn't shrink files; it makes space reusable. `VACUUM FULL`/`pg_re
 
 ### The long-transaction problem
 
-This follows directly from the rule "delete a version only when no snapshot can see it". Vacuum can only remove versions older than the **oldest running snapshot**. Suppose one transaction stays open for 6 hours: a forgotten `BEGIN` in a console, a stuck report, an idle-in-transaction connection, or an abandoned replication slot with `hot_standby_feedback`. It pins the horizon, so every update in those 6 hours leaves garbage that can't be reclaimed. Tables bloat, indexes bloat and queries slow down, even on tables that transaction never touched.
+This follows directly from the rule "delete a version only when no snapshot can see it". Vacuum can only remove versions older than the **oldest running snapshot**. Suppose one transaction stays open for 6 hours. It might be a console session that ran an UPDATE and never committed, a report that runs for hours, or an abandoned replication slot with `hot_standby_feedback`. It pins the horizon, so every update in those 6 hours leaves garbage that can't be reclaimed. Tables bloat, indexes bloat and queries slow down, even on tables that transaction never touched.
+
+Precisely, a session holds the horizon back while it has a **transaction id**, because it has written something and not finished. It also holds it back while it has a **snapshot**: a query is running, it is at Repeatable Read or Serializable, or a cursor is open. A Read Committed session that has only read, and sits idle in its transaction, holds neither between statements. `pg_stat_activity` shows both, as `backend_xid` and `backend_xmin`.
+
+### MVCC in miniature, in Java
+
+The same three ideas, versions, snapshots and garbage collection, fit in a few lines of Java:
+
+```java
+final class Catalog {
+    private final AtomicReference<Map<String, Long>> current = new AtomicReference<>(Map.of());
+
+    Map<String, Long> snapshot() { return current.get(); }      // readers: no lock, one consistent version
+
+    void setPrice(String sku, long price) {                       // writers: copy, change, publish
+        current.updateAndGet(old -> {
+            Map<String, Long> next = new HashMap<>(old);
+            next.put(sku, price);
+            return Map.copyOf(next);
+        });
+    }
+}
+```
+
+A reader that took a snapshot keeps seeing it, however many writers publish newer versions, and it never blocks them. The JVM's garbage collector plays vacuum: it frees an old version once no reader holds a reference to it. And a reader that keeps its snapshot for an hour keeps that whole version alive for an hour, which is the long-transaction problem in memory.
 
 ## Internal Mechanism
 
@@ -223,6 +247,10 @@ Plain VACUUM removes dead row versions that no snapshot can see, removes their i
 
 Dead tuples and autovacuum activity (`pg_stat_user_tables.n_dead_tup`, `last_autovacuum`), and the oldest running transaction or snapshot holder: long-running queries, sessions idle in transaction, replication slots or `hot_standby_feedback` replicas pinning the xmin horizon. Then tune autovacuum for that table (lower scale factor, more workers or I/O budget), kill or time out the stale sessions, and reclaim existing bloat with `pg_repack`.
 
+### [L2 · debugging] Vacuum runs but dead tuples keep piling up. Which sessions can be holding the cleanup horizon back, and how do you find them?
+
+Anything that still might need an old version: a session with an unfinished write (`backend_xid` set), a session holding a snapshot (`backend_xmin` set: a long query, a Repeatable Read or Serializable transaction, an open cursor), a replication slot (`pg_replication_slots.xmin`), a standby with `hot_standby_feedback` whose queries run long, and forgotten prepared transactions (`pg_prepared_xacts`). Sort `pg_stat_activity` by `age(backend_xmin)` to find the oldest. A Read Committed session that has only read and sits idle in its transaction holds neither between statements, so the usual culprits are sessions that wrote something and never committed, and long reports.
+
 ## Practice
 
 ### [mcq] A tuple has xmin = 200 (committed) and xmax = 250 (committed). A snapshot taken when 200 had committed but 250 was still running sees…
@@ -271,11 +299,12 @@ Transaction ids are compared modulo 2³², so an old xmin would eventually look 
 
 :::solution
 ```sql
--- 1. Long-running or idle-in-transaction sessions holding an old snapshot
-SELECT pid, state, now() - xact_start AS xact_age, left(query, 60) AS query
+-- 1. Sessions holding the horizon back: an old snapshot (backend_xmin) or an unfinished write (backend_xid)
+SELECT pid, state, backend_xid, backend_xmin, age(backend_xmin) AS xmin_age,
+       now() - xact_start AS xact_age, left(query, 60) AS query
 FROM pg_stat_activity
-WHERE xact_start IS NOT NULL
-ORDER BY xact_start
+WHERE backend_xmin IS NOT NULL OR backend_xid IS NOT NULL
+ORDER BY age(backend_xmin) DESC NULLS LAST
 LIMIT 10;
 
 -- 2. Replication slots pinning old rows (and WAL)
@@ -291,6 +320,14 @@ LIMIT 10;
 Also check `backend_xmin` of replicas with `hot_standby_feedback` on, and long-running prepared transactions (`pg_prepared_xacts`). Prevention: `idle_in_transaction_session_timeout`, statement and transaction timeouts for reporting roles, drop unused slots (and alert on inactive ones). Bloat that already exists needs `VACUUM FULL` or `pg_repack`, because ordinary VACUUM frees space for reuse but rarely shrinks the file.
 :::
 
+### [exercise] In the [isolation lab](lab:isolation), run "Non-repeatable read" at Read Committed, then at Repeatable Read, and watch the versions of `price`. Which versions exist after T2 commits, and why does T1's second read return a different one at each level?
+
+:::solution
+After T2's update there are two versions of `price`: 100, which existed before either transaction and is now ended by T2, and 120, created by T2. Neither is overwritten; the update added a version.
+
+At **Read Committed**, T1's second `SELECT` takes a new snapshot, in which T2 has committed, so the visibility rule picks 120. At **Repeatable Read**, T1 keeps the snapshot from its first statement. In that snapshot T2 was still running, so 120 is invisible and 100 is still current: T1 reads 100 both times. Same rows on disk, different snapshot, different answer.
+:::
+
 ## Quick Revision
 
 - Updates create versions (PG heap tuples with xmin/xmax; InnoDB in place + undo). Snapshots + visibility rules pick the right version.
@@ -299,3 +336,5 @@ Also check `backend_xmin` of replicas with `hot_standby_feedback` on, and long-r
 - Long transactions pin the horizon → bloat / history growth everywhere.
 - PostgreSQL: HOT updates, xid wraparound and freezing. InnoDB: slow rollback of big transactions, long undo chains.
 - Snapshot = (xmin, xmax, in-progress list). VACUUM reclaims dead versions in place (online); VACUUM FULL / pg_repack rewrite to shrink.
+- A session pins vacuum's horizon only with a transaction id (unfinished write) or a snapshot (running query, Repeatable Read/Serializable, open cursor): check `backend_xid` and `backend_xmin`.
+- Java analogy: an `AtomicReference` to immutable maps = versions + snapshots; the GC is vacuum; a long-held snapshot keeps its version alive.

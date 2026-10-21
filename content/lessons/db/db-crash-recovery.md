@@ -17,7 +17,7 @@ tags: [crash recovery, aries, redo, undo, analysis pass, checkpoint, lsn, steal 
 
 ## Mental Model
 
-After a crash, the data files are a **mixture**: some committed changes never reached disk (they were only in the buffer pool), and some uncommitted changes did (a dirty page was evicted early). The WAL has the full story. Recovery reads the log and makes the files match exactly one rule:
+After a crash, the data files are a **mixture**. Some committed changes never reached disk, because they were only in the buffer pool. And some uncommitted changes did, because a dirty page was evicted early. The WAL has the full story. Recovery reads the log and makes the files match exactly one rule:
 
 > **Every committed transaction's effects are present; no uncommitted transaction's effects are visible.**
 
@@ -35,9 +35,9 @@ Redo brings back what committed work lost; undo (or invisibility) removes what u
 
 ## Why It Exists
 
-**The problem.** For speed, the buffer pool writes pages whenever it likes — so at the moment of a crash, disk holds some changes that never committed and lacks some that did.
+**The problem.** For speed, the buffer pool writes pages whenever it likes. So at the moment of a crash, the disk holds some changes that never committed, and lacks some that did.
 
-**The simple alternative, and why it's rejected.** Forcing pages at commit and never stealing would make recovery trivial but performance terrible (random writes at every commit, buffer pool stuck holding every uncommitted page).
+**The simple alternative, and why it's rejected.** Forcing pages at commit and never stealing would make recovery trivial. But performance would be terrible: random writes at every commit, and a buffer pool stuck holding every uncommitted page.
 
 **The idea.** Accept the messy disk, because the log knows exactly what happened. Logging lets databases write pages whenever convenient and still recover exactly: replay the log to put back everything (redo), then remove what belonged to transactions that never committed (undo).
 
@@ -81,7 +81,56 @@ result:    A = 50, B = 7 — exactly the committed state
 
 ### PostgreSQL: redo-only
 
-PostgreSQL never needs a physical undo pass: uncommitted changes are new tuple versions stamped with the loser's xid, and since that xid never committed, the versions are simply **invisible** (and later vacuumed) ([MVCC](lesson:db-mvcc)). Recovery = replay WAL from the last checkpoint's redo point to the end. InnoDB performs redo from its redo log, then rolls back uncommitted transactions using undo logs (in the background, so the server opens sooner).
+PostgreSQL never needs a physical undo pass. Uncommitted changes are new tuple versions stamped with the loser's xid. Since that xid never committed, the versions are simply **invisible**, and are vacuumed later ([MVCC](lesson:db-mvcc)). Recovery = replay WAL from the last checkpoint's redo point to the end. InnoDB performs redo from its redo log, then rolls back uncommitted transactions using undo logs (in the background, so the server opens sooner).
+
+### Where does the log end?
+
+A crash can interrupt the write of the last log record, leaving a header without its payload, or a record half old bytes and half new. Recovery has to tell a complete record from a torn one. So every record carries its length and a checksum of its contents; PostgreSQL's WAL records carry a CRC-32C. Replay stops at the first record whose length or checksum doesn't check out, and that point *is* the end of the log. Nothing after it was acknowledged, because COMMIT returns only after its record is fully flushed. A reader for such a log, in Java:
+
+```java
+/** Reads [length][crc32c][payload] records, stopping at the first one a crash cut off or corrupted. */
+static List<byte[]> readValidRecords(Path log) throws IOException {
+    List<byte[]> records = new ArrayList<>();
+    try (DataInputStream in = new DataInputStream(new BufferedInputStream(Files.newInputStream(log)))) {
+        while (true) {
+            int length;
+            long crc;
+            try {
+                length = in.readInt();
+                crc = in.readInt() & 0xFFFFFFFFL;
+            } catch (EOFException end) {
+                break;                                      // the end of the log, or a torn header
+            }
+            if (length < 0 || length > (16 << 20)) break;   // a garbage length: torn or corrupt
+            byte[] payload = new byte[length];
+            try {
+                in.readFully(payload);
+            } catch (EOFException torn) {
+                break;                                      // the crash cut this record short
+            }
+            CRC32C check = new CRC32C();
+            check.update(payload);
+            if (check.getValue() != crc) break;             // half-written or damaged: the log ends here
+            records.add(payload);
+        }
+    }
+    return records;
+}
+```
+
+PostgreSQL's own crash recovery reports the same steps in its log:
+
+```text
+LOG:  database system was interrupted; last known up at 2026-10-21 14:02:11 IST
+LOG:  database system was not properly shut down; automatic recovery in progress
+LOG:  redo starts at 0/4E2C6F0
+LOG:  invalid record length at 0/5A1F2C8: expected at least 24, got 0
+LOG:  redo done at 0/5A1F290 system usage: CPU: user: 1.21 s, system: 0.40 s, elapsed: 3.87 s
+LOG:  checkpoint starting: end-of-recovery immediate wait
+LOG:  database system is ready to accept connections
+```
+
+Redo starts at the last checkpoint's redo pointer and runs until the first invalid record, the expected end of the log. A checkpoint then makes the recovered state durable before connections are accepted. The elapsed time is the RTO of a crash, which is why it grows with the WAL written since the last checkpoint.
 
 ### Backups and point-in-time recovery
 
@@ -89,7 +138,13 @@ Recovery from a log needs the data files to still exist. Crash recovery handles 
 
 - **Base backup**: a physical copy of the data files (taken online; consistent when combined with the WAL generated during the copy).
 - **WAL archive**: every WAL segment copied to durable storage (object storage).
-- **PITR**: restore the base backup, replay archived WAL up to a target time/LSN/transaction — e.g., one second before the bad DELETE.
+- **PITR**: restore the base backup, replay archived WAL up to a target time/LSN/transaction — e.g., one second before the bad DELETE. On PostgreSQL 12+, the restored copy gets an empty `recovery.signal` file and settings like these:
+
+  ```text
+  restore_command = 'cp /mnt/wal_archive/%f %p'
+  recovery_target_time = '2026-10-21 14:31:59+05:30'
+  recovery_target_action = 'promote'
+  ```
 - **Logical backups** (`pg_dump`): portable SQL/data snapshots; slower to restore for big databases, no PITR.
 
 ### Shadow paging: recovery without a log
@@ -124,7 +179,11 @@ Stopping all activity to flush everything would freeze the database. ARIES-style
 
 ### Why "repeat history" then undo?
 
-Redoing losers' changes before undoing them seems wasteful. But it restores the exact state at the moment of the crash, which has three benefits: page-level (physiological) undo records stay valid; fine-grained locking and logical undo work; and redo stays simple, because it doesn't need to know which transactions committed.
+Redoing losers' changes before undoing them seems wasteful. But it restores the exact state at the moment of the crash, which has three benefits:
+
+- page-level (physiological) undo records stay valid;
+- fine-grained locking and logical undo work;
+- redo stays simple, because it doesn't need to know which transactions committed.
 
 ### Recovery time
 
@@ -212,6 +271,14 @@ T1 committed before the checkpoint, so its changes were flushed: nothing to do. 
 
 Without them, recovery would replay the log from the very beginning, and the log could never be truncated. A checkpoint guarantees that changes before a certain point are on disk, so recovery starts from there and older log segments can be recycled (unless replicas or archiving still need them). The trade-off is I/O: frequent checkpoints shorten recovery but write more pages (and, in PostgreSQL, more full-page images).
 
+### [L2 · how] After a crash in the middle of a log write, how does recovery know where the log ends?
+
+Each log record carries its length and a checksum of its contents (PostgreSQL WAL records carry a CRC-32C). Recovery reads records in order and stops at the first one whose length is impossible, whose bytes run out early, or whose checksum doesn't match. That point is the end of the log: a torn record was never acknowledged, because COMMIT returns only after its record is completely flushed. The database then truncates or overwrites from there, so new records don't follow garbage. PostgreSQL logs it as "invalid record length at …", followed by "redo done at …".
+
+### [L3 · design] Design backup and recovery for a PostgreSQL database that must lose at most 1 minute of data (RPO) and be back within 30 minutes (RTO), even if a region is lost.
+
+For RPO: continuous WAL archiving to object storage in another region, with `archive_timeout = 60s` so a quiet server still ships a segment every minute, plus an asynchronous replica in that region, whose lag is usually seconds. For RTO: the replica is the fast path, promoted in minutes. Backups are the slow path: base backups frequent enough (daily full or incremental) that restore and WAL replay fit in 30 minutes. Measure that time; don't assume it. Then rehearse: scheduled restore drills that check the restored data and record how long they took, plus alerts on archive failures and replica lag. Replication alone doesn't meet the RPO for human error, because a `DELETE` replicates instantly; PITR from the archive does.
+
 ## Practice
 
 ### [mcq] During redo, a log record has LSN 500 and the page on disk has pageLSN 520. What happens?
@@ -266,6 +333,20 @@ CLRs are redo-only records with a pointer to the next record to undo. Recovery a
 Result: T1's update survives, T2's updates are gone — and if the system crashes again mid-undo, the CLRs prevent undoing anything twice.
 :::
 
+### [exercise] In the [WAL recovery lab](lab:wal-recovery), load "Checkpoint, then crash" and run recovery. Where does redo start, which records does it replay, and what are P1, P2 and P3 afterwards?
+
+:::solution
+T1 set P1 to 110 and committed, and a checkpoint at LSN 30 then flushed every dirty page, so redo starts at the checkpoint: nothing before it needs replaying. After it, T2 set P2 to 220 and committed, which flushed the log up to LSN 50. T1 then began another update, P3 to 330, but its log record (LSN 60) was still in the in-memory WAL buffer when the crash hit, so it was lost.
+
+Analysis scans from LSN 30 and finds T2 committed and no losers: the unfinished update left nothing in the durable log. Redo applies LSN 40, because P2's page on disk is older (P2 = 220). Undo has nothing to do. The result is P1 = 110, P2 = 220 and P3 = 300. The lost update needed no undo, because the WAL rule also kept its page off the disk: a page can't be written before its log record is durable.
+:::
+
+### [numeric 60 unit=s] A database archives WAL to object storage with `archive_timeout = 60s` and has no replica. The server and its disks are destroyed. Roughly how many seconds of committed transactions can be lost, at worst?
+
+:::answer
+About **60** seconds: up to one segment's worth of WAL that was written but not yet archived, and `archive_timeout` forces a segment switch at least every 60 s. Streaming the WAL to another machine as it is written (a replica, or `pg_receivewal`) shrinks that to seconds.
+:::
+
 ## Quick Revision
 
 - Crash leaves files with missing committed changes (no-force) and present uncommitted ones (steal).
@@ -275,3 +356,5 @@ Result: T1's update survives, T2's updates are gone — and if the system crashe
 - Replication is not a backup. Test restores.
 - Shadow paging: copy-on-write pages + atomic page-table switch; no log, but fragmentation and costly commits (lives on in LMDB, ZFS).
 - After a crash: committed-before-checkpoint → nothing; committed-after → redo; no commit record → undo.
+- The log's end = the first record with a bad length or checksum (PostgreSQL: CRC-32C per WAL record). Torn records were never acknowledged.
+- PostgreSQL's crash-recovery log: "redo starts at …", "invalid record length at …", "redo done at …". PITR: `recovery.signal` + `restore_command` + `recovery_target_time`.

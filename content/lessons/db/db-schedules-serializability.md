@@ -31,7 +31,7 @@ Everything else in this lesson is a way to check those two questions mechanicall
 
 **Without it.** You can't prove that a concurrency-control protocol (locking, timestamps, MVCC) is correct, and you can't say exactly which interleavings an isolation level forbids.
 
-**The idea.** Define correctness relative to the obviously correct case, serial execution. Then turn "is this interleaving equivalent to a serial one?" into a graph question: only the order of *conflicting* operations matters, so draw an edge for each conflict and look for a cycle. Separately, require that nobody commits on top of data that might still be rolled back.
+**The idea.** Define correctness relative to the obviously correct case, serial execution. Then turn "is this interleaving equivalent to a serial one?" into a graph question. Only the order of *conflicting* operations matters, so draw an edge for each conflict and look for a cycle. Separately, require that nobody commits on top of data that might still be rolled back.
 
 :::callout[That's all it is]{type=insight}
 Two operations conflict if they touch the same item, come from different transactions, and at least one writes. Draw an arrow for every conflict in the order it happened; no cycle means the schedule acts like some serial order. And never let a transaction commit after reading data whose writer might still abort.
@@ -142,7 +142,7 @@ Each level contains the next: **strict ⊂ cascadeless ⊂ recoverable**. Strict
 ### Counting schedules
 
 - n transactions have **n!** serial schedules (3 transactions → 6).
-- Two transactions with m and n operations have C(m + n, m) = (m + n)! / (m! n!) interleavings: 2 and 3 operations → 10 schedules; 3 and 3 → 20. Most real interleavings are neither serial nor all serializable — the protocol's job is to allow only the safe ones.
+- Two transactions with m and n operations have C(m + n, m) = (m + n)! / (m! n!) interleavings. For 2 and 3 operations that is 10 schedules; for 3 and 3, it is 20. Most interleavings are not serial, and not all are serializable. The protocol's job is to allow only the safe ones.
 
 ## Internal Mechanism
 
@@ -196,6 +196,15 @@ Databases never test schedules after the fact; they use protocols that only *gen
 
 - You meet this theory as error codes: deadlock victims (SQLSTATE 40P01) and serialization failures (40001) are the database breaking precedence cycles. The application must retry the whole transaction.
 - `READ UNCOMMITTED` / `NOLOCK` (SQL Server) produce non-cascadeless reads — avoid them for anything you'll act on.
+- The error text tells you which cycle the database broke. At Serializable, PostgreSQL's SSI reports a cycle of read–write dependencies:
+
+  ```text
+  ERROR:  could not serialize access due to read/write dependencies among transactions
+  DETAIL:  Reason code: Canceled on identification as a pivot, during commit attempt.
+  HINT:  The transaction might succeed if retried.
+  ```
+
+  A deadlock is a cycle in the wait-for graph instead, and its `DETAIL` lists each process and the transaction it waits for ([Locking](lesson:db-locking)).
 
 ## Deeper Connections
 
@@ -242,6 +251,10 @@ Serial schedules: 4! = 24. Interleavings of 2 + 3 operations (each transaction's
 ### [L3 · conceptual] Snapshot isolation never reads uncommitted data and prevents lost updates. Why isn't it serializable?
 
 Because serializability concerns read–write dependencies, not just write–write conflicts. In write skew, T1 reads what T2 writes and T2 reads what T1 writes, on *different* rows — a precedence cycle made of two read–write anti-dependency edges with no write–write conflict for SI to detect. Serializable Snapshot Isolation tracks those rw-dependencies and aborts a transaction when a dangerous pattern appears.
+
+### [L3 · design] How would you write a program that decides whether a schedule is conflict serializable?
+
+Parse the operations, then build the precedence graph: for every pair of operations in schedule order, add an edge Ti → Tj when they belong to different transactions, touch the same item, and at least one is a write. Then look for a cycle with a topological sort (Kahn's algorithm: repeatedly remove a transaction with no incoming edges). If every transaction gets removed, the removal order is an equivalent serial schedule; if some remain, they sit on a cycle. Comparing all pairs is O(n²) in the number of operations. Remembering, per item, the earlier reads and writes brings edge-building close to linear.
 
 ## Practice
 
@@ -298,6 +311,41 @@ Choose positions for each transaction's operations among 7 slots: 7! ÷ (3! × 2
 **View serializability**, compared with the serial order T1, T2, T3: T1 reads the initial A in both; nobody else reads; and T3 performs the final write of A in both. All three conditions hold, so it **is** view serializable. W2(A) and W3(A) are blind writes (written without reading A), and T3's final write hides the order of the earlier writes — the only way a schedule can be view- but not conflict-serializable.
 :::
 
+### [exercise] Write a Java method that returns an equivalent serial order for a schedule, or `null` if the schedule isn't conflict serializable. Check it on S1 and S2 from this lesson.
+
+:::solution
+```java
+record Op(int tx, char kind, char item) {}            // R1(A) is new Op(1, 'R', 'A')
+
+/** An equivalent serial order of the transactions, or null if the schedule isn't conflict serializable. */
+static List<Integer> serialOrder(List<Op> schedule) {
+    Map<Integer, Set<Integer>> edges = new TreeMap<>();
+    for (Op o : schedule) edges.putIfAbsent(o.tx(), new TreeSet<>());
+    for (int i = 0; i < schedule.size(); i++)
+        for (int j = i + 1; j < schedule.size(); j++) {
+            Op a = schedule.get(i), b = schedule.get(j);
+            boolean conflict = a.tx() != b.tx() && a.item() == b.item() && (a.kind() == 'W' || b.kind() == 'W');
+            if (conflict) edges.get(a.tx()).add(b.tx());   // a came first: edge Ta → Tb
+        }
+    // Kahn's algorithm: repeatedly take a transaction that nothing still points to
+    Map<Integer, Integer> indegree = new TreeMap<>();
+    edges.keySet().forEach(t -> indegree.put(t, 0));
+    edges.values().forEach(targets -> targets.forEach(t -> indegree.merge(t, 1, Integer::sum)));
+    Deque<Integer> ready = new ArrayDeque<>();
+    indegree.forEach((t, d) -> { if (d == 0) ready.add(t); });
+    List<Integer> order = new ArrayList<>();
+    while (!ready.isEmpty()) {
+        int t = ready.poll();
+        order.add(t);
+        for (int u : edges.get(t)) if (indegree.merge(u, -1, Integer::sum) == 0) ready.add(u);
+    }
+    return order.size() == edges.size() ? order : null;   // anything left over sits on a cycle
+}
+```
+
+On S1, `R1(A) R2(A) W1(A) W2(A)`, the method finds the edges T1 → T2 and T2 → T1. Neither transaction ever reaches in-degree 0, so it returns `null`. On S2, `R1(A) W1(A) R2(A) W2(A) R1(B) W1(B) R2(B) W2(B)`, the only edge is T1 → T2, and it returns `[1, 2]`. The same method on the earlier exercise schedule `R1(A) R2(B) W1(B) W2(A) R3(A) W3(B)` returns `null`: T1 and T2 point at each other.
+:::
+
 ## Quick Revision
 
 - Schedule = interleaving; serial = one at a time (n! of them); serializable = same effect as some serial schedule.
@@ -305,3 +353,5 @@ Choose positions for each transaction's operations among 7 slots: 7! ÷ (3! × 2
 - View serializable ⊇ conflict serializable (difference = blind writes); view test is NP-complete.
 - Strict ⊂ cascadeless ⊂ recoverable. Recoverable: commit after those you read from. Cascadeless: read only committed. Strict: don't read or overwrite uncommitted.
 - Interleavings of m and n operations: C(m + n, m).
+- In production, broken cycles arrive as errors: SSI's "could not serialize access due to read/write dependencies" (40001), or "deadlock detected" (40P01). Retry the transaction.
+- A checker: build precedence edges from conflicting pairs, then topologically sort (Kahn); leftovers mean a cycle.

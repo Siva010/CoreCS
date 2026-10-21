@@ -47,6 +47,8 @@ What the major engines actually do:
 | Repeatable Read | **snapshot isolation**: one snapshot per transaction; no phantoms in reads; concurrent update of the same row → serialization error (no lost updates); write skew possible | **default**. One snapshot per transaction for plain SELECTs; locking reads/updates see the *latest* committed data and use next-key (gap) locks; lost updates possible with plain read-then-write |
 | Serializable | **SSI**: snapshot isolation + detection of dangerous read-write dependency patterns → abort | plain SELECTs become locking reads (shared next-key locks): strict 2PL-style blocking |
 
+Other engines split the same way. Oracle's `SERIALIZABLE` is really snapshot isolation, so write skew is possible. SQL Server offers lock-based levels by default, plus row-versioning ones (`READ_COMMITTED_SNAPSHOT`, `SNAPSHOT`).
+
 Each step up the ladder removes anomalies, and adds waiting or retries:
 
 ```mermaid
@@ -98,7 +100,7 @@ The application must **retry the whole transaction**. This "first updater wins" 
 
 ### Repeatable Read in MySQL InnoDB
 
-Plain `SELECT`s read from a transaction-wide snapshot. But `UPDATE`, `DELETE` and locking reads (`SELECT … FOR UPDATE / FOR SHARE`) operate on the **latest committed** version and take row + **gap locks** (next-key locks) to prevent phantoms for those ranges. Consequences: a transaction can read a value from its snapshot, then update based on it while another transaction's newer committed value is overwritten — a lost update — unless it used a locking read.
+Plain `SELECT`s read from a transaction-wide snapshot. But `UPDATE`, `DELETE` and locking reads (`SELECT … FOR UPDATE / FOR SHARE`) operate on the **latest committed** version and take row + **gap locks** (next-key locks) to prevent phantoms for those ranges. The consequence: a transaction can read a value from its snapshot and then update the row based on it. Another transaction's newer committed value is then overwritten, a lost update, unless the read was a locking read.
 
 ### Serializable
 
@@ -116,19 +118,33 @@ Either way: **serializable transactions must be retried** on serialization failu
 :::depth{level=advanced}
 ### Retry loops are part of the contract
 
-```python
-for attempt in range(5):
-    try:
-        with conn.transaction(isolation="serializable"):
-            do_work(conn)          # all reads and writes of the unit of work
-        break
-    except SerializationFailure:   # SQLSTATE 40001 (and 40P01 deadlock)
-        sleep(backoff(attempt))
-else:
-    raise
+```java
+/** Runs `work` in a SERIALIZABLE transaction, retrying the whole transaction on 40001 and 40P01. */
+static <T> T serializable(DataSource ds, SqlWork<T> work) throws SQLException, InterruptedException {
+    for (int attempt = 1; ; attempt++) {
+        try (Connection c = ds.getConnection()) {
+            c.setAutoCommit(false);
+            c.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE);
+            try {
+                T result = work.run(c);              // every read and write of the unit of work
+                c.commit();                          // SSI may also fail here, at commit
+                return result;
+            } catch (SQLException e) {
+                c.rollback();
+                boolean retryable = "40001".equals(e.getSQLState()) || "40P01".equals(e.getSQLState());
+                if (!retryable || attempt == 5) throw e;
+            }
+        }
+        Thread.sleep(ThreadLocalRandom.current().nextLong(1L << attempt) * 10);   // jittered backoff
+    }
+}
+
+interface SqlWork<T> { T run(Connection c) throws SQLException; }
 ```
 
 Retry the whole transaction, not just the failed statement — its earlier reads may be stale. Keep side effects (emails, API calls) outside the retried block.
+
+In Spring, `@Transactional(isolation = Isolation.SERIALIZABLE)` sets the level for one transaction. The default, `Isolation.DEFAULT`, means "whatever the database defaults to": Read Committed on PostgreSQL, Repeatable Read on MySQL. Spring translates 40001 and 40P01 into subclasses of `ConcurrencyFailureException`. The retry must start a fresh transaction each time, so it has to wrap the transactional method from the outside. A loop *inside* the method keeps reusing a transaction that has already failed.
 
 ### Read-only optimizations
 
@@ -217,6 +233,14 @@ PostgreSQL Repeatable Read is snapshot isolation: every statement reads the tran
 
 `serialization_failure`: the database aborted the transaction to preserve the requested isolation (a concurrent update at Repeatable Read, or a dangerous dependency pattern at Serializable). The transaction did nothing durable; the application should retry the **whole** transaction from the beginning, with backoff and a retry limit, keeping external side effects outside the retried block. Deadlocks (40P01) are handled the same way.
 
+### [L2 · how] How do you set the isolation level from JDBC and from Spring, and what does Spring's `Isolation.DEFAULT` mean?
+
+In JDBC, call `connection.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE)` (or `TRANSACTION_REPEATABLE_READ`, and so on) before the transaction starts. In Spring, put it on the boundary: `@Transactional(isolation = Isolation.SERIALIZABLE)`, or set it on a `TransactionTemplate`. `Isolation.DEFAULT`, which is what you get when you don't say, uses the database's own default: Read Committed on PostgreSQL and SQL Server, Repeatable Read on MySQL. The same code can therefore behave differently after a database migration. Connection pools such as HikariCP reset a changed isolation level when the connection is returned.
+
+### [L3 · debugging] A `@Transactional(isolation = SERIALIZABLE)` method contains its own retry loop, yet every retry fails at once with "current transaction is aborted". Why?
+
+The loop runs inside one transaction. When the first attempt hit a serialization failure, PostgreSQL aborted that transaction, and every later statement in it fails with SQLState `25P02` until it is rolled back. Retrying statements can't help: the retry must begin a new transaction. Move the loop outside the transactional boundary, for example in a caller on another bean, or with a `TransactionTemplate` inside the loop, so each attempt is a fresh BEGIN … COMMIT.
+
 ## Practice
 
 ### [mcq] Which is PostgreSQL's default isolation level?
@@ -283,6 +307,23 @@ raise "gave up after 5 attempts"
 Retry the **whole** transaction (including its reads), not just the failed statement; keep side effects such as sending email outside it, or make them idempotent; and cap the attempts so a hot spot can't loop forever.
 :::
 
+### [exercise] In the [isolation lab](lab:isolation), run "Write skew" at Repeatable Read, then at Serializable. What happens in each case, and why can't Repeatable Read stop it?
+
+:::solution
+At **Repeatable Read**, both transactions count 2 doctors on call from their snapshots, each takes a *different* doctor off call, and both commit: nobody is on call. Snapshot isolation only detects two writers changing the *same* row, and here the writes don't overlap.
+
+At **Serializable**, T2 is aborted at commit. SSI tracked what each transaction read, and saw that each wrote a row the other had read, a cycle of read–write dependencies. Bob stays on call. A retry of T2 would count 1 doctor and refuse to leave, which is the serial outcome.
+:::
+
+### [mcq] A Spring service on PostgreSQL uses `@Transactional` with no isolation attribute. Which isolation level do its transactions run at?
+
+- [ ] Serializable, the SQL standard's default
+- [ ] Repeatable Read, like MySQL
+- [x] Read Committed, PostgreSQL's default, because `Isolation.DEFAULT` defers to the database
+- [ ] Read Uncommitted
+
+Spring only changes the level when you ask it to. That is also why a service moved from MySQL to PostgreSQL silently goes from Repeatable Read to Read Committed.
+
 ## Quick Revision
 
 - Standard: RU < RC (no dirty reads) < RR (no non-repeatable reads) < Serializable (no phantoms / any anomaly).
@@ -291,3 +332,5 @@ Retry the **whole** transaction (including its reads), not just the failed state
 - Strong levels → serialization failures/deadlocks → retry the whole transaction.
 - Prefer atomic statements, row locks and constraints for specific invariants.
 - MySQL REPEATABLE READ: snapshot for plain SELECTs, latest data + next-key locks for writes (lost updates possible without FOR UPDATE). 40001/40P01 → retry the whole transaction.
+- Java: `setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE)`; retry the whole transaction on SQLState 40001/40P01. Spring: `@Transactional(isolation = ...)`; `DEFAULT` = the database's default.
+- The retry must wrap the transaction from outside; inside an aborted transaction every statement fails with 25P02.

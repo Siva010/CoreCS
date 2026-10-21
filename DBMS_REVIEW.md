@@ -1,6 +1,6 @@
 # Database (DBMS + SQL) track — review and ratings
 
-*First reviewed 13 October 2026, covering all 55 database lessons, then improved in four rounds. The track now has 62 lessons.*
+*First reviewed 13 October 2026, covering all 55 database lessons, then improved in five rounds. The track now has 62 lessons. Update 5 is the first of five batches that bring it up to the standard of the later tracks.*
 
 ## Verdict
 
@@ -10,6 +10,7 @@ The database track was already **strong on mechanism and production reality** �
 - **Update 2** went after practice and the missing topics: every lesson now has at least 6 practice items (half of them numericals or written exercises), the SQL Playground grows from 18 to 64 graded exercises including data changes, two new interactive labs cover the new theory, and four new lessons cover security, backups/PITR, data warehousing and PostgreSQL vs MySQL. **8.1 → 8.4.**
 - **Update 3** worked on understandability: long sentences split, a worked example with real values added wherever a mechanism was only described in prose, and hover definitions for 112 database terms. **8.4 → 8.5.**
 - **Update 4** added diagrams: 59 of 62 lessons now have one (22 before), every diagram was checked at its rendered size, and one that failed to render was fixed. Clarity 8.9 → 9.0; **overall stays 8.5.**
+- **Update 5** (transactions, batch 1 of 5) brought the ten transaction lessons up to the standard the OS, Networks and cross-domain tracks reached later: Java and Spring in every lesson, production signals with real output, lab-based practice in all ten, and no theory sentence over 30 words. Interview 8.5 → 8.6, practice 8.3 → 8.4, production 8.1 → 8.2; **overall stays 8.5** (8.49 → 8.55 before rounding).
 
 A note on honesty: I wrote these lessons, so this is a review of my own work. I scored against what a strong interviewer would expect and what a student would need, not against the effort that went in, and recorded each round's starting scores before changing anything. Scores for unchanged dimensions were not raised just because more content exists nearby.
 
@@ -30,15 +31,15 @@ Practice was scored with a fixed rule in update 2, so it can't drift upward by i
 
 ## Track-level scores
 
-| Dimension | First review (55 lessons) | After update 1 (58) | After update 2 (62) | After update 3 (62) | After update 4 (62) |
-|---|---|---|---|---|---|
-| Content accuracy & depth | 8.8 | 9.0 | 9.0 | 9.0 | **9.0** |
-| First-principles clarity | 8.6 | 8.6 | 8.6 | 8.9 | **9.0** |
-| Interview readiness | 6.9 | 8.6 | 8.5 | 8.5 | **8.5** |
-| Practice / self-testing | 5.6 | 6.4 | 8.3 | 8.3 | **8.3** |
-| Production relevance | 8.2 | 8.1 | 8.1 | 8.1 | **8.1** |
-| Syllabus coverage | 7.2 | 8.1 | 8.1 | 8.1 | **8.1** |
-| **Overall** | **7.5** | **8.1** | **8.4** | **8.5** | **8.5** |
+| Dimension | First review (55 lessons) | After update 1 (58) | After update 2 (62) | After update 3 (62) | After update 4 (62) | After update 5 (62) |
+|---|---|---|---|---|---|---|
+| Content accuracy & depth | 8.8 | 9.0 | 9.0 | 9.0 | 9.0 | **9.0** |
+| First-principles clarity | 8.6 | 8.6 | 8.6 | 8.9 | 9.0 | **9.0** |
+| Interview readiness | 6.9 | 8.6 | 8.5 | 8.5 | 8.5 | **8.6** |
+| Practice / self-testing | 5.6 | 6.4 | 8.3 | 8.3 | 8.3 | **8.4** |
+| Production relevance | 8.2 | 8.1 | 8.1 | 8.1 | 8.1 | **8.2** |
+| Syllabus coverage | 7.2 | 8.1 | 8.1 | 8.1 | 8.1 | **8.1** |
+| **Overall** | **7.5** | **8.1** | **8.4** | **8.5** | **8.5** | **8.5** |
 
 Interview readiness dips by 0.1 only because the four new lessons (8 each) pull the average toward 8; no lesson lost questions.
 
@@ -143,6 +144,44 @@ Clarity is an estimate (8.9 → 9.0): a diagram helps most where a lesson had on
 
 The three lessons without a Mermaid diagram already have a visual: an interactive visualization (consistent hashing, joins) or the evaluation order drawn as a text pipeline with a six-row trace (SELECT basics).
 
+## Update 5: transactions in Java and production (batch 1 of 5)
+
+The database track was improved first, and the later tracks raised the bar. By the time the cross-domain round finished, this track had 1 Java block in 62 lessons (the OS track has 94), lab-based practice in 17 lessons, and production relevance of 8.1, the lowest dimension anywhere. This round starts closing that gap, one area at a time, with the ten transaction lessons (levels 9–11).
+
+| Measure, ten transaction lessons | Before | After |
+|---|---|---|
+| Java blocks | 0 (and 1 Python) | 10 (no Python) |
+| Lessons whose practice uses a lab | 3 | 10 |
+| Interview questions | 68 | 85 |
+| Practice items | 62 | 80 |
+| Theory sentences over 30 words | 20 | 0 |
+
+What changed:
+
+- **Java where a backend developer meets transactions:**
+  - JDBC transaction control, and Spring `@Transactional`'s traps: self-invocation, checked exceptions that commit, rollback-only marking (`UnexpectedRollbackException`), and `REQUIRES_NEW` holding two connections;
+  - the serializable retry loop in JDBC, replacing a Python one, and why Spring's retry must wrap the transaction from outside;
+  - lost updates hidden in JPA's "load, change a field, commit", and `@Version`, including the REST trap where reloading the entity defeats the check;
+  - JPA lock modes, Spring Data `@Lock`, and a JDBC job-queue worker using `SKIP LOCKED`;
+  - `ReentrantReadWriteLock`'s upgrade deadlock and `StampedLock`'s optimistic read, as the textbook protocols in Java;
+  - MVCC in miniature with an `AtomicReference`, a tiny WAL-backed key-value store, a checksummed log reader, and a conflict-serializability checker.
+
+  All ten blocks compile. The four that make behavioural claims were also run: the store survives a torn last record and keeps working after it, the log reader stops at a torn or corrupted record, the checker orders the lesson's schedules correctly, and the lock upgrade and conversion behave as described.
+- **Production signals with real output:**
+  - `EXPLAIN (ANALYZE, WAL)`, measured on PostgreSQL 18: updating a 9.6 MB table wrote 39.6 MB of WAL right after a checkpoint and 27.2 MB without one;
+  - a replication slot holding back hundreds of gigabytes of WAL, and the query that shows it;
+  - PostgreSQL's deadlock report, its SSI serialization-failure message, and its crash-recovery log lines;
+  - PITR settings, invariant-check queries that catch anomalies after the fact, and which sessions really hold back vacuum.
+- **Accuracy:**
+  - The WAL lesson's monitoring advice was out of date: checkpoint counters moved from `pg_stat_bgwriter` to `pg_stat_checkpointer` in PostgreSQL 17.
+  - The MVCC lesson said any idle-in-transaction session pins vacuum's horizon. Precisely, only one holding a transaction id (it has written) or a snapshot (a running query, Repeatable Read or Serializable, an open cursor) does.
+  - During the cross-domain round, *Index Fundamentals*, *Index Design* and *SQL Joins* were corrected: they described MySQL's silent casts as PostgreSQL behaviour. PostgreSQL rejects `varchar = integer`, `uuid = text` and `text = bigint`, and silently casts only an integer column compared with `numeric` or `float8`.
+- **Practice: 18 new items.** Every lesson's practice now uses a lab: the WAL recovery lab (atomicity and durability, the WAL rule, a checkpoint bounding redo), the isolation lab (write skew at Repeatable Read vs Serializable, row versions), the lock manager, and the schedule analyzer's timestamp tab. Each lab answer was checked by running the lab. Two of them first described an uncommitted update being undone, when the lab, like a real engine, simply loses a log record that was never flushed; both were rewritten.
+- **Textbook names:** Elmasri & Navathe's lost update, temporary update and incorrect summary problems are mapped to the modern anomaly names, with a dirty-write timeline. Oracle's and SQL Server's isolation naming is noted.
+- **Re-scored:** Locking's syllabus moves from 7 to 8. The first review marked it down for 2PL variants, timestamp ordering and multiple granularity; those now have their own lesson, which Locking links, though Locking itself still teaches only the basics.
+
+Four batches remain: SQL and modeling (18 lessons), storage and indexing (15), distributed databases (15), and the four in-practice lessons.
+
 ## Readiness by audience
 
 | Audience | First review | Update 1 | Update 2 | Comment |
@@ -154,7 +193,7 @@ The three lessons without a Mermaid diagram already have a visual: an interactiv
 ## What is still missing (honest gaps)
 
 - **Written exercises are self-graded.** MCQs, the 113 numericals and the 64 SQL Playground exercises are checked automatically; the 80 written exercises rely on comparing your answer with the worked solution.
-- **Production relevance didn't move (8.1).** The rounds so far added practice, breadth and clarity, not more operational depth.
+- **Production relevance is still the weakest dimension (8.2).** Update 5 raised it for the transaction lessons only; the other 52 lessons wait for the next four batches.
 - **Diagrams are static.** They show one moment or one decision; stepping through a B+ tree split or a replication failover still needs a lab, and only some topics have one.
 - **Topics covered only as sections, not full lessons:** time-series databases, search engines (inverted indexes beyond GIN), vector databases, stream processing, and zero-downtime schema migrations at scale.
 - **No hands-on distributed drills.** Replication, failover and quorum labs are simulations; nothing replaces running Patroni or a Raft cluster and breaking it.
@@ -166,7 +205,7 @@ Scores after update 2. Arrows show update 1 → update 2 where something changed
 
 | Lesson | Questions | Practice items | Content | First principles | Interview | Practice | Production | Syllabus | Overall |
 |---|---|---|---|---|---|---|---|---|---|
-| `db-anomalies` | 6 | 2 → 6 | 9 | 9 | 9 | 5 → **9** | 8 | 7 | 7.8 → **8.5** |
+| `db-anomalies` | 6 → 7 | 2 → 6 → 8 | 9 | 9 | 9 | 5 → **9** | 8 → **9** | 7 → **9** | 7.8 → 8.5 → **9.0** |
 | `db-backups-pitr` | 8 | 6 (new) | 9 | 9 | 8 | 8 | 9 | 8 | **8.5** (new) |
 | `db-btree` | 7 | 3 → 6 | 9 | 9 | 9 | 8 | 8 | 9 | 8.7 |
 | `db-buffer-pool` | 6 | 3 → 6 | 9 | 9 | 9 | 7 → **8** | 9 | 8 | 8.5 → **8.7** |
@@ -174,10 +213,10 @@ Scores after update 2. Arrows show update 1 → update 2 where something changed
 | `db-clustered-indexes` | 6 | 2 → 6 | 9 | 8 | 9 | 5 → **8** | 8 | 7 | 7.7 → **8.2** |
 | `db-column-stores` | 6 | 3 → 6 | 9 | 9 | 7 | 6 → **8** | 7 | 7 | 7.5 → **7.8** |
 | `db-composite-covering-indexes` | 7 | 2 → 6 | 9 | 9 | 9 | 7 → **8** | 9 | 9 | 8.7 → **8.8** |
-| `db-concurrency-protocols` | 8 | 5 → 7 | 9 | 8 | 8 | 7 → **8** | 7 | 9 | 8.0 → **8.2** |
+| `db-concurrency-protocols` | 8 → 9 | 5 → 7 → 8 | 9 | 8 | 8 → **9** | 7 → 8 → **9** | 7 → **8** | 9 | 8.0 → 8.2 → **8.7** |
 | `db-consistency-models` | 6 | 2 → 6 | 9 | 9 | 9 | 5 → **8** | 8 | 9 | 8.2 → **8.7** |
 | `db-consistent-hashing` | 6 | 2 → 6 | 9 | 9 | 9 | 6 → **9** | 8 | 9 | 8.3 → **8.8** |
-| `db-crash-recovery` | 6 | 3 → 6 | 9 | 9 | 8 | 6 → **8** | 8 | 8 | 8.0 → **8.3** |
+| `db-crash-recovery` | 6 → 8 | 3 → 6 → 8 | 9 | 9 | 8 → **9** | 6 → 8 → **9** | 8 → **9** | 8 | 8.0 → 8.3 → **8.8** |
 | `db-data-warehousing` | 8 | 6 (new) | 8 | 8 | 8 | 8 | 7 | 8 | **7.8** (new) |
 | `db-distributed-sql` | 6 | 2 → 6 | 9 | 8 | 8 | 5 → **8** | 8 | 8 | 7.7 → **8.2** |
 | `db-distributed-transactions` | 6 | 3 → 6 | 9 | 9 | 9 | 6 → **8** | 9 | 8 | 8.3 → **8.7** |
@@ -190,14 +229,14 @@ Scores after update 2. Arrows show update 1 → update 2 where something changed
 | `db-index-design-practice` | 6 | 2 → 6 | 9 | 8 | 9 | 6 → **8** | 9 | 8 | 8.2 → **8.5** |
 | `db-index-fundamentals` | 8 | 3 → 6 | 9 | 9 | 9 | 6 → **8** | 9 | 7 | 8.2 → **8.5** |
 | `db-index-types-hashing` | 8 | 5 → 7 | 9 | 8 | 8 | 8 → **9** | 6 | 9 | 8.0 → **8.2** |
-| `db-isolation-levels` | 7 | 2 → 6 | 9 | 9 | 9 | 6 → **8** | 9 | 8 | 8.3 → **8.7** |
+| `db-isolation-levels` | 7 → 9 | 2 → 6 → 8 | 9 | 9 | 9 | 6 → 8 → **9** | 9 | 8 | 8.3 → 8.7 → **8.8** |
 | `db-keys-constraints` | 8 | 4 → 7 | 9 | 9 | 9 | 8 | 9 | 8 | 8.7 |
-| `db-locking` | 8 | 2 → 6 | 9 | 8 | 9 | 6 → **9** | 9 | 7 | 8.0 → **8.5** |
+| `db-locking` | 8 → 10 | 2 → 6 → 8 | 9 | 8 | 9 | 6 → **9** | 9 | 7 → **8** | 8.0 → 8.5 → **8.7** |
 | `db-lsm-trees` | 6 | 3 → 6 | 9 | 9 | 9 | 6 → **8** | 8 | 8 | 8.2 → **8.5** |
-| `db-mvcc` | 6 | 2 → 6 | 9 | 9 | 8 | 5 → **8** | 9 | 9 | 8.2 → **8.7** |
+| `db-mvcc` | 6 → 7 | 2 → 6 → 7 | 9 | 9 | 8 → **9** | 5 → 8 → **9** | 9 | 9 | 8.2 → 8.7 → **9.0** |
 | `db-normalization` | 7 | 4 → 7 | 9 | 9 | 9 | 9 | 8 | 8 | 8.7 |
 | `db-nosql-landscape` | 6 | 3 → 6 | 9 | 8 | 9 | 6 → **7** | 8 | 9 | 8.2 → **8.3** |
-| `db-optimistic-pessimistic` | 6 | 2 → 6 | 9 | 9 | 9 | 5 → **8** | 8 | 8 | 8.0 → **8.5** |
+| `db-optimistic-pessimistic` | 6 → 8 | 2 → 6 → 8 | 9 | 9 | 9 | 5 → 8 → **9** | 8 → **9** | 8 | 8.0 → 8.5 → **8.8** |
 | `db-pages-records` | 6 | 4 → 7 | 9 | 9 | 8 | 7 → **8** | 7 | 8 | 8.0 → **8.2** |
 | `db-partitioning` | 6 | 2 → 6 | 9 | 9 | 9 | 5 → **8** | 9 | 9 | 8.3 → **8.8** |
 | `db-postgres-vs-mysql` | 7 | 6 (new) | 9 | 9 | 8 | 8 | 9 | 7 | **8.3** (new) |
@@ -208,13 +247,13 @@ Scores after update 2. Arrows show update 1 → update 2 where something changed
 | `db-relational-model` | 7 | 4 → 7 | 9 | 8 | 7 | 7 → **8** | 6 | 8 | 7.5 → **7.7** |
 | `db-replication` | 7 | 3 → 6 | 9 | 9 | 9 | 7 → **8** | 9 | 8 | 8.5 → **8.7** |
 | `db-scans-joins` | 6 | 4 → 6 | 9 | 9 | 9 | 7 → **8** | 8 | 8 | 8.3 → **8.5** |
-| `db-schedules-serializability` | 8 | 5 → 7 | 9 | 9 | 8 | 8 → **9** | 6 | 9 | 8.2 → **8.3** |
+| `db-schedules-serializability` | 8 → 9 | 5 → 7 → 8 | 9 | 9 | 8 → **9** | 8 → **9** | 6 → **7** | 9 | 8.2 → 8.3 → **8.7** |
 | `db-schema-design` | 6 | 3 → 6 | 9 | 8 | 8 | 6 → **8** | 9 | 8 | 8.0 → **8.3** |
 | `db-security` | 9 | 8 (new) | 8 | 9 | 8 | 8 | 9 | 8 | **8.3** (new) |
 | `db-sharding` | 7 | 3 → 6 | 9 | 9 | 9 | 7 → **8** | 9 | 8 | 8.5 → **8.7** |
 | `db-specialized-indexes` | 6 | 2 → 6 | 9 | 8 | 9 | 5 → **8** | 8 | 7 | 7.7 → **8.2** |
-| `db-transactions-acid` | 7 | 3 → 6 | 9 | 9 | 9 | 6 → **8** | 9 | 8 | 8.3 → **8.7** |
-| `db-wal-durability` | 6 | 3 → 6 | 9 | 9 | 8 | 6 → **8** | 9 | 8 | 8.2 → **8.5** |
+| `db-transactions-acid` | 7 → 10 | 3 → 6 → 9 | 9 | 9 | 9 | 6 → 8 → **9** | 9 | 8 | 8.3 → 8.7 → **8.8** |
+| `db-wal-durability` | 6 → 8 | 3 → 6 → 8 | 9 | 9 | 8 → **9** | 6 → 8 → **9** | 9 | 8 | 8.2 → 8.5 → **8.8** |
 | `db-why-databases` | 8 | 4 → 7 | 9 | 9 | 8 | 7 → **8** | 8 | 8 | 8.2 → **8.3** |
 | `db-wide-column` | 6 | 3 → 6 | 9 | 8 | 9 | 6 → **8** | 8 | 8 | 8.0 → **8.3** |
 | `sql-aggregation` | 9 | 4 → 7 | 9 | 8 | 9 | 8 → **9** | 8 | 9 | 8.5 → **8.7** |

@@ -11,7 +11,7 @@ relevance: essential
 stage: 2
 prerequisites: [sql-dml-ddl]
 related: [db-wal-durability, db-anomalies, db-isolation-levels, db-locking, db-mvcc, db-crash-recovery, db-distributed-transactions, x-durability-chain]
-labs: [isolation]
+labs: [isolation, wal-recovery]
 tags: [transaction, acid, atomicity, consistency, isolation, durability, commit, rollback, savepoint, autocommit, begin, idle in transaction, long running transaction]
 ---
 
@@ -69,6 +69,36 @@ COMMIT;                        -- or ROLLBACK;
 - **Autocommit**: without `BEGIN`, each statement is its own transaction (the default in most drivers and `psql`).
 - In PostgreSQL, **any error aborts the transaction**: further statements fail with "current transaction is aborted" until `ROLLBACK` (or rollback to a savepoint). MySQL continues after many errors, leaving it to the application.
 - DDL is transactional in PostgreSQL (you can roll back a `CREATE TABLE`); MySQL commits implicitly on most DDL.
+
+### Transactions from Java
+
+JDBC starts in autocommit mode, so a unit of several statements needs an explicit boundary:
+
+```java
+try (Connection c = dataSource.getConnection()) {
+    c.setAutoCommit(false);                 // BEGIN goes out with the next statement
+    try {
+        debit(c, "A", 500);
+        credit(c, "B", 500);
+        c.commit();
+    } catch (SQLException | RuntimeException e) {
+        c.rollback();                       // undo the debit if the credit failed
+        throw e;
+    }
+}
+```
+
+Spring's `@Transactional` writes that code for you. A proxy around the bean borrows a connection, turns autocommit off, calls your method, and commits, or rolls back if the method throws. Because the proxy does the work, these situations decide whether you really get the transaction you expect:
+
+| Situation | What happens |
+|---|---|
+| A method calls a `@Transactional` method *on the same object* | no transaction: the call never passes through the proxy |
+| The annotated method is `private` | the annotation is ignored, for the same reason |
+| The method throws a checked exception such as `IOException` | the transaction **commits**: by default only `RuntimeException` and `Error` roll back (`rollbackFor` changes that) |
+| An inner `@Transactional` method throws, and the outer method catches it | the shared transaction is already marked rollback-only, so the outer commit fails with `UnexpectedRollbackException` |
+| `propagation = REQUIRES_NEW` | the outer transaction is suspended but keeps its connection, and a second connection is borrowed |
+
+PostgreSQL's "current transaction is aborted" state reaches Java as SQLState `25P02` on every statement after the first error, until the rollback.
 
 ### Atomicity: how "all or nothing" works
 
@@ -223,6 +253,18 @@ A named point inside a transaction you can roll back to without abandoning the w
 
 With autocommit on (the default in most drivers and consoles), each statement is its own transaction, committed immediately. Multi-statement work like a transfer must be wrapped in an explicit `BEGIN … COMMIT`, or a failure between statements leaves partial changes. The opposite trap: turning autocommit off in a console and forgetting to commit, leaving an open transaction that holds locks and blocks vacuum.
 
+### [L2 · how] What does Spring's `@Transactional` actually do, and when does it silently not apply?
+
+Spring wraps the bean in a proxy. When a caller invokes an annotated method through the proxy, it gets a connection from the transaction manager, starts a transaction, calls the method, then commits, or rolls back if a `RuntimeException` or `Error` escaped. It silently does nothing when the call doesn't go through the proxy: a method calling another annotated method on `this`, or an annotated `private` method. It also commits when it might seem it shouldn't: a checked exception doesn't trigger a rollback unless `rollbackFor` says so, and an exception caught inside the method never reaches the proxy at all.
+
+### [L3 · debugging] A service catches an exception thrown by another `@Transactional` method and carries on, but the final commit throws `UnexpectedRollbackException`. Why?
+
+Both methods use the default propagation, `REQUIRED`, so the inner method joined the outer method's transaction instead of starting its own. When the inner method threw a `RuntimeException`, Spring's interceptor marked that shared transaction rollback-only before the exception reached the outer `catch`. Catching it doesn't undo the mark. At the end, the outer commit finds the flag, rolls everything back and throws `UnexpectedRollbackException` ("Transaction silently rolled back because it has been marked as rollback-only"). If the step really is optional, run it in its own transaction (`REQUIRES_NEW`), or behind a savepoint (`NESTED`), or don't let it throw.
+
+### [L2 · why] Why can `REQUIRES_NEW` exhaust or deadlock a connection pool?
+
+The outer transaction is only suspended: it keeps its connection, and its locks, while the inner transaction borrows a second one. So each request needs two connections at the same time. When every connection is held by an outer transaction waiting for its second, nobody can proceed until the pool's timeout fires. A subtler version needs only one request: if the outer transaction has updated a row and the inner one updates the same row, the inner waits for the outer's lock, while the outer waits for the inner method to return. The database can't see that cycle, because one half of it is the application thread, so it hangs until a lock or statement timeout.
+
 ## Practice
 
 ### [mcq] Which ACID property is primarily the application's responsibility?
@@ -281,6 +323,29 @@ COMMIT;
 The guard `balance >= 500` and the subtraction happen in one statement under the row lock, so two concurrent transfers can't both pass the check. If the second UPDATE fails (account 2 missing, a constraint, a crash), nothing is committed: ROLLBACK — or recovery after a crash — undoes the first UPDATE, so money is never destroyed or created. A CHECK (balance >= 0) constraint is a good second line of defence.
 :::
 
+### [numeric 10] A service method uses `REQUIRES_NEW` inside an outer transaction, so each request needs two connections at once. The pool has 10 connections. What is the smallest number of simultaneous requests that can leave every one of them waiting for its second connection?
+
+:::answer
+With 10 requests, each can hold one connection for its outer transaction, leaving none for any inner one: all **10** wait until the pool's timeout. With 9, one connection is always free, so one request completes and releases two. Size such pools above the number of concurrent requests, or avoid `REQUIRES_NEW` on hot paths.
+:::
+
+### [mcq] A Spring `@Transactional` method inserts an order and then throws `IOException` (a checked exception). With default settings, what happens to the insert?
+
+- [ ] It is rolled back, like any exception
+- [x] It is committed: by default only `RuntimeException` and `Error` cause a rollback
+- [ ] Spring retries the method
+- [ ] The transaction stays open until the next call
+
+Spring follows EJB's convention that checked exceptions are business outcomes. Add `rollbackFor = Exception.class` (or throw an unchecked exception) when a checked exception should undo the work.
+
+### [exercise] In the [WAL recovery lab](lab:wal-recovery), run two experiments. First load "Crash after COMMIT" and recover. Then reset, make T1 update P1 to 50 and P2 to 250 without committing, write P1 to disk, crash, and recover. Which ACID property does each experiment demonstrate, and how?
+
+:::solution
+**Experiment 1 shows durability.** T1 moved 50 from P1 to P2 and committed, but neither page reached disk before the crash. Recovery redoes T1's logged changes, so the committed transfer survives, rebuilt from the WAL that COMMIT had flushed.
+
+**Experiment 2 shows atomicity.** P1 = 50 reached disk before the crash, a steal, so the WAL rule first forced T1's log record for it. T1's record for P2 was still in memory and was lost in the crash, along with the P2 change itself. Recovery finds that T1 has no commit record, so it is a loser. Redo skips P1, whose page LSN shows the change is already there, and undo restores P1 to 100, writing a compensation record. P1 ends at 100 and P2 at 200: neither of T1's updates survives, although one had reached the data file.
+:::
+
 ## Quick Revision
 
 - Transaction = all-or-nothing, isolated, durable unit of work.
@@ -290,3 +355,5 @@ The guard `balance >= 500` and the subtraction happen in one statement under the
 - Relaxed durability (async commit) loses recent commits, never consistency; fsync=off can corrupt.
 - States: active → partially committed → committed; or → failed → aborted (then retry or report). Durable commit record = committed.
 - Savepoints roll back part of a transaction; autocommit makes every statement its own transaction.
+- JDBC: `setAutoCommit(false)`, `commit()`, `rollback()` in a catch. Spring `@Transactional` is a proxy: self-invocation and `private` methods get no transaction; checked exceptions commit by default.
+- Inner exception under `REQUIRED` marks the shared transaction rollback-only → `UnexpectedRollbackException`. `REQUIRES_NEW` needs a second connection per request.

@@ -45,7 +45,7 @@ Waiting risks deadlock; refusing and checking risk wasted work. Every protocol b
 - **Rigorous 2PL**: hold **all** locks (shared too) until commit. Transactions serialize in commit order.
 - **Lock conversion**: upgrade S → X (only in the growing phase); downgrade X → S (only in the shrinking phase).
 - **Multiple granularity locking**: lock a hierarchy (database → table → page → row) with **intention** modes IS, IX and SIX on ancestors.
-- **Timestamp ordering (TO)**: each transaction gets a timestamp TS(T) at start; each item X keeps read_TS(X) and write_TS(X); conflicting operations must occur in timestamp order or the transaction is aborted and restarted.
+- **Timestamp ordering (TO)**: each transaction gets a timestamp TS(T) at start, and each item X keeps read_TS(X) and write_TS(X). Conflicting operations must occur in timestamp order, or the transaction is aborted and restarted.
 - **Thomas's write rule**: a modification of TO that **ignores** an obsolete write instead of aborting.
 - **Validation-based protocol** (optimistic concurrency control): read phase → validation phase → write phase.
 - **Wait-die / wound-wait**: timestamp-based deadlock *prevention* rules for lock waits.
@@ -79,9 +79,10 @@ Locking a whole table is cheap but blocks everyone; locking a million rows is pr
 | **SIX** | ✓ | ✗ | ✗ | ✗ | ✗ |
 | **X** | ✗ | ✗ | ✗ | ✗ | ✗ |
 
-- **IS**: "I'll take S locks somewhere below." **IX**: "I'll take X locks below." **SIX**: S on this whole node plus IX — read everything, update a few (a full scan that modifies some rows).
-- Rules: to lock a node in S or IS, hold IS or IX on its parent; to lock it in X, IX or SIX, hold IX or SIX on its parent. Acquire root-to-leaf, release leaf-to-root.
-- So a transaction updating row 42 holds IX on the table and X on the row; another wanting S on the whole table sees the IX and waits — no row scan needed. InnoDB uses exactly this (table IS/IX plus row locks); SQL Server additionally escalates many row locks to one table lock ([Locking](lesson:db-locking)).
+- **IS**: "I'll take S locks somewhere below." **IX**: "I'll take X locks below."
+- **SIX**: S on this whole node, plus IX. It means "read everything, update a few", as in a full scan that modifies some rows.
+- Rules: to lock a node in S or IS, hold IS or IX on its parent. To lock it in X, IX or SIX, hold IX or SIX on its parent. Acquire root-to-leaf, release leaf-to-root.
+- So a transaction updating row 42 holds IX on the table and X on the row. Another transaction wanting S on the whole table sees the IX and waits, with no row scan needed. InnoDB uses exactly this (table IS/IX plus row locks); SQL Server additionally escalates many row locks to one table lock ([Locking](lesson:db-locking)).
 
 ### Timestamp ordering
 
@@ -153,6 +154,37 @@ flowchart TD
 - **Distributed SQL**: timestamp-ordered MVCC with commit-time validation (CockroachDB) or 2PL with wound-wait (Spanner) ([Distributed SQL](lesson:db-distributed-sql)).
 
 The textbook protocols survive as building blocks: MVCC plus timestamp ordering is "multiversion timestamp ordering"; SSI is validation over rw-dependencies.
+
+### The same protocols in Java's locks
+
+Java's standard locks are these protocols on a single object, and they have the same failure modes:
+
+- `ReentrantReadWriteLock` gives shared and exclusive locks. A thread may downgrade (take the read lock while holding the write lock) but never upgrade. A thread that holds the read lock and asks for the write lock waits for all readers to leave, including itself, so it waits forever. That is the S→X conversion deadlock with a single participant.
+- `StampedLock.tryOptimisticRead()` and `validate(stamp)` are validation-based control: read without locking, then check that no writer got in meanwhile, and fall back to a real lock if one did. `tryConvertToWriteLock(stamp)` is lock conversion that fails instead of deadlocking.
+
+```java
+final class Account {
+    private final StampedLock lock = new StampedLock();
+    private long balance;
+
+    long balance() {
+        long stamp = lock.tryOptimisticRead();     // read phase: no lock taken
+        long seen = balance;
+        if (!lock.validate(stamp)) {               // validation: did a writer get in?
+            stamp = lock.readLock();               // conflict: fall back to a shared lock
+            try { seen = balance; } finally { lock.unlockRead(stamp); }
+        }
+        return seen;
+    }
+
+    void deposit(long amount) {
+        long stamp = lock.writeLock();             // exclusive, like an X lock
+        try { balance += amount; } finally { lock.unlockWrite(stamp); }
+    }
+}
+```
+
+Optimistic reads win when writes are rare, exactly as for transactions: under frequent writes, validation keeps failing and every read pays twice.
 
 ### Multiversion timestamp ordering
 
@@ -247,6 +279,10 @@ Three phases: a read phase that executes the transaction against private copies 
 
 Both hold S on the row; each upgrade to X must wait for the other's S lock to be released, which never happens — a conversion deadlock, independent of lock ordering. Avoid it by taking the exclusive lock at read time (`SELECT … FOR UPDATE`), by using an update-lock mode where available (SQL Server's U lock is compatible with S but not with another U), or by replacing read-then-write with a single atomic UPDATE.
 
+### [L2 · compare] Where do these protocols show up in Java's own concurrency tools?
+
+`ReentrantReadWriteLock` is shared/exclusive locking on one object, and it shows the upgrade problem directly: it allows downgrading a write lock to a read lock but not upgrading, because a reader asking for the write lock would wait for itself. `StampedLock`'s optimistic read is a validation protocol: read without a lock, `validate` the stamp, and fall back to a read lock if a writer interfered. `tryConvertToWriteLock` is conversion that fails instead of deadlocking. A version field checked with `compareAndSet` (or JPA's `@Version`) is optimistic validation at the level of one object or row.
+
 ## Practice
 
 ### [mcq] TS(T1) = 5, TS(T2) = 10. T2 reads X, then T1 tries to write X. Under basic timestamp ordering…
@@ -285,7 +321,7 @@ IX is compatible only with IS and IX.
 
 Acquiring every lock before starting (or none) means a transaction never waits while holding locks.
 
-### [exercise] Apply basic timestamp ordering with TS(T1) = 1, TS(T2) = 2 to: `R1(X) R2(X) W2(X) W1(X)`. Which operation fails, and what happens? Would Thomas's write rule change the outcome?
+### [exercise] Apply basic timestamp ordering with TS(T1) = 1, TS(T2) = 2 to: `R1(X) R2(X) W2(X) W1(X)`. Which operation fails, and what happens? Would Thomas's write rule change the outcome? Check both answers in the [Schedule Analyzer](lab:schedules)'s timestamp-ordering tab, with TS(Ti) = i.
 
 :::solution
 1. R1(X): TS 1 ≥ write_TS 0 → OK, read_TS(X) = 1.
@@ -315,6 +351,15 @@ The phases overlap, so the first condition (T1 finished writing before T2 starte
 With T1's write set {D}: {D} ∩ {A, B} = ∅, and T1 finished writing before T2 validates, so T2 **passes** and enters its write phase.
 :::
 
+### [mcq] A thread holds a `ReentrantReadWriteLock`'s read lock and calls `writeLock().lock()`. Which protocol problem is this, and what happens?
+
+- [ ] Nothing: the lock upgrades automatically, as S→X conversion allows
+- [x] A conversion deadlock: the write lock waits for every reader to leave, including this thread, so it blocks forever
+- [ ] The read lock is released and the write lock granted
+- [ ] An `IllegalMonitorStateException` is thrown at once
+
+`ReentrantReadWriteLock` supports downgrading only. Release the read lock first and re-check the state after taking the write lock, or use `StampedLock.tryConvertToWriteLock`, which returns 0 instead of blocking when it can't convert.
+
 ## Quick Revision
 
 - Three strategies: wait (locking), order by timestamp and restart latecomers (TO), run then validate (OCC).
@@ -322,3 +367,4 @@ With T1's write set {D}: {D} ∩ {A, B} = ∅, and T1 finished writing before T2
 - Intention locks: IS, IX, SIX on ancestors; IX compatible only with IS/IX; lock root→leaf, release leaf→root. Use FOR UPDATE / U locks to avoid S→X upgrade deadlocks.
 - TO: read fails if TS < write_TS; write fails if TS < read_TS or TS < write_TS (Thomas: skip the latter). No deadlocks; restarts and starvation.
 - OCC: read → validate → write. Wait-die (old waits, young dies) / wound-wait (old wounds, young waits); restart with the original timestamp.
+- Java: `ReentrantReadWriteLock` can't upgrade (a reader asking for the write lock waits for itself); `StampedLock` optimistic read + `validate` = validation protocol; `tryConvertToWriteLock` = conversion that can fail.

@@ -83,6 +83,31 @@ Without the version check, Bob's save would silently overwrite Alice's edit.
 
 ORMs support this directly (JPA `@Version`, Rails `lock_version`, Django via conditional updates).
 
+### Optimistic locking in JPA, and its classic trap
+
+A `@Version` field makes Hibernate add the version check to every update of the row:
+
+```java
+@Entity
+class Document {
+    @Id Long id;
+    String body;
+    @Version long version;            // every UPDATE gets "... AND version = ?" and bumps it
+}
+
+// PUT /documents/{id}, with If-Match carrying the version the client read
+@Transactional
+public Document save(long id, long clientVersion, String newBody) {
+    Document d = em.find(Document.class, id);
+    if (d.version != clientVersion)                   // compare with what the *user* saw
+        throw new ConflictException(d.version);      // → 412 Precondition Failed
+    d.body = newBody;                                 // commit: UPDATE ... WHERE id = ? AND version = ?
+    return d;
+}
+```
+
+The explicit comparison is the part teams forget. `em.find` loads the *latest* version, so without it the `@Version` check only covers the few milliseconds between this read and this commit, not the minutes the user spent editing. The second of two editors would silently overwrite the first. Hibernate's own check still matters: it catches a writer that sneaks in between `find` and commit, and reports it as `OptimisticLockException`, which Spring wraps as `ObjectOptimisticLockingFailureException`.
+
 ### Across HTTP: ETags and If-Match
 
 The same pattern for REST APIs ([HTTP Caching](lesson:cn-http-caching)):
@@ -129,7 +154,7 @@ At low conflict probability optimistic wins (no waiting, no lock bookkeeping, wo
 
 ### Atomic statements beat both
 
-Where the update can be expressed as a single statement on current values — `SET stock = stock - 1 WHERE stock > 0`, `SET views = views + 1`, `INSERT … ON CONFLICT DO UPDATE` — the database does the read-modify-write atomically under its own row lock, with neither application-level locking nor retries.
+Sometimes the update can be expressed as a single statement on current values: `SET stock = stock - 1 WHERE stock > 0`, `SET views = views + 1`, `INSERT … ON CONFLICT DO UPDATE`. Then the database does the read-modify-write atomically, under its own row lock, with neither application-level locking nor retries.
 :::
 
 ## Example
@@ -165,6 +190,7 @@ Pessimistic is predictable under contention but couples transactions (waits, dea
 
 - Use a DB-generated version increment (`version = version + 1` in SQL, or a trigger) rather than trusting clients.
 - Expose conflicts meaningfully to users ("This document was changed by Priya 2 minutes ago — review changes").
+- Count conflicts: the rate of `OptimisticLockException`s or 412 responses per endpoint. A rising rate means contention has grown past what optimistic control handles well; move that path to a lock or an atomic statement.
 
 ## Deeper Connections
 
@@ -211,6 +237,14 @@ Under high contention on the same rows: every conflict discards a whole transact
 ### [L1 · compare] What is the difference between `SELECT … FOR UPDATE` and `FOR SHARE`, and what do `NOWAIT` and `SKIP LOCKED` change?
 
 `FOR UPDATE` locks the selected rows exclusively against other writers and other `FOR UPDATE`/`FOR SHARE` lockers (plain MVCC reads still proceed); `FOR SHARE` lets several transactions hold the lock together but blocks updates and deletes. By default a conflicting request waits; `NOWAIT` fails immediately instead, and `SKIP LOCKED` returns only rows nobody else has locked — the standard way to let many workers pull from a job queue without blocking each other.
+
+### [L2 · how] How does JPA's `@Version` work, and why doesn't it protect a REST edit on its own?
+
+Hibernate reads the version with the entity and turns every update into `UPDATE ... SET ..., version = version + 1 WHERE id = ? AND version = ?`. If the row's version changed since it was read, no row matches, and Hibernate throws `OptimisticLockException`. In a REST edit, though, the read that matters happened minutes earlier, in the user's GET. A PUT handler that calls `find` loads the current version, so Hibernate's check passes and the user's stale edit overwrites someone else's. The client must send back the version it saw (an `If-Match` ETag or a field in the request body), and the handler must compare it before applying the change.
+
+### [L2 · how] What should a Spring service do when an update fails with `ObjectOptimisticLockingFailureException`?
+
+Decide whether the operation can be redone automatically. For machine-driven updates (incrementing a counter, recalculating a total), retry the whole transactional method, from outside the transaction, a few times with backoff: the retry reloads the entity and reapplies the change. For human edits, don't retry blindly. Return a conflict (409 or 412) with the current version, so the user can review the other change and merge. In both cases, log or count the conflicts: frequent ones mean the row is hot enough to deserve a lock or an atomic statement instead.
 
 ## Practice
 
@@ -275,6 +309,23 @@ RETURNING version;
 No lock is held while the user edits for minutes; the check costs one extra predicate at write time. A request without `If-Match` can be rejected with `428 Precondition Required` so clients can't skip the check.
 :::
 
+### [exercise] In the [lock manager lab](lab:db-locks), load "Consistent lock order" and step through it. How long does T2 wait, and what is the cost? What would T2 experience under optimistic control instead?
+
+:::solution
+T2 asks for an exclusive lock on row A while T1 holds it, so T2 joins the queue and waits until T1 commits. Only then is T2 granted row A, and it continues. Nothing is wasted: T2 does its work once. The cost is latency, because T2's wait includes all of T1's transaction, and with many writers on one row, the waits add up into a queue.
+
+Under optimistic control T2 wouldn't wait at all. It would read row A, do its work and, at write time, its version check would fail because T1 had changed the row. T2 would then redo its work. That is cheaper when conflicts are rare, and worse when they're frequent, because each conflict throws away a whole attempt.
+:::
+
+### [mcq] A PUT handler loads a document with `em.find`, copies the new body from the request onto it, and relies on the entity's `@Version`. Two users each edited the document for five minutes and save a second apart. What happens?
+
+- [ ] The second save fails with `OptimisticLockException`
+- [x] Both saves succeed: each loaded the current version just before saving, so the second silently overwrites the first
+- [ ] The second save waits for the first user's lock
+- [ ] Hibernate merges the two bodies
+
+`@Version` only compares against the version this request loaded. The handler must compare the version the *client* read (sent as `If-Match` or in the body) and reject a stale one with 412.
+
 ## Quick Revision
 
 - Pessimistic: lock first (FOR UPDATE), others wait; good for hot rows and short critical sections.
@@ -283,3 +334,5 @@ No lock is held while the user edits for minutes; the check costs one extra pred
 - Atomic single statements avoid both. Pair retries with idempotency keys.
 - Optimistic degrades into retry storms on hotspots.
 - HTTP optimistic concurrency: ETag + If-Match → 412 on conflict. Optimistic loses under high contention (retry storms); pessimistic loses when think time is long.
+- JPA `@Version`: Hibernate adds `AND version = ?`; a miss throws `OptimisticLockException` (Spring: `ObjectOptimisticLockingFailureException`).
+- Across HTTP, the client's version must come back (If-Match) and be compared explicitly; `find` alone always sees the latest version.

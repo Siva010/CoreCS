@@ -33,7 +33,7 @@ LSN 5080  xid 901  COMMIT          ← flushed to disk before the client hears "
 
 ## Definition
 
-- **WAL (write-ahead log)** / redo log (InnoDB) / transaction log (SQL Server): an append-only sequence of records describing changes ("page 812: insert tuple at slot 5 with bytes …"; "xid 901 committed").
+- **WAL (write-ahead log)** / redo log (InnoDB) / transaction log (SQL Server): an append-only sequence of records describing changes. For example: "page 812: insert tuple at slot 5 with bytes …", or "xid 901 committed".
 - **LSN (log sequence number)**: a record's position in the log (a byte offset). Every data page stores the LSN of the last record that changed it.
 - **The WAL rule**: a dirty data page may be written to disk only after all log records up to its page LSN are durable.
 - **Commit rule**: a transaction is committed when its commit record is durable.
@@ -42,7 +42,7 @@ LSN 5080  xid 901  COMMIT          ← flushed to disk before the client hears "
 
 ## Why It Exists
 
-**The problem.** COMMIT must guarantee the change survives a crash — but the changed rows are scattered over many pages, and writing them all synchronously is slow and can be interrupted halfway.
+**The problem.** COMMIT must guarantee the change survives a crash. But the changed rows are scattered over many pages, and writing them all synchronously is slow and can be interrupted halfway.
 
 **The idea.** Separate *remembering* a change from *applying* it. Remembering is cheap: append a small note to the end of one file and flush that. Applying (updating the real pages) can happen later at leisure — if a crash interrupts it, the notes say exactly what to redo. The reasons this wins:
 
@@ -139,7 +139,78 @@ InnoDB has its own redo log (crash recovery) while the server layer writes the *
 
 ### WAL volume management
 
-WAL is retained until checkpoints pass it *and* all consumers (replicas via replication slots, archivers) have it. An abandoned replication slot or a failing archive command makes WAL accumulate until the disk fills — a classic outage ([Replication](lesson:db-replication)).
+WAL is retained until checkpoints pass it *and* all consumers (replicas via replication slots, archivers) have it. An abandoned replication slot or a failing archive command makes WAL accumulate until the disk fills — a classic outage ([Replication](lesson:db-replication)). One query shows what each slot is holding back:
+
+```sql
+SELECT slot_name, active,
+       pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) AS retained
+FROM pg_replication_slots;
+```
+
+```text
+   slot_name     | active | retained
+-----------------+--------+----------
+ replica_b       | t      | 18 MB
+ debezium_orders | f      | 412 GB
+```
+
+The second slot belonged to a change-data-capture connector that was switched off without dropping its slot. PostgreSQL keeps every byte of WAL it might still ask for. Since PostgreSQL 13, `max_slot_wal_keep_size` caps that, at the price of invalidating the slot.
+
+### How much WAL does a statement write?
+
+`EXPLAIN (ANALYZE, WAL)` reports it. Measured on PostgreSQL 18, updating every row of a 100,000-row table (1,235 pages, 9.6 MB) right after a checkpoint (output abridged):
+
+```text
+Update on accounts (actual rows=0.00 loops=1)
+  WAL: records=302601 fpi=1511 bytes=39577437
+```
+
+Running the same UPDATE again, with no checkpoint in between, wrote `records=303519 bytes=27215881` and no full-page images. Two lessons follow. First, WAL volume is a multiple of the data changed: each row needs a new version, index entries and page housekeeping, about three records here. Second, the first change to each page after a checkpoint adds a full page image: about 12 MB extra in this run. `pg_stat_wal` keeps the same counters for the whole server.
+
+### The WAL rule in a few lines of Java
+
+The same discipline makes any program crash-safe. A tiny key-value store that logs before it applies:
+
+```java
+final class TinyKv {
+    private final Path file;
+    private final FileChannel log;
+    private final Map<String, String> data = new HashMap<>();
+
+    TinyKv(Path file) throws IOException {
+        this.file = file;
+        this.log = FileChannel.open(file, StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND);
+        replay();
+    }
+
+    void put(String key, String value) throws IOException {
+        byte[] record = (key + "\t" + value + "\n").getBytes(StandardCharsets.UTF_8);
+        log.write(ByteBuffer.wrap(record));   // 1. append the change to the log
+        log.force(false);                     // 2. flush it: from here on, the put survives a crash
+        data.put(key, value);                 // 3. only now apply it
+    }
+
+    private void replay() throws IOException {
+        byte[] bytes = Files.readAllBytes(file);
+        int end = bytes.length;
+        while (end > 0 && bytes[end - 1] != '\n') end--;   // a last record the crash cut off...
+        log.truncate(end);                                  // ...is removed, so new records start clean
+        if (end == 0) return;
+        for (String line : new String(bytes, 0, end, StandardCharsets.UTF_8).split("\n")) {
+            String[] kv = line.split("\t", 2);
+            if (kv.length == 2) data.put(kv[0], kv[1]);
+        }
+    }
+
+    String get(String key) { return data.get(key); }
+}
+```
+
+Step 2 is the commit point. A crash before it loses the put, and the caller was never told it succeeded. A crash after it is repaired by `replay()` on the next start. A real log adds three things this one lacks:
+
+- a checksum per record, because a newline can't detect every torn write ([Crash Recovery](lesson:db-crash-recovery));
+- checkpoints, so replay doesn't start from the beginning of time;
+- group commit, so one `force` serves many writers.
 :::
 
 ## Example
@@ -176,7 +247,7 @@ Recovery: start at t0's redo point; replay LSN 100 onto page 12 (disk copy's LSN
 
 ## In Production
 
-- Monitor WAL generation rate, replication slot lag, archive success, checkpoint frequency and duration (`pg_stat_bgwriter`, `pg_stat_wal`).
+- Monitor WAL generation rate (`pg_stat_wal`), replication slot lag, archive success (`pg_stat_archiver`), and checkpoint frequency and duration. Checkpoint counters moved from `pg_stat_bgwriter` to `pg_stat_checkpointer` in PostgreSQL 17, and `log_checkpoints` is on by default since PostgreSQL 15.
 - Backups = base backup + continuous WAL archive; test restores regularly — a backup that has never been restored is a hope, not a backup.
 
 ## Deeper Connections
@@ -215,6 +286,14 @@ If a data page with an uncommitted change reached disk first and the system cras
 ### [L2 · how] How does group commit increase throughput without weakening durability?
 
 Instead of one log flush per commit, the database waits briefly while several transactions' commit records accumulate in the WAL buffer, then makes them all durable with one `fsync`. Each transaction still waits for its own commit record to be on disk before COMMIT returns, so durability is unchanged — but one ~1 ms flush now covers dozens of commits, so throughput scales with concurrency.
+
+### [L2 · how] How do you measure how much WAL a statement writes, and why can an UPDATE write several times the size of the data it changes?
+
+Run it under `EXPLAIN (ANALYZE, WAL)`, which reports WAL records, full-page images (`fpi`) and bytes for the statement. Alternatively, compare `pg_current_wal_lsn()` before and after with `pg_wal_lsn_diff`, or watch `pg_stat_wal` for the whole server. An UPDATE writes a new row version (not a delta), new index entries unless the update is HOT, and page housekeeping records. Right after a checkpoint, the first change to every page also logs a full image of it. Updating a 9.6 MB table this way wrote about 40 MB of WAL, so bulk updates should be batched and scheduled with that volume in mind, for replicas and archiving too.
+
+### [L3 · design] Design a small key-value store, in Java, that never loses an acknowledged write after a crash.
+
+Keep the data in memory, and log every change before applying it: append a record of length, checksum and payload to a log file, `FileChannel.force` it, then update the map and acknowledge. On startup, replay the log, stopping at the first record whose length or checksum doesn't check out, since that is where the crash cut it off. Bound replay time with periodic snapshots: write the map to a new file, force it, rename it atomically over the old snapshot, then start a new log. For throughput, let concurrent writers share one `force` (group commit). These are the same pieces as a database WAL: the commit point, idempotent replay, checkpoints and group commit.
 
 ## Practice
 
@@ -269,6 +348,20 @@ After each checkpoint, the first change to a page logs a full image of it. Recov
 Afterwards A = 950, B = 2050, C = 700. With deferred modification, T2's record would hold only the new value and recovery would simply ignore it, because uncommitted changes never reached the data.
 :::
 
+### [exercise] In the [WAL recovery lab](lab:wal-recovery), load "Steal, then crash" and recover. What did the WAL rule force before P3 was written to disk, and why does undo depend on it?
+
+:::solution
+T2 changed P3 from 300 to 0 and never committed, yet P3 was written to disk (a steal). Before that page write, the WAL rule forced the log up to P3's page LSN, so T2's update record, holding the old value 300, was already durable.
+
+After the crash, analysis finds that T2 has no commit record, so it is a loser. Redo sees that P3 on disk already has the change. Undo then restores 300 from the logged old value and writes a compensation record. Without the WAL rule, the disk could hold P3 = 0 with no record of the old value anywhere, and atomicity could not be restored.
+:::
+
+### [numeric 432 unit=GB] A replication slot's consumer has been down for 6 hours, and the server writes 20 MB of WAL per second. How much WAL is the slot holding back?
+
+:::answer
+6 × 3,600 s × 20 MB/s = 432,000 MB = **432** GB, all kept in `pg_wal` until the consumer returns or the slot is dropped. Alert on slot lag long before that, or cap it with `max_slot_wal_keep_size`.
+:::
+
 ## Quick Revision
 
 - Log first, apply lazily: COMMIT = commit record durable (fsync); pages written later.
@@ -277,3 +370,5 @@ Afterwards A = 950, B = 2050, C = 700. With deferred modification, T2's record w
 - Durability depends on the whole storage stack honoring flushes.
 - One log → crash recovery, physical replication, PITR, CDC. Watch WAL retention (slots, archiving).
 - Deferred modification → redo-only log (no-steal); immediate modification → undo + redo (steal) — what real engines use.
+- Measure WAL with `EXPLAIN (ANALYZE, WAL)` or `pg_stat_wal`: updates write several times the data size, more right after a checkpoint (full-page images).
+- Slots retain WAL until consumed: check `pg_replication_slots`, cap with `max_slot_wal_keep_size`. Checkpoint stats: `pg_stat_checkpointer` (PostgreSQL 17+).
