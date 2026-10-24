@@ -2,8 +2,8 @@
 
 **Understand the machine. Master the interview.**
 
-A mechanism-first curriculum covering Operating Systems, Computer Networks and Databases (with SQL), built as a Next.js site: 157 concept lessons, 930+ interview questions, nearly 600 practice
-items, 39 interactive labs and visualizations (including a real PostgreSQL compiled to WebAssembly with 64 graded SQL exercises), 18 incident case studies, 16 "under the hood" walkthroughs and a page of interview traps.
+A mechanism-first curriculum covering Operating Systems, Computer Networks and Databases (with SQL), built as a Next.js site: 167 concept lessons, 1,150+ interview questions, 1,100+ practice
+items, 51 interactive labs and visualizations (including a real PostgreSQL compiled to WebAssembly with 71 graded SQL exercises), 18 incident case studies, 16 "under the hood" walkthroughs and a page of interview traps.
 
 The goal isn't to list answers to memorize. It's to teach enough of the underlying systems that the answers become consequences of understanding.
 
@@ -72,8 +72,8 @@ content-hashed `_next/static` files, and an explicit JSON content type for the e
 
 | Subject | Lessons | Levels |
 |---|---|---|
-| Operating Systems | 45 | 12 (mental model → processes → concurrency → scheduling → sync → deadlocks → memory → virtual memory → storage/IO → kernel boundary → performance → isolation) |
-| Computer Networks | 42 | 12 (how data travels → models → Ethernet → IP → TCP → UDP → DNS → HTTP → TLS → web infrastructure → performance → advanced) |
+| Operating Systems | 48 | 12 (mental model → processes → concurrency → scheduling → sync → deadlocks → memory → virtual memory → storage/IO → kernel boundary → performance → isolation) |
+| Computer Networks | 49 | 12 (how data travels → models → data link → IP → TCP → UDP → DNS → HTTP → TLS → web infrastructure → performance → advanced) |
 | Databases & SQL | 62 | 17 (why databases → relational model → SQL → joins → advanced SQL → modeling → storage → indexing → execution → transactions → concurrency → recovery → replication → sharding → NoSQL → distributed → in practice) |
 | Cross-domain connections | 8 | 2 (end-to-end journeys, unifying patterns) |
 
