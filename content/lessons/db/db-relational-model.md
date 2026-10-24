@@ -17,9 +17,9 @@ tags: [relational model, relation, tuple, attribute, domain, schema, relational 
 
 ## Mental Model
 
-A **relation** is a table whose rows are facts of the same shape: "customer 7 is named Asha and lives in Pune". The relational model says: store all data as such facts, and answer every question by **combining and filtering sets of facts** with a small set of operators — filter rows, pick columns, join tables, group.
+A **relation** is a table whose rows are facts of the same shape: "customer 7 is named Asha and lives in Pune". The relational model says: store all data as such facts, and answer every question by **combining and filtering sets of facts**. A small set of operators does that: filter rows, pick columns, join tables, group.
 
-Because queries are expressed as *what* result you want in terms of those operators, the database is free to choose *how* to compute it. That freedom is why a query written in 1995 can run a thousand times faster today on the same schema: new indexes, new join algorithms, new hardware — no query changes.
+Because queries are expressed as *what* result you want in terms of those operators, the database is free to choose *how* to compute it. That freedom is why a query written in 1995 can run a thousand times faster today on the same schema. New indexes, join algorithms and hardware did it, with no change to the query.
 
 ## Definition
 
@@ -105,7 +105,7 @@ flowchart BT
 This is the payoff of describing *what* instead of *how*. The operators follow algebraic rules, like `a × b = b × a` in arithmetic. So the optimizer can rewrite your request into a cheaper one that is **guaranteed to return the same rows**:
 
 - Push selections down: filter `Customer` to Pune *before* joining, so the join processes fewer rows.
-- Reorder joins: A ⋈ B ⋈ C can be computed as (A ⋈ B) ⋈ C or A ⋈ (B ⋈ C) — pick the order with the smallest intermediate results.
+- Reorder joins: A ⋈ B ⋈ C can be computed as (A ⋈ B) ⋈ C or A ⋈ (B ⋈ C). Pick the order with the smallest intermediate results.
 - Replace a join + filter with an index lookup.
 
 This is exactly what the planner does ([Query Lifecycle](lesson:db-query-lifecycle)).
@@ -116,7 +116,7 @@ A customer's orders are found by matching values: `orders.customer_id = customer
 
 ### Schema vs instance
 
-The **relation schema** is the structure — `Customer(id, name, city)` — and changes rarely. The **relation instance** is the set of tuples present at one moment, and changes with every insert. Constraints are stated on the schema and must hold for **every** legal instance, which is why "the data happens to look unique right now" doesn't make a column a key ([Keys & Constraints](lesson:db-keys-constraints)).
+The **relation schema** is the structure — `Customer(id, name, city)` — and changes rarely. The **relation instance** is the set of tuples present at one moment, and changes with every insert. Constraints are stated on the schema and must hold for **every** legal instance. That's why "the data happens to look unique right now" doesn't make a column a key ([Keys & Constraints](lesson:db-keys-constraints)).
 
 ### Division: the "for all" operator
 
@@ -152,6 +152,25 @@ In 1985 Codd published 12 rules (plus rule 0) for what makes a DBMS truly relati
 | 8–9 · Physical and logical data independence | storage and logical changes don't break applications ([Why Databases](lesson:db-why-databases)) |
 | 10 · Integrity independence | constraints are declared in the catalog, not hard-coded in programs |
 | 12 · Non-subversion | no low-level interface may bypass the integrity rules |
+
+### Objects vs relations: what an ORM does
+
+Java code thinks in objects that hold references: a `Customer` with a list of `Order`s. That is the *navigational* model the relational model replaced, and ORMs such as Hibernate translate between the two. The translation shows in how you ask:
+
+```java
+// Navigational: follow references, one object at a time (each getOrders() may be a query)
+List<String> names = new ArrayList<>();
+for (Customer c : customersInPune)
+    for (Order o : c.getOrders())
+        if (o.getTotal() > 5000) { names.add(c.getName()); break; }
+
+// Relational: say what you want, and the database plans one query
+List<String> names2 = em.createQuery("""
+        SELECT DISTINCT c.name FROM Customer c JOIN c.orders o
+        WHERE c.city = 'Pune' AND o.total > 5000""", String.class).getResultList();
+```
+
+The first version is the 1960s navigational style, and it pays the same price: one round trip per customer to load its orders, the N+1 problem. The second hands the whole question to the planner. Most ORM performance advice amounts to "ask relationally": join, filter and aggregate in the query instead of walking the object graph.
 
 ## Internal Mechanism
 
@@ -256,6 +275,14 @@ The schema is the relation's structure (name, attributes, types, constraints); t
 
 Minimum 0 — no B value in common. Maximum 20 — every tuple of R matches every tuple of S, which happens when all tuples share a single B value; a natural join can never produce more than |R| × |S| tuples. If B were a key of S, the maximum would drop to 4 (each R tuple matches at most one S tuple).
 
+### [L2 · conceptual] What is the object–relational impedance mismatch, and what does it have to do with the navigational databases of the 1960s?
+
+Objects are linked by references and navigated one hop at a time. Relations are linked by matching values and queried as sets. An ORM maps one onto the other, but its default style, walking from a customer to its orders to their items, is exactly the navigational access that IMS and CODASYL programs used. It fails the same way: one round trip per hop (the N+1 problem), and code that depends on the shape of the object graph. Other mismatches: identity (object equality vs primary keys), inheritance (no direct relational equivalent), and collections (a list field vs a foreign key on the other table).
+
+### [L2 · compare] How do relational algebra operators map onto Java Streams, and why can't a stream pipeline be optimized like a SQL query?
+
+Selection is `filter`, projection is `map`, a join is a nested `flatMap` or a lookup in a `Map`, and grouping is `Collectors.groupingBy`. But a stream runs exactly as written: in that order, with whatever data structures you chose, on data already in memory. It has no statistics, no indexes and no freedom to reorder. A SQL query states only the result, so the optimizer can push filters down, reorder joins and pick an index, and the same query gets faster when the data or the indexes change.
+
 ## Practice
 
 ### [mcq] Which relational-algebra operator corresponds to SQL's WHERE clause?
@@ -311,6 +338,25 @@ Direct translation: **π_name(σ_dname='Sales'(Employee ⋈ Dept))**.
 Optimized: push the selection down to the relation it mentions and project early — **π_name(Employee ⋈ σ_dname='Sales'(Dept))**. The join now sees one Dept tuple instead of every department, so it touches only Sales employees. Both are equivalent by the algebra's rules (selection commutes with join when it mentions only one side), which is exactly the freedom a query optimizer uses.
 :::
 
+### [exercise] Solve the [SQL Playground's "Bought every toy"](lab:sql-playground#all-toys) exercise: customers who bought every product in the Toys category. Which relational algebra operator is this, and how does the SQL express it?
+
+:::solution
+It is **division**: Bought ÷ ToyProducts, the customers paired with *every* toy. SQL has no division operator, so it is written as a double negation: customers for whom there is no toy they haven't bought.
+
+```sql
+SELECT c.id, c.name
+FROM customers c
+WHERE NOT EXISTS (
+  SELECT 1 FROM products p
+  WHERE p.category = 'Toys'
+    AND NOT EXISTS (
+      SELECT 1 FROM orders o JOIN order_items oi ON oi.order_id = o.id
+      WHERE o.customer_id = c.id AND oi.product_id = p.id));
+```
+
+The counting form also works: group each customer's distinct toys and keep those whose count equals the number of toys. Both mirror the three-step construction of division in this lesson.
+:::
+
 ## Quick Revision
 
 - Relation = set of tuples with typed attributes; no row order; atomic values. SQL tables are bags.
@@ -320,3 +366,4 @@ Optimized: push the selection down to the relation it mentions and project early
 - Schema = structure (stable); instance = rows right now. Degree = #columns, cardinality = #rows.
 - Division (÷) answers "related to **every** Y"; SQL writes it as double `NOT EXISTS` or a count comparison.
 - Codd's rules: info rule, guaranteed access, systematic NULLs, catalog in tables, data independence, non-subversion — no product meets all 12.
+- ORMs map objects onto relations; walking the object graph is navigational access again, and N+1 queries are its cost. Ask relationally: join, filter and aggregate in the query.

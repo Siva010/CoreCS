@@ -235,7 +235,7 @@ How these patterns execute:
 - Anti/semi joins → Hash Anti Join / Semi Join nodes.
 - `percentile_cont` → sorts each group's values (ordered-set aggregate); expensive on large groups, where approximate percentiles (t-digest, HDR histograms) are used in analytics systems.
 
-When an interviewer asks "how would this perform on 1 billion rows?", talk about the sort behind the window, which indexes remove it, and whether the job belongs on a replica or warehouse.
+An interviewer may ask how this would perform on 1 billion rows. Talk about the sort behind the window, which indexes remove it, and whether the job belongs on a replica or warehouse.
 :::
 
 ## Example
@@ -440,6 +440,32 @@ WHERE d.id IS NULL OR e.id IS NULL;
 A FULL OUTER JOIN keeps unmatched rows from both sides; the WHERE keeps only those. (MySQL has no FULL JOIN — emulate it with a LEFT JOIN `UNION` a RIGHT JOIN.)
 :::
 
+### [L3 · scenario] Production has 3 million duplicate customers (same email, different case) among 40 million rows. How do you remove them on a live system, and stop new ones?
+
+Don't run the interview answer as one statement. A single `DELETE` of 3 million rows holds its row locks until commit, writes all its WAL at once (replicas fall behind), and if it fails, all the work is rolled back.
+
+1. **Stop new duplicates first**: fix the code path that creates them, such as an upsert or a check under a lock. Otherwise the cleanup chases a moving target.
+2. **Find the doomed ids once**, then delete in small batches:
+
+```sql
+CREATE TABLE dup_ids AS
+  SELECT id FROM (
+    SELECT id, row_number() OVER (PARTITION BY lower(email) ORDER BY id) AS rn
+    FROM customers) t
+  WHERE rn > 1;
+
+-- repeat until it deletes 0 rows, committing each batch
+WITH batch AS (
+  DELETE FROM dup_ids
+  WHERE id IN (SELECT id FROM dup_ids ORDER BY id LIMIT 10000)
+  RETURNING id)
+DELETE FROM customers WHERE id IN (SELECT id FROM batch);
+```
+
+Pause between batches if replication lag grows. Re-point or archive rows in child tables that reference the deleted customers before deleting them.
+
+3. **Make it impossible**: `CREATE UNIQUE INDEX CONCURRENTLY customers_email_uq ON customers (lower(email))`. It builds without blocking writes. If a duplicate slipped in meanwhile, it fails and leaves an `INVALID` index, which you drop before retrying.
+
 ## Practice
 
 ### [mcq] Which query returns exactly 3 employees per department even when salaries tie?
@@ -545,3 +571,4 @@ Reduce to one row per customer-month first, then self-join on "same customer, ne
 - Islands: date − row_number; sessions: lag flag + running sum.
 - Period over period: lag over a complete calendar. Pivot: FILTER/CASE. Median: percentile_cont.
 - Classics to recognise instantly: top earner per department (rank/max-join), above department average (window avg), swap values (one CASE UPDATE), orphans on both sides (FULL JOIN + IS NULL).
+- Dedup on a live table: stop the source, list doomed ids once, delete in committed batches, then `CREATE UNIQUE INDEX CONCURRENTLY`.

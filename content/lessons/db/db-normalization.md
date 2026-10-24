@@ -140,11 +140,11 @@ join back on dept:
 
 ### 4NF in one idea
 
-`EmployeeSkillsLanguages(emp, skill, language)` where skills and languages are independent lists: storing them in one table forces every skill × language combination (3 skills × 2 languages = 6 rows), and adding a language means adding 3 rows. Split into `EmployeeSkills(emp, skill)` and `EmployeeLanguages(emp, language)`. The underlying rule is a **multi-valued dependency** emp ↠ skill.
+Take `EmployeeSkillsLanguages(emp, skill, language)`, where skills and languages are independent lists. Storing them in one table forces every skill × language combination (3 skills × 2 languages = 6 rows), and adding a language means adding 3 rows. Split into `EmployeeSkills(emp, skill)` and `EmployeeLanguages(emp, language)`. The underlying rule is a **multi-valued dependency** emp ↠ skill.
 
 ### 5NF in one sentence
 
-A table is in **5NF** (project-join normal form) when it can't be split into three or more smaller tables that join back losslessly, unless that split follows from the keys. It catches cyclic rules such as: "if a supplier supplies a part, the supplier works with a project, and the project uses the part, then the supplier supplies that part to that project". Rare in practice, but the definition is a standard interview checkbox.
+A table is in **5NF** (project-join normal form) when it can't be split into three or more smaller tables that join back losslessly, unless that split follows from the keys. It catches cyclic rules. For example: if a supplier supplies a part, works with a project, and the project uses the part, then the supplier supplies that part to that project. Rare in practice, but the definition is a standard interview checkbox.
 
 ### Denormalization: breaking the rules on purpose
 
@@ -157,12 +157,23 @@ Normal forms minimise redundancy, but sometimes a read path needs redundancy. Co
 
 Each one needs an answer to "who keeps the copy correct?": a transaction, a trigger, or an asynchronous job with tolerated lag.
 
+Keeping a denormalized value correct is a concurrency problem. Suppose `posts.comment_count` is maintained by the application, and two comments arrive at once. If each request reads the count in Java and writes back count + 1, one increment is lost ([Anomalies](lesson:db-anomalies)). Update it atomically, in the same transaction as the insert:
+
+```sql
+BEGIN;
+INSERT INTO comments (post_id, author_id, body) VALUES ($1, $2, $3);
+UPDATE posts SET comment_count = comment_count + 1 WHERE id = $1;
+COMMIT;
+```
+
+A trigger can do the same without relying on every code path. Either way, schedule a reconciliation query that compares the stored count with `count(*)` and repairs drift, because a forgotten code path or a manual fix will eventually skip the update.
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
 ### Algorithms
 
-- **3NF synthesis**: compute a minimal cover; create one table per FD group (X → A1…An becomes table (X, A1…An)); if no table contains a candidate key, add one; remove tables contained in others. Guarantees lossless join and dependency preservation.
+- **3NF synthesis**: compute a minimal cover, and create one table per FD group (X → A1…An becomes table (X, A1…An)). If no table contains a candidate key, add one. Remove tables contained in others. Guarantees lossless join and dependency preservation.
 - **BCNF decomposition**: while some table has an FD X → Y with X not a super key, split into (X ∪ Y) and (R − Y + X). Always lossless; may lose dependencies.
 
 ### Why normalization reduces write cost but may raise read cost
@@ -254,6 +265,10 @@ BCNF decomposition is always lossless but **not always** dependency-preserving �
 
 When a hot read path pays repeatedly for joins or aggregates that change rarely: counters (`comment_count`), historical snapshots that *must not* follow later changes (price at purchase), reporting tables, or read models for search. Denormalize after measuring, and decide who maintains the copy — the same transaction, a trigger, or an asynchronous job — and how stale it may be.
 
+### [L2 · design] You denormalize `comment_count` onto `posts`. How do you keep it correct under concurrency, and how do you notice when it drifts?
+
+Change it with an atomic statement, `UPDATE posts SET comment_count = comment_count + 1 WHERE id = ?`, in the same transaction as the comment insert, never with a read-modify-write in application code, which loses increments under concurrency. A trigger on `comments` makes it independent of every code path, at the cost of hidden logic. For very hot posts, the single counter row becomes a lock hotspot; then increment sharded counters or update asynchronously. Run a periodic reconciliation (`comment_count` vs `count(*)` per post) and alert on mismatches.
+
 ## Practice
 
 ### [mcq] `EmployeeProject(emp_id, project_id, emp_name, hours)` with key (emp_id, project_id) and emp_id → emp_name. Which normal form is violated first?
@@ -323,6 +338,16 @@ The table is all-key, so it's in BCNF, yet it repeats every combination: emp →
 Dependencies: student_id → student_name, course_id → course_title, instructor (partial dependencies on the key). Decompose into `Student(student_id, student_name)`, `Course(course_id, course_title, instructor)` and `Enrollment(student_id, course_id, grade)` — 3NF (and BCNF here), lossless because each split shares a key.
 :::
 
+### [exercise] In the [normalization lab](lab:normalization), load "3NF but not BCNF (Teaching)": Teaching(student, subject, teacher) with teacher → subject and (student, subject) → teacher. Find the candidate keys, explain why it is in 3NF but not BCNF, and decompose it to BCNF. What is lost?
+
+:::solution
+The candidate keys are (student, subject) and (student, teacher): each determines the third attribute, and no single attribute determines the rest.
+
+teacher → subject violates BCNF, because teacher isn't a superkey. It still satisfies 3NF, because subject is a prime attribute (part of the key (student, subject)). So the relation is in **3NF but not BCNF**.
+
+The BCNF decomposition splits on the violating dependency: (teacher, subject) and (student, teacher). It is lossless, since teacher is a key of the first table. But the dependency (student, subject) → teacher is **lost**: it spans both tables, so "a student has only one teacher per subject" can no longer be enforced by a key, only by a check across tables. This is the classic case where 3NF is kept on purpose.
+:::
+
 ## Quick Revision
 
 - Anomalies: update, insert, delete — all from storing a fact more than once.
@@ -332,3 +357,4 @@ Dependencies: student_id → student_name, course_id → course_title, instructo
 - Denormalize deliberately, with a sync mechanism; historical snapshots aren't redundancy.
 - 4NF: no independent multi-valued facts in one table. 5NF: no lossless 3-way-plus decomposition beyond keys.
 - BCNF = lossless, maybe not dependency-preserving; 3NF synthesis = both. Denormalize deliberately, with an owner for the copy.
+- Denormalized counters: update atomically (`SET n = n + 1`) in the same transaction, or by trigger; reconcile periodically against `count(*)`.

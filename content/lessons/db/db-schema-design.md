@@ -11,6 +11,7 @@ relevance: high
 stage: 2
 prerequisites: [db-normalization]
 related: [db-keys-constraints, db-clustered-indexes, db-index-design-practice, db-partitioning, db-sharding, sql-dml-ddl, db-document-stores]
+labs: [sql-playground]
 tags: [schema design, uuid, uuidv7, bigint, surrogate key, soft delete, audit table, temporal data, timestamptz, money, enum, jsonb, multi-tenancy, eav, polymorphic association, naming conventions]
 ---
 
@@ -54,7 +55,7 @@ The tension: an id should be cheap to generate and store, friendly to the index 
 | UUIDv4 (random) | Generate anywhere (clients, offline, many services); unguessable | 16 bytes; **random inserts scatter across the index** → page splits, poor cache locality, write amplification |
 | UUIDv7 / ULID (time-ordered) | Generated anywhere *and* roughly sequential → B+ tree friendly | 16 bytes; embeds creation time (may leak it) |
 
-A common pattern: `bigint` primary key internally, plus a random public identifier (UUID or opaque slug) exposed in URLs ([Clustered Indexes](lesson:db-clustered-indexes)).
+A common pattern: `bigint` primary key internally, plus a random public identifier (UUID or opaque slug) exposed in URLs ([Clustered Indexes](lesson:db-clustered-indexes)). PostgreSQL 18 can generate time-ordered UUIDs itself, with `uuidv7()`.
 
 ### Time
 
@@ -106,7 +107,7 @@ Rule: if you filter, join, aggregate or constrain on it regularly, it deserves a
 | Schema per tenant | Stronger; per-tenant backup/restore easier | Migrations × N schemas; catalog bloat at thousands | Hundreds of mid-size tenants |
 | Database per tenant | Strongest; noisy neighbours isolated | Highest; connection and fleet management | Few large or regulated tenants |
 
-With shared tables, put `tenant_id` **first** in composite indexes and keys, so each tenant's data is clustered in index order and queries never cross tenants; it's also the natural shard key later ([Sharding](lesson:db-sharding)).
+With shared tables, put `tenant_id` **first** in composite indexes and keys, so each tenant's data is clustered in index order and queries never cross tenants. It's also the natural shard key later ([Sharding](lesson:db-sharding)).
 
 The three models side by side. Isolation grows from left to right, and so does the operational cost:
 
@@ -125,12 +126,52 @@ flowchart LR
     end
 ```
 
+### The same choices on the Java side
+
+Each column type has one right Java counterpart, and the wrong one causes quiet bugs:
+
+| Column | Java type | Avoid |
+|---|---|---|
+| `numeric(19,4)` money | `BigDecimal`, with an explicit `RoundingMode` | `double`: `0.1 + 0.2` is `0.30000000000000004` |
+| `timestamptz` instant | `OffsetDateTime` or `Instant` | `LocalDateTime`: it drops the offset, so the instant depends on the server's zone |
+| `date` (a birthday) | `LocalDate` | `java.util.Date`, which is an instant, not a calendar day |
+| `uuid` | `java.util.UUID` | storing UUIDs as text: twice the size, slower comparisons |
+
+```java
+@Entity
+class Payment {
+    @Id UUID id;                                 // uuid
+    @Column(precision = 19, scale = 4)
+    BigDecimal amount;                           // numeric(19,4)
+    Instant createdAt;                           // timestamptz
+    LocalDate valueDate;                         // date
+}
+
+// Build money from strings or integers, never from doubles
+BigDecimal fee = new BigDecimal("1249.50").multiply(new BigDecimal("0.0175"))
+        .setScale(2, RoundingMode.HALF_EVEN);   // 21.86625 → 21.87
+BigDecimal wrong = new BigDecimal(0.1);         // 0.1000000000000000055511151231257827...
+```
+
+`new BigDecimal(0.1)` copies the binary error of the `double` exactly; `new BigDecimal("0.1")` or `BigDecimal.valueOf(0.1)` gives 0.1.
+
+### Changing a schema without downtime
+
+Applications and schemas are deployed separately, so for a while the old and new code both run against one schema. Every change must work with both. Renaming `customers.fullname` to `name` therefore takes several deploys, the **expand / contract** pattern:
+
+1. **Expand**: add the new column `name`; the code writes both columns and still reads the old one.
+2. **Backfill**: copy the old values into `name`, in batches, so no long transaction locks the table.
+3. **Switch reads**: the code reads `name` and still writes both.
+4. **Contract**: once no running code uses `fullname`, stop writing it, then drop it.
+
+Each step is a versioned migration (Flyway's `V7__add_customer_name.sql`, or Liquibase) that runs before the code that needs it. Some steps are cheaper than they look: since PostgreSQL 11, `ADD COLUMN ... NOT NULL DEFAULT false` only records the default and doesn't rewrite the table, unless the default is volatile, such as `clock_timestamp()`.
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
 ### Why random UUIDs hurt B+ trees
 
-A sequential key always inserts at the rightmost leaf, which stays in memory; pages fill to ~100%. A random key inserts into a random leaf: with an index larger than RAM, most inserts read a leaf from disk, and leaves split at ~50% fill, leaving the index ~30–40% larger. In InnoDB the **table itself** is clustered by the primary key, so random PKs scatter the table too. Time-ordered UUIDs restore append-mostly behavior.
+A sequential key always inserts at the rightmost leaf, which stays in memory; pages fill to ~100%. A random key inserts into a random leaf. With an index larger than RAM, most inserts read a leaf from disk, and leaves split at ~50% fill, leaving the index ~30–40% larger. In InnoDB the **table itself** is clustered by the primary key, so random PKs scatter the table too. Time-ordered UUIDs restore append-mostly behavior.
 
 ```text
 sequential ids:  [1 2 3 4] [5 6 7 8] [9 10 11 _]   ← every insert lands in the last page (hot, cached, full pages)
@@ -233,6 +274,14 @@ A CHECK constraint (`status IN ('pending','paid','shipped')`) is simplest and ea
 
 EAV stores each attribute as a row (`entity_id, attribute, value`), so every query becomes a pivot of self-joins, values lose their types, and constraints (NOT NULL, ranges, foreign keys) become impossible. Prefer real columns for known attributes and a `jsonb` column (with GIN or expression indexes and CHECK constraints) for genuinely variable attributes; keep EAV for rare cases like user-defined custom fields with heavy metadata.
 
+### [L3 · design] How do you rename a column on a busy table without downtime, when old and new application versions run side by side during a deploy?
+
+Use expand and contract, over several deploys. First add the new column and make the code write both columns while still reading the old one. Then backfill the new column in batches. Then switch reads to the new column, still writing both. Finally, once no deployed version reads the old column, stop writing it and drop it. Every intermediate schema works with both the old and the new code, so a rollback is always possible. A plain `ALTER TABLE ... RENAME COLUMN` breaks whichever version expects the other name.
+
+### [L2 · how] Which Java types should map to `numeric` money, `timestamptz` and `date` columns, and what goes wrong otherwise?
+
+`BigDecimal` for money, with an explicit scale and `RoundingMode`; `double` can't represent most decimal fractions, so totals drift by fractions of a paisa. `OffsetDateTime` (or `Instant`) for `timestamptz`; `LocalDateTime` drops the offset, so the same row means different instants on servers in different time zones. `LocalDate` for `date`: a birthday is a calendar day, not an instant, and converting it through a time zone can move it by a day.
+
 ## Practice
 
 ### [mcq] Why can random UUIDv4 primary keys slow down inserts on a large InnoDB table?
@@ -296,6 +345,30 @@ WHERE product_id = $1 AND valid @> $2::timestamptz;
 Each row is a price with the period it applied (`[from, to)`, open-ended for the current price). The exclusion constraint forbids two rows for the same product whose ranges overlap — something a plain UNIQUE can't express. Without range types, use `valid_from`/`valid_to` columns and the predicate `valid_from <= t AND (valid_to > t OR valid_to IS NULL)`.
 :::
 
+### [exercise] Solve the [SQL Playground's "Add an is_active flag"](lab:sql-playground#active-flag) exercise. Then explain what the `ALTER TABLE` costs on a 50-million-row table in PostgreSQL 11 or later, and what would change if the default were `clock_timestamp()` instead of `true`.
+
+:::solution
+```sql
+ALTER TABLE customers ADD COLUMN is_active boolean NOT NULL DEFAULT true;
+UPDATE customers c SET is_active = false
+WHERE NOT EXISTS (SELECT 1 FROM orders o
+                  WHERE o.customer_id = c.id AND o.order_date >= DATE '2024-01-01');
+```
+
+Since PostgreSQL 11, adding a column with a constant default is a catalog change: existing rows aren't rewritten, and they return the stored default when read. It still needs a brief ACCESS EXCLUSIVE lock, so run it with a short `lock_timeout`. A volatile default such as `clock_timestamp()` must be computed per row, so PostgreSQL rewrites the whole table under that lock, which takes minutes on 50 million rows.
+
+The `UPDATE`, unlike the `ALTER`, rewrites every row it changes. On a big table, run it in batches (by id range) so no single transaction holds locks or bloats the table for long.
+:::
+
+### [mcq] A Java service stores order times in a `timestamptz` column, but reads them into `LocalDateTime`. What goes wrong?
+
+- [ ] Nothing: `LocalDateTime` stores the same instant
+- [x] The offset is dropped, so the same row maps to different instants depending on the JVM's or session's time zone
+- [ ] The value is truncated to the date
+- [ ] PostgreSQL rejects the read
+
+An instant needs its offset. Read `timestamptz` as `OffsetDateTime` (or convert to `Instant`), and keep `LocalDateTime` for genuinely local wall-clock values.
+
 ## Quick Revision
 
 - Ids: bigint internal (+ public UUID) or UUIDv7; random UUIDv4 hurts B+ tree locality. Never `int`.
@@ -304,3 +377,5 @@ Each row is a price with the period it applied (`[from, to)`, open-ended for the
 - Columns for queried/constrained data; jsonb for genuinely variable data; avoid EAV.
 - Multi-tenancy: shared + tenant_id (+ RLS) by default; tenant-first indexes; dedicated DBs for giants.
 - Money: `numeric` or integer minor units + currency, never float. Status: CHECK / enum / lookup table — not free text. Avoid EAV; use columns + `jsonb`.
+- Java types: `BigDecimal` for money, `OffsetDateTime`/`Instant` for `timestamptz`, `LocalDate` for `date`, `UUID` for `uuid`.
+- Zero-downtime changes: expand → backfill → switch reads → contract, each a versioned migration. PG 11+: constant-default ADD COLUMN doesn't rewrite; volatile defaults do. PG 18: `uuidv7()`.

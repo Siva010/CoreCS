@@ -59,7 +59,7 @@ Request A: INSERT … email='x@y.com'
 Request B: INSERT … email='x@y.com'          ← duplicate created
 ```
 
-Check-then-act across two statements is a race condition ([Race Conditions](lesson:os-race-conditions)). A `UNIQUE` constraint is enforced atomically inside the database (via a unique index and locking), so exactly one insert succeeds and the other fails with a unique-violation error your code can handle.
+Check-then-act across two statements is a race condition ([Race Conditions](lesson:os-race-conditions)). A `UNIQUE` constraint is enforced atomically inside the database, via a unique index and locking. Exactly one insert succeeds, and the other fails with a unique-violation error your code can handle.
 
 The same logic applies to foreign keys: without them, deleting a customer can leave "orphan" orders pointing to nothing, and nobody notices until a report joins them.
 
@@ -131,6 +131,34 @@ flowchart TD
     R -->|"SET NULL"| N["customer deleted<br/>orders keep customer_id = NULL"]
 ```
 
+### Keys and constraint errors in Java
+
+How a JPA entity gets its key affects performance. With `GenerationType.IDENTITY`, the database assigns the id during the INSERT, so Hibernate must run each insert immediately to learn it, and it can't batch inserts. With a sequence, Hibernate reserves a block of ids in one call and batches freely:
+
+```java
+@Entity
+class Order {
+    @Id
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "order_seq")
+    @SequenceGenerator(name = "order_seq", sequenceName = "order_seq", allocationSize = 50)
+    Long id;          // one sequence call reserves 50 ids, so 50 inserts can go in one batch
+}
+```
+
+A violated constraint reaches Java as an `SQLException` with SQLState `23505` (unique), `23503` (foreign key), `23502` (not null) or `23514` (check). Spring wraps all of them as `DataIntegrityViolationException`. When a duplicate is expected, as with an idempotency key, let the database decide atomically instead of catching the exception:
+
+```java
+int inserted = jdbc.update(
+        "INSERT INTO payments (idempotency_key, amount) VALUES (?, ?) "
+            + "ON CONFLICT (idempotency_key) DO NOTHING",
+        key, amount);
+if (inserted == 0) {
+    // already processed: read the earlier payment and return its result
+}
+```
+
+Catching the exception also works, with two traps. In PostgreSQL the failed INSERT aborts the whole transaction, so any lookup afterwards must run in a new one. And with JPA, the INSERT may only run at flush or commit, outside the `try` that was meant to catch it.
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
@@ -140,7 +168,7 @@ In SQL, `NULL` is not equal to anything — including another `NULL` — so a `U
 
 ### Deferrable constraints
 
-By default a constraint is checked at the end of each statement. `DEFERRABLE INITIALLY DEFERRED` postpones the check to `COMMIT`, which lets a transaction pass through temporarily invalid states — for example swapping two rows' unique positions, or inserting two rows that reference each other.
+By default a constraint is checked at the end of each statement. `DEFERRABLE INITIALLY DEFERRED` postpones the check to `COMMIT`, so a transaction can pass through temporarily invalid states. Examples are swapping two rows' unique positions, or inserting two rows that reference each other.
 
 ### Uniqueness under concurrency
 
@@ -229,6 +257,14 @@ A natural key has business meaning (email, PAN, ISBN); a surrogate key is genera
 
 Each foreign key references exactly one parent table's candidate key (primary key or UNIQUE columns). A table can have many foreign keys, including several to the same parent (`flights.origin_airport` and `flights.dest_airport`). A self-referencing FK points to the same table — `employees.manager_id REFERENCES employees(id)` — and models hierarchies; it must be nullable (or deferrable) so the root row can exist.
 
+### [L2 · compare] `GenerationType.IDENTITY` vs `SEQUENCE` for JPA primary keys?
+
+With IDENTITY, the database generates the id as part of the INSERT, so Hibernate must execute each insert immediately to learn the id; that disables JDBC batch inserts for the entity. With SEQUENCE, Hibernate fetches ids from a database sequence, and with `allocationSize` (50 by default) one call reserves a block, so it can assign ids in memory and send inserts in batches. For bulk inserts, SEQUENCE is much faster. The cost is gaps in the numbering, which is harmless, because surrogate keys carry no meaning.
+
+### [L2 · how] How should a Spring service handle a unique-constraint violation that it expects, such as a duplicate idempotency key?
+
+Prefer to make the duplicate a normal outcome: `INSERT ... ON CONFLICT DO NOTHING` (or `DO UPDATE`) and check the row count. If you catch the exception instead (`DataIntegrityViolationException`, SQLState 23505), remember that PostgreSQL has aborted the transaction, so the follow-up read must run in a new transaction. And with JPA, call `saveAndFlush` (or flush) inside the `try`, otherwise the INSERT may only run at commit, after your `catch` has gone out of scope.
+
 ## Practice
 
 ### [mcq] Table R(A, B, C) where {A} and {B, C} are both unique and minimal. Which statement is true?
@@ -308,6 +344,23 @@ CREATE UNIQUE INDEX one_active_subscription
 A partial unique index applies uniqueness only to rows matching its WHERE clause. A plain `UNIQUE (user_id, status)` would wrongly allow only one cancelled subscription too. Because it's enforced by the index, two concurrent inserts of an active subscription for the same user can't both succeed.
 :::
 
+### [exercise] Solve the [SQL Playground's "Delete duplicate logins"](lab:sql-playground#remove-duplicate-logins) exercise. Why could the duplicates exist at all, and what one line of DDL would have prevented them?
+
+:::solution
+The `logins` table has no primary key or unique constraint, so nothing stops the same (user_id, login_date) pair being inserted twice, by a retried request or a double-clicked button. Deleting the extra copies needs something to tell identical rows apart, such as PostgreSQL's physical `ctid` or a `row_number()` over each pair, keeping one row per pair.
+
+One line prevents it from happening again: `ALTER TABLE logins ADD PRIMARY KEY (user_id, login_date)` (or a `UNIQUE` constraint). Retried inserts then fail, or become no-ops with `ON CONFLICT DO NOTHING`, instead of silently duplicating.
+:::
+
+### [mcq] A JPA entity uses `@GeneratedValue(strategy = GenerationType.IDENTITY)`, and a batch job saves 100,000 of them with `hibernate.jdbc.batch_size = 50`. What happens to the inserts?
+
+- [ ] They are sent in batches of 50, as configured
+- [x] They are sent one at a time: Hibernate must run each INSERT immediately to learn the generated id
+- [ ] Hibernate assigns ids itself and batches them
+- [ ] The job fails, because IDENTITY and batching are incompatible
+
+Switch the entity to a sequence with an `allocationSize`, and Hibernate can assign ids in memory and batch the inserts.
+
 ## Quick Revision
 
 - Super key ⊇ candidate key (minimal) → one chosen as primary; others are alternate keys (UNIQUE).
@@ -317,3 +370,5 @@ A partial unique index applies uniqueness only to rows matching its WHERE clause
 - Surrogate keys don't replace business uniqueness — keep the UNIQUE constraint.
 - PK is never NULL; an FK may be NULL ("no related row") unless declared NOT NULL. Self-referencing FKs model hierarchies.
 - Super keys with a single-attribute key A over n attributes: 2^(n−1).
+- JPA: IDENTITY disables Hibernate's batch inserts; SEQUENCE with `allocationSize` reserves ids in blocks and batches.
+- Constraint violations: SQLState 23505/23503/23502/23514 → Spring `DataIntegrityViolationException`. For expected duplicates, use `ON CONFLICT` and check the row count.

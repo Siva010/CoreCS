@@ -17,9 +17,9 @@ tags: [insert, update, delete, upsert, on conflict, merge, returning, truncate, 
 
 ## Mental Model
 
-DML statements (`INSERT`, `UPDATE`, `DELETE`) are **queries that also write**: an `UPDATE` first finds rows exactly like a `SELECT … WHERE` would, then changes each one. So everything about finding rows (indexes, plans) also governs how fast writes are — and the `WHERE` clause is the only thing standing between you and updating every row in the table.
+DML statements (`INSERT`, `UPDATE`, `DELETE`) are **queries that also write**: an `UPDATE` first finds rows exactly like a `SELECT … WHERE` would, then changes each one. So everything about finding rows (indexes, plans) also governs how fast writes are. And the `WHERE` clause is the only thing standing between you and updating every row in the table.
 
-DDL statements (`CREATE`, `ALTER`, `DROP`) change the **schema**, and usually need strong locks on the table — which is why schema changes on busy tables are an operational skill in their own right.
+DDL statements (`CREATE`, `ALTER`, `DROP`) change the **schema**, and usually need strong locks on the table. That's why schema changes on busy tables are an operational skill in their own right.
 
 ## Definition
 
@@ -139,12 +139,37 @@ flowchart TD
 | Booleans | `boolean` | `'Y'/'N'` strings |
 | Semi-structured | `jsonb` for genuinely variable attributes | JSON for core, queried, constrained fields |
 
+### Writing many rows from Java
+
+One statement per row pays one network round trip per row. JDBC batching sends many rows per round trip:
+
+```java
+String sql = "INSERT INTO order_items (order_id, product_id, quantity, unit_price) "
+        + "VALUES (?, ?, ?, ?)";
+c.setAutoCommit(false);
+try (PreparedStatement ps = c.prepareStatement(sql)) {
+    int n = 0;
+    for (Item it : items) {
+        ps.setLong(1, it.orderId());
+        ps.setLong(2, it.productId());
+        ps.setInt(3, it.quantity());
+        ps.setBigDecimal(4, it.unitPrice());
+        ps.addBatch();
+        if (++n % 500 == 0) ps.executeBatch();      // one round trip per 500 rows
+    }
+    ps.executeBatch();
+    c.commit();
+}
+```
+
+With PostgreSQL's driver, add `reWriteBatchedInserts=true` to the JDBC URL, and each batch is rewritten into multi-row `INSERT ... VALUES (...), (...)` statements, which is faster still. For millions of rows, `COPY ... FROM STDIN` through the driver's `CopyManager` beats any INSERT. In JPA, set `hibernate.jdbc.batch_size` (and `hibernate.order_inserts`), and give the entity a sequence key, since IDENTITY keys disable batching ([Keys & Constraints](lesson:db-keys-constraints)).
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
 ### What an UPDATE physically does
 
-- **PostgreSQL**: writes a new row version and marks the old one expired (MVCC). Every index must get a new entry pointing to the new version — unless the update is **HOT** (heap-only tuple): no indexed column changed and the new version fits on the same page. Leaving free space in pages (`fillfactor`) increases HOT updates.
+- **PostgreSQL**: writes a new row version and marks the old one expired (MVCC). Every index must get a new entry pointing to the new version, unless the update is **HOT** (heap-only tuple). An update is HOT when no indexed column changed and the new version fits on the same page. Leaving free space in pages (`fillfactor`) increases HOT updates.
 - **InnoDB (MySQL)**: updates the row in place in the clustered index and writes the old version to the **undo log** for rollback and consistent reads ([MVCC](lesson:db-mvcc)).
 
 Either way, every change is first described in the write-ahead log ([WAL](lesson:db-wal-durability)).
@@ -154,7 +179,7 @@ Either way, every change is first described in the write-ahead log ([WAL](lesson
 Changing a table's structure while it's being used is like changing a tyre while driving: the database must stop other work on the table for at least a moment. `ALTER TABLE` takes an `ACCESS EXCLUSIVE` lock in PostgreSQL. Even a fast `ALTER` can cause an outage: it **queues behind** a long-running query holding a weaker lock, and every new query then queues behind the `ALTER`. Mitigations:
 
 - `SET lock_timeout = '2s'` on migration sessions and retry.
-- Prefer metadata-only changes: adding a nullable column or a column with a constant default is instant in modern PostgreSQL and MySQL 8; changing a column type usually rewrites the whole table.
+- Prefer metadata-only changes: adding a nullable column or a column with a constant default is instant in modern PostgreSQL and MySQL 8. Changing a column type usually rewrites the whole table.
 - `CREATE INDEX CONCURRENTLY` (PostgreSQL) / online DDL (MySQL) / tools such as gh-ost and pt-online-schema-change that copy the table in the background.
 - **Expand–contract migrations**: add the new column → dual-write → backfill in batches → switch reads → stop writing old → drop old. Each step is backward compatible with the running application version.
 :::
@@ -247,6 +272,10 @@ Privileges (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `REFERENCES`, `USAGE`, `EXEC
 
 In PostgreSQL, yes — TRUNCATE is transactional: inside `BEGIN … ROLLBACK` the data comes back. In MySQL and Oracle it's DDL with an **implicit commit**, so it can't be undone (and in MySQL it also resets AUTO_INCREMENT). In SQL Server it can be rolled back inside an explicit transaction. Either way TRUNCATE doesn't fire row-level DELETE triggers, and in PostgreSQL it fails if other tables reference this one by foreign key unless you `TRUNCATE … CASCADE`.
 
+### [L2 · how] You must insert 1 million rows from a Java service. How do you make it fast?
+
+Cut round trips and commits. Use one `PreparedStatement` with `addBatch` and `executeBatch` every few hundred or thousand rows, inside a transaction committed every batch or every few batches (one giant transaction holds locks and WAL; one per row pays a flush per row). With PostgreSQL's driver, `reWriteBatchedInserts=true` turns batches into multi-row INSERTs. For the largest loads, use `COPY FROM STDIN` (`CopyManager`), and consider dropping secondary indexes during the load and rebuilding them after. In JPA, enable `hibernate.jdbc.batch_size` and use sequence-generated ids, because IDENTITY prevents batching.
+
 ## Practice
 
 ### [mcq] Which statement correctly and atomically prevents stock from going negative when two requests race?
@@ -323,6 +352,12 @@ WHERE status = 'pending' AND order_date < DATE '2023-04-01';
 `order_items.order_id` references `orders(id)`. Deleting a parent row that still has children would leave dangling references, so the database rejects it with a foreign-key violation. Delete children first, or define the foreign key with `ON DELETE CASCADE` if that's the intended lifecycle. Graded in the [SQL Playground](lab:sql-playground#purge-stale-pending).
 :::
 
+### [numeric 5 unit=s] A Java job inserts 10,000 rows one statement at a time, and each statement costs a 0.5 ms network round trip. How many seconds go to round trips alone? (With batches of 500 rows, it would be 20 round trips.)
+
+:::answer
+10,000 × 0.5 ms = 5,000 ms = **5** seconds of pure waiting. Batches of 500 need 20 round trips, 10 ms. The database work itself is similar either way; the difference is the network, which is why batching matters most when the database is a zone or a region away.
+:::
+
 ## Quick Revision
 
 - DML finds rows like SELECT, then writes: indexes matter for writes too.
@@ -332,3 +367,4 @@ WHERE status = 'pending' AND order_date < DATE '2023-04-01';
 - DDL takes strong locks: lock_timeout, CONCURRENTLY, expand–contract migrations, batch big changes.
 - DCL: `GRANT`/`REVOKE` privileges to roles; grant to group roles, set default privileges, least privilege.
 - `CHAR(n)` pads; `VARCHAR(n)`/`TEXT` don't (same storage in PostgreSQL). TRUNCATE rolls back in PostgreSQL, not in MySQL/Oracle.
+- Java writes: `addBatch`/`executeBatch` (pgJDBC `reWriteBatchedInserts=true`), `COPY` via `CopyManager` for bulk loads; JPA needs `hibernate.jdbc.batch_size` and non-IDENTITY ids.

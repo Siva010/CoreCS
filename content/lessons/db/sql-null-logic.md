@@ -140,6 +140,22 @@ WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id);
 - `UNIQUE` constraints usually do **not** (many NULLs allowed) ([Keys & Constraints](lesson:db-keys-constraints)).
 - Join conditions `a.x = b.x` never match NULL to NULL.
 
+### NULL in Java
+
+JDBC's primitive getters can't return null, so they return a default instead:
+
+```java
+try (ResultSet rs = st.executeQuery("SELECT id, discount FROM orders")) {
+    while (rs.next()) {
+        int wrong = rs.getInt("discount");                         // NULL comes back as 0
+        boolean wasNull = rs.wasNull();                            // ...unless you ask right after
+        Integer right = rs.getObject("discount", Integer.class);   // NULL comes back as null
+    }
+}
+```
+
+`getInt`, `getLong`, `getDouble` and `getBoolean` turn NULL into 0 or false, so "no discount recorded" silently becomes "a discount of 0". Use `getObject(column, Integer.class)` (or check `wasNull()`). Writing NULL works the same way in reverse: `ps.setNull(i, Types.INTEGER)`, or `setObject` with a null value. In JPA, map a nullable column to a wrapper type (`Integer`, not `int`); Hibernate refuses to load a NULL into a primitive field.
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
@@ -226,6 +242,10 @@ SUM = 300, AVG = 150 (300 / 2 non-NULL values), COUNT(*) = 3, COUNT(salary) = 2.
 
 PostgreSQL and Oracle treat NULL as larger than every value: last in ascending order, first in descending. MySQL and SQL Server treat it as smaller: first in ascending order. Make it explicit with `ORDER BY col NULLS LAST` (PostgreSQL, Oracle) or, portably, `ORDER BY col IS NULL, col` / `ORDER BY CASE WHEN col IS NULL THEN 1 ELSE 0 END, col`.
 
+### [L2 · debugging] Orders with no discount recorded show "discount: 0" in the API, and a report treats them as "zero discount" customers. What happened in the Java code, and how do you fix it?
+
+The code read the column with `rs.getInt("discount")`, which returns 0 for SQL NULL, because a Java `int` can't be null. The fix is to read it as an object, `rs.getObject("discount", Integer.class)`, which returns `null`, or to call `rs.wasNull()` right after `getInt`, and to carry the null through the DTO (an `Integer`, or an `Optional` in the API). In JPA, the entity field must be `Integer`, not `int`. Then decide what "unknown" means for the report, as SQL itself does with NULLs in aggregates.
+
 ## Practice
 
 ### [numeric 150] Salaries are 100, 200 and NULL. What does AVG(salary) return?
@@ -286,6 +306,15 @@ ORDER BY id;
 `city = NULL` compares with an unknown value, so the result is UNKNOWN for every row — never TRUE — and WHERE keeps only TRUE rows. Missing values are tested with `IS NULL`; COALESCE replaces them for display. Graded in the [SQL Playground](lab:sql-playground#signups-2023).
 :::
 
+### [mcq] A column `discount` is NULL for an order. What does `rs.getInt("discount")` return in Java?
+
+- [ ] `null`
+- [x] `0`, with `rs.wasNull()` returning `true` afterwards
+- [ ] It throws `SQLException`
+- [ ] `Integer.MIN_VALUE`
+
+Primitive getters can't return null. Use `rs.getObject("discount", Integer.class)` to get `null` instead.
+
 ## Quick Revision
 
 - NULL = unknown → comparisons give UNKNOWN; WHERE/ON/HAVING keep only TRUE.
@@ -295,3 +324,4 @@ ORDER BY id;
 - GROUP BY/DISTINCT group NULLs together; joins and UNIQUE don't equate them. CHECK passes on NULL.
 - `COALESCE` = first non-NULL; `NULLIF(a, b)` = NULL when equal (avoid ÷0). `IS DISTINCT FROM` = null-safe `<>`.
 - NULLs sort last ascending in PostgreSQL/Oracle, first in MySQL/SQL Server — say `NULLS LAST` explicitly.
+- JDBC: `getInt` etc. return 0/false for NULL; use `getObject(col, Integer.class)` or `wasNull()`. JPA: nullable columns need wrapper types.

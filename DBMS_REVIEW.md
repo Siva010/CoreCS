@@ -1,6 +1,6 @@
 # Database (DBMS + SQL) track — review and ratings
 
-*First reviewed 13 October 2026, covering all 55 database lessons, then improved in five rounds. The track now has 62 lessons. Update 5 is the first of five batches that bring it up to the standard of the later tracks.*
+*First reviewed 13 October 2026, covering all 55 database lessons, then improved in six rounds. The track now has 62 lessons. Updates 5 and 6 are the first two of five batches that bring it up to the standard of the later tracks.*
 
 ## Verdict
 
@@ -11,6 +11,7 @@ The database track was already **strong on mechanism and production reality** �
 - **Update 3** worked on understandability: long sentences split, a worked example with real values added wherever a mechanism was only described in prose, and hover definitions for 112 database terms. **8.4 → 8.5.**
 - **Update 4** added diagrams: 59 of 62 lessons now have one (22 before), every diagram was checked at its rendered size, and one that failed to render was fixed. Clarity 8.9 → 9.0; **overall stays 8.5.**
 - **Update 5** (transactions, batch 1 of 5) brought the ten transaction lessons up to the standard the OS, Networks and cross-domain tracks reached later: Java and Spring in every lesson, production signals with real output, lab-based practice in all ten, and no theory sentence over 30 words. Interview 8.5 → 8.6, practice 8.3 → 8.4, production 8.1 → 8.2; **overall stays 8.5** (8.49 → 8.55 before rounding).
+- **Update 6** (SQL and modeling, batch 2 of 5) did the same for the 18 lessons on the relational model, data modeling and SQL: JDBC and JPA in 15 of them, production practice such as zero-downtime schema changes, migration reconciliation and live deduplication, lab-based practice in all 18, and no theory sentence over 30 words. Interview 8.6 → 8.7, practice 8.4 → 8.5, production 8.2 → 8.4; **overall 8.5 → 8.6** (8.55 → 8.62 before rounding).
 
 A note on honesty: I wrote these lessons, so this is a review of my own work. I scored against what a strong interviewer would expect and what a student would need, not against the effort that went in, and recorded each round's starting scores before changing anything. Scores for unchanged dimensions were not raised just because more content exists nearby.
 
@@ -31,15 +32,15 @@ Practice was scored with a fixed rule in update 2, so it can't drift upward by i
 
 ## Track-level scores
 
-| Dimension | First review (55 lessons) | After update 1 (58) | After update 2 (62) | After update 3 (62) | After update 4 (62) | After update 5 (62) |
-|---|---|---|---|---|---|---|
-| Content accuracy & depth | 8.8 | 9.0 | 9.0 | 9.0 | 9.0 | **9.0** |
-| First-principles clarity | 8.6 | 8.6 | 8.6 | 8.9 | 9.0 | **9.0** |
-| Interview readiness | 6.9 | 8.6 | 8.5 | 8.5 | 8.5 | **8.6** |
-| Practice / self-testing | 5.6 | 6.4 | 8.3 | 8.3 | 8.3 | **8.4** |
-| Production relevance | 8.2 | 8.1 | 8.1 | 8.1 | 8.1 | **8.2** |
-| Syllabus coverage | 7.2 | 8.1 | 8.1 | 8.1 | 8.1 | **8.1** |
-| **Overall** | **7.5** | **8.1** | **8.4** | **8.5** | **8.5** | **8.5** |
+| Dimension | First review (55 lessons) | After update 1 (58) | After update 2 (62) | After update 3 (62) | After update 4 (62) | After update 5 (62) | After update 6 (62) |
+|---|---|---|---|---|---|---|---|
+| Content accuracy & depth | 8.8 | 9.0 | 9.0 | 9.0 | 9.0 | 9.0 | **9.0** |
+| First-principles clarity | 8.6 | 8.6 | 8.6 | 8.9 | 9.0 | 9.0 | **9.0** |
+| Interview readiness | 6.9 | 8.6 | 8.5 | 8.5 | 8.5 | 8.6 | **8.7** |
+| Practice / self-testing | 5.6 | 6.4 | 8.3 | 8.3 | 8.3 | 8.4 | **8.5** |
+| Production relevance | 8.2 | 8.1 | 8.1 | 8.1 | 8.1 | 8.2 | **8.4** |
+| Syllabus coverage | 7.2 | 8.1 | 8.1 | 8.1 | 8.1 | 8.1 | **8.1** |
+| **Overall** | **7.5** | **8.1** | **8.4** | **8.5** | **8.5** | **8.5** | **8.6** |
 
 Interview readiness dips by 0.1 only because the four new lessons (8 each) pull the average toward 8; no lesson lost questions.
 
@@ -182,6 +183,47 @@ What changed:
 
 Four batches remain: SQL and modeling (18 lessons), storage and indexing (15), distributed databases (15), and the four in-practice lessons.
 
+## Update 6: SQL and modeling from Java (batch 2 of 5)
+
+The second batch covers the 18 lessons on the relational model, data modeling and SQL. They had good SQL and lab-graded exercises, but no Java at all: nothing showed what a query, a NULL or a join looks like from the application side, which is where a backend developer meets them.
+
+| Measure, 18 SQL and modeling lessons | Before | After |
+|---|---|---|
+| Java blocks | 0 (and 1 Python) | 18, in 15 lessons (no Python) |
+| Lessons whose practice uses a lab | 11 | 18 |
+| Interview questions | 129 | 151 |
+| Practice items | 117 | 136 |
+| Theory sentences over 30 words | 42 | 0 |
+
+What changed:
+
+- **Java where a backend developer meets SQL:**
+  - `PreparedStatement` placeholders (no injection, one reusable statement), and PostgreSQL's driver reading the whole result into memory unless autocommit is off and a fetch size is set;
+  - NULL through JDBC (`getInt` returns 0), wrapper types in JPA, and `Collectors.groupingBy` throwing on the null key that SQL's `GROUP BY` groups;
+  - batch inserts, `reWriteBatchedInserts` and `COPY`, and why IDENTITY keys switch off Hibernate's batching;
+  - JPA fan-out: a collection `JOIN FETCH` with pagination silently paginated in memory, `MultipleBagFetchException`, and paging ids first;
+  - lists as one array parameter (`= ANY (?)`), a tree loaded with one recursive CTE instead of one query per node, and top-N per group as one native query with a tie-breaker;
+  - ER constructs as JPA mappings (an `Enrollment` entity for M:N with attributes, the three inheritance strategies, lazy `@ManyToOne`), Java types for money, instants, dates and UUIDs, and stored functions, procedures and trigger-set columns seen from JPA;
+  - attribute closure and a candidate-key finder in Java for the FD lesson.
+
+  All 18 blocks compile. The candidate-key finder and the `BigDecimal` example were also run, and print what the lessons say. The Java checker now imports `java.math`; before, it accepted an unknown `BigDecimal` as a name the lesson defines instead of checking it.
+- **Production practice:**
+  - zero-downtime schema changes (expand, backfill, switch reads, contract), and which `ADD COLUMN` forms rewrite the table: checked on PostgreSQL 18, a constant default leaves the table's file alone and `clock_timestamp()` rewrites it;
+  - proving a migrated table matches with a two-way `EXCEPT`, plus chunk hashes for large tables;
+  - deleting millions of duplicates on a live table in committed batches, then `CREATE UNIQUE INDEX CONCURRENTLY`;
+  - a window query whose sort spilled to disk (`Sort Method: external merge`), and four ways out;
+  - keeping a denormalized counter correct under concurrency, checking whether an FD actually holds in existing data, and unique violations as SQLState 23505 and Spring's `DataIntegrityViolationException`.
+- **Accuracy:** each new SQL claim was run on PostgreSQL 18 (PGlite). The two-way `EXCEPT` returns 3 rows where `NOT EXISTS` with `=` returns 5, the batched delete keeps exactly the lowest id per email, and `uuidv7()` exists in 18. The aggregation example used an `Order::city` that the playground's orders don't have; it now groups customers, where customer 40 has no city.
+- **Practice: 19 new items.** Every lesson's practice now uses a lab: SQL Playground exercises (relational division, deleting duplicate logins, an active flag), the normalization lab (several candidate keys, 3NF but not BCNF), and the query plan lab (a point lookup with and without its index).
+- **Re-scored:**
+  - Practice reaches 9 in all 18 lessons: each has at least 6 items, 2 or more numericals or exercises, and a lab.
+  - Interview rises in six lessons whose new questions are ones backend interviews ask: the relational model, ER modeling, schema design, SELECT basics, set operations, and views.
+  - Production rises in 13. Set operations moves the most, 6 → 8: it had two production bullets and now has a migration check. Functional dependencies moves only 5 → 6, since checking an FD in data is its one production use.
+  - Production stays put in five lessons. Keys, schema design and DML were already at 9. The array parameter in Semi & Anti Joins is too small a change to move it. The Java example in Why Databases teaches the idea rather than production practice.
+  - First principles and syllabus are unchanged: this batch added applications, not theory. Set operations and views keep the lowest first-principles scores in the batch (7).
+
+Three batches remain: storage and indexing (15 lessons), distributed databases (15), and the four in-practice lessons.
+
 ## Readiness by audience
 
 | Audience | First review | Update 1 | Update 2 | Comment |
@@ -192,8 +234,8 @@ Four batches remain: SQL and modeling (18 lessons), storage and indexing (15), d
 
 ## What is still missing (honest gaps)
 
-- **Written exercises are self-graded.** MCQs, the 113 numericals and the 64 SQL Playground exercises are checked automatically; the 80 written exercises rely on comparing your answer with the worked solution.
-- **Production relevance is still the weakest dimension (8.2).** Update 5 raised it for the transaction lessons only; the other 52 lessons wait for the next four batches.
+- **Written exercises are self-graded.** MCQs, the 119 numericals and the 71 SQL Playground exercises are checked automatically; the 96 written exercises rely on comparing your answer with the worked solution.
+- **Production relevance is still the weakest dimension (8.4).** Updates 5 and 6 raised it for the 28 transaction, SQL and modeling lessons; the 34 storage, indexing, distributed and in-practice lessons wait for the next three batches.
 - **Diagrams are static.** They show one moment or one decision; stepping through a B+ tree split or a replication failover still needs a lab, and only some topics have one.
 - **Topics covered only as sections, not full lessons:** time-series databases, search engines (inverted indexes beyond GIN), vector databases, stream processing, and zero-downtime schema migrations at scale.
 - **No hands-on distributed drills.** Replication, failover and quorum labs are simulations; nothing replaces running Patroni or a Raft cluster and breaking it.
@@ -201,7 +243,7 @@ Four batches remain: SQL and modeling (18 lessons), storage and indexing (15), d
 
 ## Per-lesson scorecard
 
-Scores after update 2. Arrows show update 1 → update 2 where something changed; the first review's before/after table is in the git history (commit 82cc651).
+Scores after update 6. Arrows show each change since update 1: update 2 for every lesson, then update 5 (transactions) or update 6 (SQL and modeling) for the lessons those batches covered. The first review's before/after table is in the git history (commit 82cc651).
 
 | Lesson | Questions | Practice items | Content | First principles | Interview | Practice | Production | Syllabus | Overall |
 |---|---|---|---|---|---|---|---|---|---|
@@ -221,20 +263,20 @@ Scores after update 2. Arrows show update 1 → update 2 where something changed
 | `db-distributed-sql` | 6 | 2 → 6 | 9 | 8 | 8 | 5 → **8** | 8 | 8 | 7.7 → **8.2** |
 | `db-distributed-transactions` | 6 | 3 → 6 | 9 | 9 | 9 | 6 → **8** | 9 | 8 | 8.3 → **8.7** |
 | `db-document-stores` | 6 | 2 → 6 | 9 | 8 | 9 | 5 → **8** | 8 | 8 | 7.8 → **8.3** |
-| `db-er-modeling` | 6 | 3 → 6 | 9 | 8 | 8 | 6 → **8** | 7 | 8 | 7.7 → **8.0** |
+| `db-er-modeling` | 6 → 8 | 3 → 6 → 7 | 9 | 8 | 8 → **9** | 6 → 8 → **9** | 7 → **8** | 8 | 7.7 → 8.0 → **8.5** |
 | `db-explain` | 6 | 2 → 6 | 9 | 8 | 9 | 6 → **8** | 9 | 8 | 8.2 → **8.5** |
 | `db-failover` | 6 | 3 → 6 | 9 | 9 | 9 | 6 → **8** | 9 | 8 | 8.3 → **8.7** |
-| `db-functional-dependencies` | 6 | 3 → 6 | 9 | 8 | 8 | 7 → **8** | 5 | 8 | 7.5 → **7.7** |
+| `db-functional-dependencies` | 6 → 7 | 3 → 6 → 7 | 9 | 8 | 8 | 7 → 8 → **9** | 5 → **6** | 8 | 7.5 → 7.7 → **8.0** |
 | `db-graph-databases` | 6 | 2 → 6 | 8 | 8 | 7 | 5 → **8** | 7 | 7 | 7.0 → **7.5** |
 | `db-index-design-practice` | 6 | 2 → 6 | 9 | 8 | 9 | 6 → **8** | 9 | 8 | 8.2 → **8.5** |
 | `db-index-fundamentals` | 8 | 3 → 6 | 9 | 9 | 9 | 6 → **8** | 9 | 7 | 8.2 → **8.5** |
 | `db-index-types-hashing` | 8 | 5 → 7 | 9 | 8 | 8 | 8 → **9** | 6 | 9 | 8.0 → **8.2** |
 | `db-isolation-levels` | 7 → 9 | 2 → 6 → 8 | 9 | 9 | 9 | 6 → 8 → **9** | 9 | 8 | 8.3 → 8.7 → **8.8** |
-| `db-keys-constraints` | 8 | 4 → 7 | 9 | 9 | 9 | 8 | 9 | 8 | 8.7 |
+| `db-keys-constraints` | 8 → 10 | 4 → 7 → 9 | 9 | 9 | 9 | 8 → **9** | 9 | 8 | 8.7 → **8.8** |
 | `db-locking` | 8 → 10 | 2 → 6 → 8 | 9 | 8 | 9 | 6 → **9** | 9 | 7 → **8** | 8.0 → 8.5 → **8.7** |
 | `db-lsm-trees` | 6 | 3 → 6 | 9 | 9 | 9 | 6 → **8** | 8 | 8 | 8.2 → **8.5** |
 | `db-mvcc` | 6 → 7 | 2 → 6 → 7 | 9 | 9 | 8 → **9** | 5 → 8 → **9** | 9 | 9 | 8.2 → 8.7 → **9.0** |
-| `db-normalization` | 7 | 4 → 7 | 9 | 9 | 9 | 9 | 8 | 8 | 8.7 |
+| `db-normalization` | 7 → 8 | 4 → 7 → 8 | 9 | 9 | 9 | 9 | 8 → **9** | 8 | 8.7 → **8.8** |
 | `db-nosql-landscape` | 6 | 3 → 6 | 9 | 8 | 9 | 6 → **7** | 8 | 9 | 8.2 → **8.3** |
 | `db-optimistic-pessimistic` | 6 → 8 | 2 → 6 → 8 | 9 | 9 | 9 | 5 → 8 → **9** | 8 → **9** | 8 | 8.0 → 8.5 → **8.8** |
 | `db-pages-records` | 6 | 4 → 7 | 9 | 9 | 8 | 7 → **8** | 7 | 8 | 8.0 → **8.2** |
@@ -244,26 +286,26 @@ Scores after update 2. Arrows show update 1 → update 2 where something changed
 | `db-query-optimization` | 7 | 3 → 6 | 9 | 8 | 9 | 7 → **8** | 9 | 7 | 8.2 → **8.3** |
 | `db-quorums-consensus` | 6 | 3 → 6 | 9 | 9 | 9 | 7 → **9** | 8 | 8 | 8.3 → **8.7** |
 | `db-redis-caching` | 8 | 2 → 6 | 9 | 9 | 9 | 6 → **8** | 9 | 9 | 8.5 → **8.8** |
-| `db-relational-model` | 7 | 4 → 7 | 9 | 8 | 7 | 7 → **8** | 6 | 8 | 7.5 → **7.7** |
+| `db-relational-model` | 7 → 9 | 4 → 7 → 8 | 9 | 8 | 7 → **8** | 7 → 8 → **9** | 6 → **7** | 8 | 7.5 → 7.7 → **8.2** |
 | `db-replication` | 7 | 3 → 6 | 9 | 9 | 9 | 7 → **8** | 9 | 8 | 8.5 → **8.7** |
 | `db-scans-joins` | 6 | 4 → 6 | 9 | 9 | 9 | 7 → **8** | 8 | 8 | 8.3 → **8.5** |
 | `db-schedules-serializability` | 8 → 9 | 5 → 7 → 8 | 9 | 9 | 8 → **9** | 8 → **9** | 6 → **7** | 9 | 8.2 → 8.3 → **8.7** |
-| `db-schema-design` | 6 | 3 → 6 | 9 | 8 | 8 | 6 → **8** | 9 | 8 | 8.0 → **8.3** |
+| `db-schema-design` | 6 → 8 | 3 → 6 → 8 | 9 | 8 | 8 → **9** | 6 → 8 → **9** | 9 | 8 | 8.0 → 8.3 → **8.7** |
 | `db-security` | 9 | 8 (new) | 8 | 9 | 8 | 8 | 9 | 8 | **8.3** (new) |
 | `db-sharding` | 7 | 3 → 6 | 9 | 9 | 9 | 7 → **8** | 9 | 8 | 8.5 → **8.7** |
 | `db-specialized-indexes` | 6 | 2 → 6 | 9 | 8 | 9 | 5 → **8** | 8 | 7 | 7.7 → **8.2** |
 | `db-transactions-acid` | 7 → 10 | 3 → 6 → 9 | 9 | 9 | 9 | 6 → 8 → **9** | 9 | 8 | 8.3 → 8.7 → **8.8** |
 | `db-wal-durability` | 6 → 8 | 3 → 6 → 8 | 9 | 9 | 8 → **9** | 6 → 8 → **9** | 9 | 8 | 8.2 → 8.5 → **8.8** |
-| `db-why-databases` | 8 | 4 → 7 | 9 | 9 | 8 | 7 → **8** | 8 | 8 | 8.2 → **8.3** |
+| `db-why-databases` | 8 → 9 | 4 → 7 → 8 | 9 | 9 | 8 | 7 → 8 → **9** | 8 | 8 | 8.2 → 8.3 → **8.5** |
 | `db-wide-column` | 6 | 3 → 6 | 9 | 8 | 9 | 6 → **8** | 8 | 8 | 8.0 → **8.3** |
-| `sql-aggregation` | 9 | 4 → 7 | 9 | 8 | 9 | 8 → **9** | 8 | 9 | 8.5 → **8.7** |
-| `sql-dml-ddl` | 7 | 4 → 7 | 9 | 8 | 9 | 8 → **9** | 9 | 8 | 8.5 → **8.7** |
-| `sql-interview-patterns` | 9 | 2 → 7 | 9 | 8 | 9 | 6 → **9** | 8 | 8 | 8.0 → **8.5** |
-| `sql-joins` | 8 | 3 → 6 | 9 | 9 | 9 | 8 → **9** | 8 | 8 | 8.5 → **8.7** |
-| `sql-null-logic` | 7 | 5 → 7 | 9 | 9 | 9 | 9 | 8 | 9 | 8.8 |
-| `sql-select-basics` | 7 | 3 → 6 | 9 | 8 | 8 | 6 → **9** | 8 | 8 | 7.8 → **8.3** |
-| `sql-semi-anti-joins` | 6 | 3 → 6 | 9 | 9 | 9 | 7 → **9** | 8 | 8 | 8.3 → **8.7** |
-| `sql-set-operations` | 6 | 3 → 6 | 9 | 7 | 7 | 7 → **9** | 6 | 8 | 7.3 → **7.7** |
-| `sql-subqueries-ctes` | 7 | 3 → 6 | 9 | 8 | 9 | 7 → **9** | 8 | 8 | 8.2 → **8.5** |
-| `sql-views-programmability` | 7 | 3 → 6 | 9 | 7 | 7 | 6 → **9** | 8 | 8 | 7.5 → **8.0** |
-| `sql-window-functions` | 8 | 4 → 7 | 9 | 9 | 9 | 8 → **9** | 8 | 9 | 8.7 → **8.8** |
+| `sql-aggregation` | 9 → 10 | 4 → 7 → 8 | 9 | 8 | 9 | 8 → **9** | 8 → **9** | 9 | 8.5 → 8.7 → **8.8** |
+| `sql-dml-ddl` | 7 → 8 | 4 → 7 → 8 | 9 | 8 | 9 | 8 → **9** | 9 | 8 | 8.5 → **8.7** |
+| `sql-interview-patterns` | 9 → 10 | 2 → 7 | 9 | 8 | 9 | 6 → **9** | 8 → **9** | 8 | 8.0 → 8.5 → **8.7** |
+| `sql-joins` | 8 → 9 | 3 → 6 → 7 | 9 | 9 | 9 | 8 → **9** | 8 → **9** | 8 | 8.5 → 8.7 → **8.8** |
+| `sql-null-logic` | 7 → 8 | 5 → 7 → 8 | 9 | 9 | 9 | 9 | 8 → **9** | 9 | 8.8 → **9.0** |
+| `sql-select-basics` | 7 → 8 | 3 → 6 → 7 | 9 | 8 | 8 → **9** | 6 → **9** | 8 → **9** | 8 | 7.8 → 8.3 → **8.7** |
+| `sql-semi-anti-joins` | 6 → 7 | 3 → 6 → 7 | 9 | 9 | 9 | 7 → **9** | 8 | 8 | 8.3 → **8.7** |
+| `sql-set-operations` | 6 → 7 | 3 → 6 → 7 | 9 | 7 | 7 → **8** | 7 → **9** | 6 → **8** | 8 | 7.3 → 7.7 → **8.2** |
+| `sql-subqueries-ctes` | 7 → 8 | 3 → 6 → 7 | 9 | 8 | 9 | 7 → **9** | 8 → **9** | 8 | 8.2 → 8.5 → **8.7** |
+| `sql-views-programmability` | 7 → 8 | 3 → 6 → 7 | 9 | 7 | 7 → **8** | 6 → **9** | 8 → **9** | 8 | 7.5 → 8.0 → **8.3** |
+| `sql-window-functions` | 8 → 9 | 4 → 7 → 8 | 9 | 9 | 9 | 8 → **9** | 8 → **9** | 9 | 8.7 → 8.8 → **9.0** |

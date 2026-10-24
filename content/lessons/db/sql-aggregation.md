@@ -130,6 +130,21 @@ ORDER BY 1;
 
 `GROUP BY 1` refers to the first output column — convenient, but fragile if columns are reordered.
 
+### Aggregate in SQL, not in Java
+
+Loading rows into Java and grouping them there looks equivalent, but it differs in two ways:
+
+```java
+// Ships every customer across the network, then groups in the JVM
+Map<String, Long> perCity = customers.stream()
+        .collect(Collectors.groupingBy(Customer::city, Collectors.counting()));   // NPE on a null city
+```
+
+- **Volume**: with 10 million customers, 10 million rows cross the network to produce a dozen numbers. `GROUP BY city` sends back only the dozen.
+- **NULLs**: `Collectors.groupingBy` throws `NullPointerException` ("element cannot be mapped to a null key") when the key is null. SQL's `GROUP BY` puts all NULL cities into one group.
+
+Let the database aggregate, and map the small result. In JPA, a constructor expression maps it straight into a record: `SELECT new com.example.CityCount(c.city, count(c)) FROM Customer c GROUP BY c.city`.
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
@@ -262,6 +277,10 @@ WHERE avg_salary = (SELECT max(avg_salary) FROM dept_avg);
 
 They compute several groupings in one pass. `GROUP BY ROLLUP (region, city)` returns per-(region, city) rows, a subtotal per region (city NULL) and a grand total (both NULL). `GROUPING SETS ((region), (city), ())` lists the groupings explicitly; `CUBE` gives every combination. `GROUPING(city) = 1` tells a subtotal row's NULL apart from a real NULL city.
 
+### [L2 · compare] Should you aggregate in SQL or load the rows and aggregate in Java?
+
+In SQL, almost always. The database aggregates next to the data, can use indexes and hash or sort strategies, and returns a handful of rows instead of shipping every row across the network and into the heap. Java's `Collectors.groupingBy` also behaves differently: it throws on a null key, while SQL groups NULLs together. Aggregate in Java only for data already in memory, or for logic SQL can't express; even then, filter and pre-aggregate in the query first.
+
 ## Practice
 
 ### [mcq] Which query returns departments with an average salary above 80,000?
@@ -339,6 +358,15 @@ ORDER BY 1;
 Conditional aggregation pivots values into columns without a self-join or one query per status. In databases without FILTER, use `sum(CASE WHEN status = 'paid' THEN 1 ELSE 0 END)`. Graded in the [SQL Playground](lab:sql-playground#status-by-year).
 :::
 
+### [mcq] A Java report groups customers with `Collectors.groupingBy(Customer::city, Collectors.counting())`. One customer has no city, like customer 40 in the playground. What happens, and what would `GROUP BY city` in SQL do?
+
+- [ ] Java puts them in a `null` group; SQL drops them
+- [x] Java throws `NullPointerException`; SQL returns one group with city NULL
+- [ ] Both drop the rows with no city
+- [ ] Both put them in a group keyed by the empty string
+
+`groupingBy` rejects null keys. SQL treats all NULLs as one group for `GROUP BY` (and `DISTINCT`), although NULL never equals NULL in a `WHERE` comparison.
+
 ## Quick Revision
 
 - GROUP BY collapses rows; select only group keys or aggregates.
@@ -348,3 +376,4 @@ Conditional aggregation pivots values into columns without a self-join or one qu
 - Engine: HashAggregate (memory, unordered) vs Sort + GroupAggregate (sorted input).
 - `COUNT(*)` ≡ `COUNT(1)` (rows); `COUNT(col)` skips NULLs. Aggregates over zero rows: one row (count 0, sum NULL) — but zero rows with GROUP BY.
 - Weighted vs simple averages: never average averages. `ROLLUP`/`GROUPING SETS` give subtotals in one pass.
+- Aggregate in SQL: less data shipped. Java's `groupingBy` throws on null keys; SQL's `GROUP BY` groups NULLs together.

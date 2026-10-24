@@ -48,7 +48,7 @@ Window functions fall into three families:
 | Offset (navigation) | `lag(x, n, default)`, `lead(x, n, default)`, `first_value(x)`, `last_value(x)`, `nth_value(x, n)` |
 | Aggregate | `sum`, `avg`, `count`, `min`, `max`, … with `OVER (…)` |
 
-Window functions are evaluated **after `WHERE`/`GROUP BY`/`HAVING` and before `ORDER BY`/`LIMIT`** — so you can't filter on them in `WHERE` of the same query; wrap in a subquery or CTE (or use `QUALIFY` in Snowflake/BigQuery/DuckDB).
+Window functions are evaluated **after `WHERE`/`GROUP BY`/`HAVING` and before `ORDER BY`/`LIMIT`**. So you can't filter on them in the same query's `WHERE`; wrap the query in a subquery or CTE (or use `QUALIFY` in Snowflake/BigQuery/DuckDB).
 
 ## Why It Exists
 
@@ -60,7 +60,7 @@ Window functions are evaluated **after `WHERE`/`GROUP BY`/`HAVING` and before `O
 
 GROUP BY gives you the summary but throws the individual rows away.
 
-**Without it.** Before window functions, "rank employees within department", "compare each month with the previous one" or "running balance" required self joins or correlated subqueries — O(n²) and hard to read.
+**Without it.** Before window functions, "rank employees within department", "compare each month with the previous one" or "running balance" required self joins or correlated subqueries. Those are O(n²) and hard to read.
 
 **The idea.** Keep every row, and for each one compute an aggregate over a chosen set of related rows (its "window"). Window functions express them directly and are computed in a single sorted pass.
 
@@ -173,6 +173,33 @@ SELECT department_id, name, salary,
 FROM employees;
 ```
 
+### Top-N per group from Java
+
+"Each customer's latest 3 orders" is one query, not one query per customer. Standard JPQL has no window functions (Hibernate 6's HQL adds them), so the usual route is native SQL. In Spring Data that means `@Query(value = "...", nativeQuery = true)`; with plain `JdbcTemplate` it looks like this:
+
+```java
+record RecentOrder(long customerId, long orderId, LocalDate orderDate) {}
+
+static final String LATEST_ORDERS = """
+    SELECT customer_id, id, order_date
+    FROM (SELECT o.*,
+                 row_number() OVER (PARTITION BY customer_id
+                                    ORDER BY order_date DESC, id DESC) AS rn
+          FROM orders o
+          WHERE customer_id IS NOT NULL) t
+    WHERE rn <= ?
+    ORDER BY customer_id, rn""";
+
+List<RecentOrder> latestOrders(int n) {
+    return jdbc.query(LATEST_ORDERS,
+            (rs, i) -> new RecentOrder(rs.getLong("customer_id"), rs.getLong("id"),
+                                       rs.getObject("order_date", LocalDate.class)),
+            n);
+}
+```
+
+`id DESC` breaks ties. `order_date` is a date, so one customer can have two orders on the same day, and without a tie-breaker either may be "latest", differently from run to run.
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
@@ -180,7 +207,7 @@ The executor's **WindowAgg** node needs input sorted by `PARTITION BY` then `ORD
 
 - Ranking functions: counters reset at each partition boundary.
 - Running aggregates: add the new row's value (O(1) per row).
-- Moving frames: add entering rows and, where the aggregate supports an inverse transition (sum, count, avg), subtract leaving rows — O(1) per row; otherwise (min/max) re-aggregate the frame or use more complex structures.
+- Moving frames: add entering rows and, where the aggregate supports an inverse transition (sum, count, avg), subtract leaving rows, which is O(1) per row. Otherwise (min/max), re-aggregate the frame or use more complex structures.
 
 Several window functions with the **same** window share one sort; different `PARTITION BY/ORDER BY` combinations require additional sorts — visible in EXPLAIN as multiple Sort + WindowAgg nodes.
 
@@ -319,6 +346,17 @@ ORDER BY day;
 
 The self join (`SUM(b.amount) … JOIN t b ON b.ts <= a.ts`) compares every row with every earlier row: O(n²). The window version sorts once and keeps a running sum while streaming: O(n log n) for the sort and O(1) per row after it. On a million rows that's the difference between seconds and hours.
 
+### [L3 · debugging] A nightly "latest row per key" job uses `row_number() OVER (PARTITION BY account_id ORDER BY updated_at DESC)` and has become slow. `EXPLAIN (ANALYZE)` shows `Sort Method: external merge  Disk: 2148000kB`. What is happening, and what are your options?
+
+The window needs its input sorted by `account_id, updated_at DESC`. The sort didn't fit in `work_mem`, so PostgreSQL spilled about 2 GB to temporary files and merged them, and that disk work dominates. Options, roughly in order:
+
+1. **Process less**: if only recently changed accounts matter, filter on `updated_at` first, so the sort is small.
+2. **Give this query more memory**: `SET LOCAL work_mem = '1GB'` inside the job's transaction, not globally, since every sort in every session may use that much.
+3. **Avoid the sort**: an index on `(account_id, updated_at DESC)` can feed rows already in order. For top-1 with few keys and many rows each, a `LATERAL ... LIMIT 1` per key reads only one index entry per key.
+4. **Move it**: run the job on a replica or in the warehouse.
+
+Confirm with `EXPLAIN (ANALYZE, BUFFERS)` after each change.
+
 ## Practice
 
 ### [mcq] Salaries 300, 200, 200, 100. What does DENSE_RANK() OVER (ORDER BY salary DESC) give the 100 row?
@@ -400,6 +438,15 @@ FROM daily ORDER BY day;
 Without the calendar, days with no orders are missing rows, and "6 preceding rows" would reach back more than 6 days. The status filter goes in the ON clause so empty days survive the LEFT JOIN. Graded in the [SQL Playground](lab:sql-playground#moving-average).
 :::
 
+### [mcq] A query picks each customer's latest order with `row_number() OVER (PARTITION BY customer_id ORDER BY order_date DESC)` and keeps `rn = 1`. A customer placed two orders on the same date. Which one is returned?
+
+- [ ] The one with the lower id, always
+- [ ] Both, because they tie
+- [x] Either one; it can change between runs, after a plan change, or between replicas
+- [ ] Neither; PostgreSQL raises an error on ties
+
+`row_number` numbers tied rows in whatever order they arrive. Add a unique tie-breaker such as `ORDER BY order_date DESC, id DESC`, or use `rank` to keep both.
+
 ## Quick Revision
 
 - `f() OVER (PARTITION BY … ORDER BY … frame)` — aggregate/rank/offset without collapsing rows.
@@ -410,3 +457,4 @@ Without the calendar, days with no orders are missing rows, and "6 preceding row
 - Top-N per group: window + filter, LATERAL + LIMIT, or DISTINCT ON.
 - `NTILE(n)`: near-equal buckets, earlier buckets get the extras (10 → 4, 3, 3); ties may split.
 - Moving average: `ROWS BETWEEN k PRECEDING AND CURRENT ROW`; share of total: `x / sum(x) OVER (PARTITION BY …)`.
+- Top-N per group from Java: one native query with `row_number()` and a unique tie-breaker; a spilled sort (`external merge Disk`) is the usual reason it gets slow.

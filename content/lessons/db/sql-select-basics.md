@@ -130,16 +130,46 @@ Tables have no inherent order (they're sets), so any order you rely on must be a
 - NULLs sort **last in ascending order in PostgreSQL and first in MySQL**; control with `NULLS FIRST/LAST`.
 - **Pagination needs a unique tiebreaker**: `ORDER BY created_at DESC, id DESC`. Without it, rows with equal timestamps can appear on two pages or none.
 
+### From Java: parameters, mapping and large results
+
+From Java, a query is a `PreparedStatement` with `?` placeholders, and each row is mapped to an object:
+
+```java
+record Customer(long id, String name) {}
+
+static List<Customer> customersIn(Connection c, String city) throws SQLException {
+    // never "... WHERE city = '" + city + "'"
+    String sql = "SELECT id, name FROM customers WHERE city = ? ORDER BY name";
+    try (PreparedStatement ps = c.prepareStatement(sql)) {
+        ps.setString(1, city);
+        try (ResultSet rs = ps.executeQuery()) {
+            List<Customer> out = new ArrayList<>();
+            while (rs.next()) out.add(new Customer(rs.getLong("id"), rs.getString("name")));
+            return out;
+        }
+    }
+}
+```
+
+The placeholder sends the value separately from the SQL text, so input can never change the query's structure (no SQL injection). The statement text also stays the same for every city, which lets the driver and the database reuse its plan.
+
+One driver default surprises people: PostgreSQL's JDBC driver reads the *whole* result into memory before `rs.next()` returns the first row. For a 10-million-row export, that's an `OutOfMemoryError`. To stream instead, turn autocommit off and set a fetch size: the driver then reads rows in batches through a server-side cursor.
+
+```java
+c.setAutoCommit(false);   // the cursor lives inside a transaction
+ps.setFetchSize(1_000);   // 1,000 rows per round trip, not everything at once
+```
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
 ### Logical order ≠ physical order
 
-The evaluation order above is *logical*: it defines the result. The optimizer may execute things differently as long as the result is the same. It pushes filters into scans, uses an index that returns rows already sorted (so there's no sort step), or stops early for `ORDER BY … LIMIT 10` with a top-N heap instead of sorting everything ([Scans & Joins](lesson:db-scans-joins)).
+The evaluation order above is *logical*: it defines the result. The optimizer may execute things differently as long as the result is the same. For example, it pushes filters into scans, or uses an index that returns rows already sorted, so there's no sort step. For `ORDER BY … LIMIT 10` it can keep a top-N heap instead of sorting everything ([Scans & Joins](lesson:db-scans-joins)).
 
 ### Sargable predicates
 
-A predicate is **sargable** (Search ARGument-able) if an index can be used to evaluate it: `created_at >= '2024-01-01'` is; `date_part('year', created_at) = 2024` is not (the function hides the column), and neither is `name LIKE '%sha'` (no fixed prefix). Rewrite as a range on the bare column, or index the expression ([Index Design](lesson:db-index-design-practice)).
+A predicate is **sargable** (Search ARGument-able) if an index can be used to evaluate it. `created_at >= '2024-01-01'` is sargable. `date_part('year', created_at) = 2024` is not, because the function hides the column, and neither is `name LIKE '%sha'`, which has no fixed prefix. Rewrite as a range on the bare column, or index the expression ([Index Design](lesson:db-index-design-practice)).
 
 ### OFFSET cost
 
@@ -225,6 +255,10 @@ For removing duplicates, `SELECT DISTINCT city FROM customers` and `SELECT city 
 
 `created_at` is a timestamp, and the literal `'2024-01-31'` means midnight at the start of 31 January, so everything later that day is excluded. Use a half-open range: `created_at >= '2024-01-01' AND created_at < '2024-02-01'`. It's correct for any precision and stays sargable.
 
+### [L2 · how] How do you read 10 million rows from Java without running out of memory?
+
+Stream them instead of materializing them. With PostgreSQL's JDBC driver, set autocommit off and call `setFetchSize(n)` on the statement; the driver then fetches n rows at a time through a cursor, so memory stays flat. Process each row as it arrives instead of collecting a list. For an API, prefer keyset pagination (`WHERE id > ? ORDER BY id LIMIT 1000`) so each request is short. For bulk exports, `COPY ... TO STDOUT` through the driver's `CopyManager` is the fastest path. Without a fetch size, the default reads the entire result into the heap first.
+
 ## Practice
 
 ### [mcq] Which query fails?
@@ -290,6 +324,15 @@ ORDER BY price;
 CASE returns the first branch that matches. With `price < 10000` first, every budget product (also under 10,000) would be labelled 'mid' and the 'budget' branch would never run. Check your query in the [SQL Playground](lab:sql-playground#price-bands).
 :::
 
+### [mcq] A Java job runs `SELECT * FROM events` (20 million rows) through PostgreSQL's JDBC driver with default settings, and processes rows in a `while (rs.next())` loop. What happens?
+
+- [ ] Rows stream in as the loop consumes them
+- [x] The driver loads the entire result into memory before the first `next()` returns, which can exhaust the heap
+- [ ] The driver fetches 10 rows per round trip
+- [ ] PostgreSQL refuses results larger than 1 GB
+
+Streaming needs `setAutoCommit(false)` plus `setFetchSize(n)`, so the driver can read through a cursor n rows at a time.
+
 ## Quick Revision
 
 - Logical order: FROM → WHERE → GROUP BY → HAVING → SELECT → DISTINCT → ORDER BY → LIMIT.
@@ -299,3 +342,4 @@ CASE returns the first branch that matches. With `price < 10000` first, every bu
 - DISTINCT is over the whole row and often hides a bad join.
 - LIKE: `%` = any run of characters, `_` = exactly one; escape literals with `ESCAPE`. Only fixed prefixes use B+ tree indexes.
 - DISTINCT = dedupe output rows; GROUP BY = buckets for aggregates. Same plan for pure dedupe.
+- Java: `PreparedStatement` with `?` (no injection, reusable plan). pgJDBC loads whole results unless autocommit is off and a fetch size is set.

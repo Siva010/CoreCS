@@ -102,7 +102,7 @@ FROM customers c
 LEFT JOIN orders o ON o.customer_id = c.id AND o.status = 'paid';   -- ✓
 ```
 
-Rule: in a `LEFT JOIN`, conditions on the **right** table belong in `ON` (they decide what matches); conditions on the **left** table belong in `WHERE` (they decide which left rows appear at all).
+Rule: in a `LEFT JOIN`, conditions on the **right** table belong in `ON`, because they decide what matches. Conditions on the **left** table belong in `WHERE`, because they decide which left rows appear at all.
 
 ### Self join: relationships within one table
 
@@ -153,14 +153,29 @@ LEFT JOIN (SELECT o.customer_id, sum(oi.quantity) AS items
        ON i_sum.customer_id = c.id;
 ```
 
-Joining two independent one-to-many tables to the same parent (customer → orders and customer → addresses) multiplies them against each other: 5 orders × 3 addresses = 15 rows per customer.
+Joining two independent one-to-many tables to the same parent (customer → orders and customer → addresses) multiplies them against each other. With 5 orders and 3 addresses, each customer comes back as 15 rows.
+
+### Joins in JPA: fetch joins and fan-out
+
+Fan-out comes back in JPA in two disguises. First, a `JOIN FETCH` of a collection returns one row per child, so the database can't apply `LIMIT` to parents:
+
+```java
+List<Customer> page = em.createQuery(
+        "SELECT c FROM Customer c JOIN FETCH c.orders ORDER BY c.name", Customer.class)
+    .setMaxResults(20)   // not a SQL LIMIT: 20 rows may be 2 customers with 10 orders each
+    .getResultList();
+```
+
+Hibernate therefore fetches *every* matching row and paginates in memory, logging a warning, `HHH000104` in older versions. Setting `hibernate.query.fail_on_pagination_over_collection_fetch=true` turns that warning into an error. The fix is two queries: page the parent ids (`SELECT c.id ... ORDER BY c.name` with a limit), then fetch those customers with their orders.
+
+Second, fetching two collections at once, such as `JOIN FETCH c.orders JOIN FETCH c.addresses`, multiplies the rows: 10 orders × 3 addresses = 30 rows per customer. For two `List` collections Hibernate refuses outright, with `MultipleBagFetchException`. Fetch one collection per query, or use batch fetching (`@BatchSize`) for the second.
 
 ## Internal Mechanism
 
 :::depth{level=advanced}
 The logical definition (Cartesian product then filter) is never how a real engine executes a join. Physical join algorithms:
 
-- **Nested loop**: for each outer row, look up matches in the inner input — fast when the outer side is small and the inner side has an index on the join key.
+- **Nested loop**: for each outer row, look up matches in the inner input. It's fast when the outer side is small and the inner side has an index on the join key.
 - **Hash join**: build a hash table on the smaller input's join key, probe it with each row of the larger input — O(n + m), equality conditions only.
 - **Merge join**: both inputs sorted on the key, advance through them in step — great when indexes already supply sorted order.
 
@@ -285,6 +300,10 @@ JOIN employees b
 `a.id < b.id` removes self-pairs and keeps only one ordering of each pair.
 :::
 
+### [L2 · debugging] A paginated JPA query with `JOIN FETCH c.orders` and `setMaxResults(20)` got slow as data grew, and Hibernate logs a warning about pagination. Why, and how do you fix it?
+
+A fetch join over a collection returns one row per child, so "20 customers" is not "20 rows". Hibernate can't put `LIMIT 20` in the SQL. It loads every matching row and applies the page in memory, so the query reads the whole table and grows with it. Fix it with two queries: first select only the parent ids for the page, with `ORDER BY` and a limit, which the database can do with an index; then load those parents with `JOIN FETCH` (or batch fetching) for their children. Turn on `hibernate.query.fail_on_pagination_over_collection_fetch` to catch new cases early.
+
 ## Practice
 
 ### [numeric 6] customers has 3 rows; orders has 5 rows: customer 1 has 3 orders, customer 2 has 2, customer 3 has none. How many rows does customers LEFT JOIN orders return?
@@ -339,6 +358,15 @@ LEFT JOIN employees m ON m.id = e.manager_id;
 A self join uses the same table under two aliases. It must be a LEFT JOIN: with an inner join the top manager (manager_id NULL) has no match and disappears. Graded in the [SQL Playground](lab:sql-playground#employee-managers).
 :::
 
+### [mcq] A JPQL query fetch-joins `c.orders` (10 per customer) and `c.addresses` (3 per customer), both mapped as `List`. What happens?
+
+- [ ] Hibernate runs it and returns each customer once with 13 child rows
+- [x] Hibernate refuses, with `MultipleBagFetchException`; with `Set`s it would run, but each customer would come back as 10 × 3 = 30 SQL rows
+- [ ] PostgreSQL rejects the query
+- [ ] Hibernate silently fetches only the first collection
+
+Two one-to-many joins multiply. Fetch one collection per query, or batch-fetch the second.
+
 ## Quick Revision
 
 - Join = pair rows where ON is true; outer joins add unmatched rows padded with NULL.
@@ -348,3 +376,4 @@ A self join uses the same table under two aliases. It must be a LEFT JOIN: with 
 - Physical algorithms: nested loop (+index), hash, merge. Index FK join columns.
 - Equi (=) vs non-equi (BETWEEN, <) joins; natural join = all same-named columns (avoid); cross = all pairs; self join = two aliases.
 - Self-join pairs: use `a.id < b.id` to drop self-pairs and duplicates.
+- JPA: `JOIN FETCH` a collection + pagination → Hibernate paginates in memory (page parent ids first). Two collection fetches multiply rows (`MultipleBagFetchException` for Lists).

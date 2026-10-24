@@ -27,7 +27,7 @@ ravi@x.com   Ravi     Delhi
 ravi@x.com   R. Kumar Delhi    ✗ same email, different names: email → name does not hold
 ```
 
-FDs are **facts about the real world** (business rules), not about the current data. The rows in a table can suggest an FD, but only the domain can confirm it: "every employee has one department" is a rule; "no two current employees share a birthday" is a coincidence.
+FDs are **facts about the real world** (business rules), not about the current data. The rows in a table can suggest an FD, but only the domain can confirm it. "Every employee has one department" is a rule; "no two current employees share a birthday" is a coincidence.
 
 Everything in normalization — keys, partial and transitive dependencies, BCNF — is computed from the FDs.
 
@@ -46,13 +46,17 @@ Everything in normalization — keys, partial and transitive dependencies, BCNF 
 2. **Augmentation**: if X → Y then XZ → YZ. *Knowing one more thing on the left lets you also report that thing on the right.* email → name gives {email, city} → {name, city}.
 3. **Transitivity**: if X → Y and Y → Z then X → Z. *Chains of knowledge.* order_id → customer_id and customer_id → city give order_id → city.
 
-Derived rules: **union** (X → Y, X → Z ⇒ X → YZ), **decomposition** (X → YZ ⇒ X → Y), **pseudo-transitivity** (X → Y, WY → Z ⇒ WX → Z).
+Three more rules follow from these:
+
+- **Union**: X → Y and X → Z give X → YZ.
+- **Decomposition**: X → YZ gives X → Y.
+- **Pseudo-transitivity**: X → Y and WY → Z give WX → Z.
 
 ## Why It Exists
 
 **The problem.** Redundancy in a table comes from facts stored more often than they need to be — "this customer's city" repeated on every order. To fix it, you need a precise way to say which facts determine which.
 
-**What it enables.** To normalize a schema you must answer precisely: "Is this attribute set a key?", "Does this non-key attribute depend on only part of the key?", "Is this decomposition lossless?". FDs and closures make those answers mechanical instead of intuitive.
+**What it enables.** Normalizing a schema means answering three questions precisely. Is this attribute set a key? Does this non-key attribute depend on only part of the key? Is this decomposition lossless? FDs and closures make those answers mechanical instead of intuitive.
 
 :::callout[That's all it is]{type=insight}
 X → Y means "knowing X tells you Y". The closure of X is everything X tells you, found by applying the rules until nothing new appears. If X's closure is every column, X is a key.
@@ -88,6 +92,24 @@ flowchart TD
     C -->|"CD → E"| E["A, B, C, D, E<br/>every attribute"]
 ```
 
+The same loop in Java. It keeps applying every dependency whose left side is already inside the result, until a full pass adds nothing:
+
+```java
+record Fd(Set<Character> lhs, Set<Character> rhs) {}
+
+/** X⁺: every attribute that `x` determines under `fds`. */
+static Set<Character> closure(Set<Character> x, List<Fd> fds) {
+    Set<Character> result = new TreeSet<>(x);
+    boolean grew = true;
+    while (grew) {                  // apply dependencies until nothing new appears
+        grew = false;
+        for (Fd fd : fds)
+            if (result.containsAll(fd.lhs()) && result.addAll(fd.rhs())) grew = true;
+    }
+    return result;
+}
+```
+
 ### Finding all candidate keys
 
 The shortcut comes from one observation: an attribute that nothing determines can only be known if it's *in* the key. 
@@ -110,7 +132,7 @@ R(A, B, C), F = { A → B, B → A, A → C }.
 
 Why bother: the same rules can be written with lots of redundancy, which hides what the real dependencies are and makes normalization produce extra tables. A minimal cover is the shortest equivalent list. F = { A → BC, B → C, A → B, AB → C }:
 
-1. Split right sides: A → B, A → C, B → C, A → B, AB → C → remove the duplicate: {A → B, A → C, B → C, AB → C}.
+1. Split right sides: A → B, A → C, B → C, A → B, AB → C. Removing the duplicate leaves {A → B, A → C, B → C, AB → C}.
 2. Remove extraneous left attributes. In AB → C, do we need B on the left, or does A alone already determine C? A⁺ = {A, B, C} contains C, so A alone is enough: AB → C shrinks to A → C, which is already in the list, so it disappears.
 3. Remove redundant FDs. Hide one FD and ask whether the rest still imply it. Without A → C, the rest are {A → B, B → C}, and A⁺ = {A, B, C} still contains C. So A → C was just a shortcut for A → B → C: remove it.
 
@@ -122,8 +144,8 @@ Minimal cover: **{ A → B, B → C }**.
 
 Two sets F and G are **equivalent** if each implies the other: every FD in G can be derived from F, and vice versa. Test it with closures. For each X → Y in G, compute X⁺ under F and check that Y ⊆ X⁺; then swap the roles of F and G. Examples:
 
-- F = { A → B, B → C } and G = { A → B, B → C, A → C } are equivalent: A → C follows from F by transitivity.
-- F and H = { A → C, B → C } are not: under H, A⁺ = {A, C}, which lacks B, so H can't derive A → B.
+- F = {A → B, B → C} and G = {A → B, B → C, A → C} are equivalent. A → C follows from F by transitivity.
+- F and H = {A → C, B → C} are not equivalent. Under H, A⁺ = {A, C}, which lacks B, so H can't derive A → B.
 
 ### Counting super keys
 
@@ -138,11 +160,11 @@ X → Y is implied by F **iff** Y ⊆ X⁺ (computed under F). This turns "can t
 
 ### Lossless-join test for a binary decomposition
 
-Decomposing R into R1 and R2 is lossless iff the common attributes are a key of at least one side: (R1 ∩ R2) → R1 or (R1 ∩ R2) → R2. Otherwise joining the pieces back produces **spurious tuples**.
+Decomposing R into R1 and R2 is lossless iff the common attributes are a key of at least one side. In symbols, (R1 ∩ R2) → R1 or (R1 ∩ R2) → R2. Otherwise joining the pieces back produces **spurious tuples**.
 
 ### Dependency preservation
 
-A decomposition preserves dependencies if every FD can be checked within a single piece (the union of the projected FDs implies F). 3NF synthesis always achieves both lossless join and dependency preservation. BCNF decomposition is lossless but may lose some dependencies ([Normalization](lesson:db-normalization)).
+A decomposition preserves dependencies if every FD can be checked within a single piece (the union of the projected FDs implies F). The 3NF synthesis algorithm always achieves both lossless join and dependency preservation. BCNF decomposition is lossless but may lose some dependencies ([Normalization](lesson:db-normalization)).
 
 ### Complexity
 
@@ -177,7 +199,17 @@ Modeling every FD formally is overkill for most application schemas; the value i
 
 ## In Production
 
-You won't compute closures at work, but you'll constantly detect FDs informally: "city → state, so storing both on every order duplicates data", "sku → price at time of catalog, but order price must be copied because it's a historical fact" (the FD `sku → price` does **not** hold across time).
+You won't compute closures at work, but you will check whether a dependency actually holds in real data before you rely on it, for example before moving `state` into a `cities` table. A dependency X → Y holds if no value of X appears with two different values of Y:
+
+```sql
+-- Does city → state hold? Every row returned is a violation.
+SELECT city, count(DISTINCT state) AS states
+FROM addresses
+GROUP BY city
+HAVING count(DISTINCT state) > 1;
+```
+
+Run it on production data, not samples: the one city that appears in two states (there usually is one) decides whether the design works. You'll also detect FDs informally all the time: "city → state, so storing both on every order duplicates data", "sku → price at time of catalog, but order price must be copied because it's a historical fact" (the FD `sku → price` does **not** hold across time).
 
 ## Deeper Connections
 
@@ -223,6 +255,10 @@ Show that each set covers the other. For every FD X → Y in G, compute X⁺ usi
 ### [L2 · numerical] R(A, B, C, D, E) with F = { A → BC, CD → E, B → D, E → A }. Find the candidate keys.
 
 Single attributes: A⁺ = {A, B, C, D, E} → A is a key. E⁺ = {E, A, …} = all → E is a key. CD⁺ = {C, D, E, A, B} → CD is a key. BC⁺ = {B, C, D, E, A} → BC is a key. B⁺ = {B, D}, C⁺ = {C}, D⁺ = {D} are not. Candidate keys: **A, E, CD, BC** (all minimal). Every attribute is prime here.
+
+### [L2 · how] Before normalizing a table, how do you check whether a functional dependency really holds in the existing data?
+
+Group by the left side and count distinct values of the right side: `SELECT city, count(DISTINCT state) FROM addresses GROUP BY city HAVING count(DISTINCT state) > 1`. Any row returned is a counterexample, so the dependency does not hold, and splitting the table on it would lose information or force a choice. For a multi-column left side, group by all of its columns. Run it on the full data, then decide whether the counterexamples are errors to clean up or proof that the dependency was never real.
 
 ## Practice
 
@@ -277,6 +313,35 @@ B never appears on a right-hand side, so every key contains B; B⁺ = {B}, so B 
 Candidate keys: **AB, BC, BD, BE** (all minimal, since B alone isn't a key). Every attribute appears in some key, so all are prime, and 3NF holds (every FD's right side is prime). BCNF fails: C → D has a left side that isn't a super key. Highest normal form: **3NF**.
 :::
 
+### [exercise] In the [normalization lab](lab:normalization), load "Several candidate keys" (R(A, B, C, D) with AB → C, C → D, D → A). Compute AB⁺, C⁺ and BD⁺, find all candidate keys, and check them against the lab. Then write a Java method that finds the candidate keys using the `closure` method above.
+
+:::solution
+- AB⁺: AB → C gives ABC, C → D gives ABCD, so AB is a key.
+- C⁺: C → D gives CD, D → A gives ACD. B is missing, so C alone is not a key.
+- BD⁺: D → A gives ABD, AB → C gives ABCD, so BD is a key.
+
+B appears on no right side, so every key contains B. Trying B with each other attribute: AB, BC (C → D → A, then AB → C) and BD are all keys, and B alone isn't. The candidate keys are **AB, BC and BD**, as the lab shows.
+
+```java
+/** All candidate keys: minimal attribute sets whose closure is every attribute. */
+static List<Set<Character>> candidateKeys(List<Character> attrs, List<Fd> fds) {
+    List<Set<Character>> keys = new ArrayList<>();
+    // smaller sets first, so every key found is minimal
+    for (int size = 1; size <= attrs.size(); size++)
+        for (int mask = 1; mask < (1 << attrs.size()); mask++) {
+            if (Integer.bitCount(mask) != size) continue;
+            Set<Character> x = new TreeSet<>();
+            for (int i = 0; i < attrs.size(); i++) if ((mask & (1 << i)) != 0) x.add(attrs.get(i));
+            boolean containsKey = keys.stream().anyMatch(x::containsAll);
+            if (!containsKey && closure(x, fds).containsAll(attrs)) keys.add(x);
+        }
+    return keys;
+}
+```
+
+Checking sets in increasing size and skipping any set that contains a key already found keeps the result minimal. The loop is exponential in the number of attributes, which is fine for exam-sized relations; tools use the "must contain / never contains" pruning from this lesson to cut it down.
+:::
+
 ## Quick Revision
 
 - X → Y: equal X ⇒ equal Y. A business rule, not a data pattern.
@@ -287,3 +352,5 @@ Candidate keys: **AB, BC, BD, BE** (all minimal, since B alone isn't a key). Eve
 - Lossless binary split iff the shared attributes are a key of one side.
 - Armstrong's axioms (reflexivity, augmentation, transitivity) are sound and complete; closure applies them mechanically.
 - F ≡ G iff each covers the other (check every FD's closure both ways). Super keys: inclusion–exclusion over candidate keys.
+- Check an FD in real data: `GROUP BY lhs HAVING count(DISTINCT rhs) > 1` returns its violations.
+- Closure in code: apply every FD whose left side is inside the result until a full pass adds nothing.

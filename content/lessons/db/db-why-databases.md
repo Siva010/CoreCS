@@ -11,6 +11,7 @@ relevance: essential
 stage: 1
 prerequisites: []
 related: [os-filesystem-internals, os-page-cache, db-relational-model, db-transactions-acid, db-wal-durability, x-durability-chain]
+labs: [query-plan]
 tags: [dbms, database management system, files vs database, data independence, acid, query language, concurrency, durability, oltp, olap]
 ---
 
@@ -78,7 +79,7 @@ Follow one request, `UPDATE orders SET status = 'paid' WHERE id = 42`, through t
 
 ### The three-schema architecture (ANSI/SPARC)
 
-The textbook way to describe *data independence* — the property that lets storage change without breaking applications — is to split the database into three levels, each with its own schema:
+*Data independence* is the property that lets storage change without breaking applications. The textbook way to describe it is to split the database into three levels, each with its own schema:
 
 | Level | Schema | Who sees it | Example |
 |---|---|---|---|
@@ -89,7 +90,7 @@ The textbook way to describe *data independence* — the property that lets stor
 Between the levels sit **mappings**. Change one level and only the mapping to its neighbour must change:
 
 - **Physical data independence**: change the internal schema (add an index, move a table to faster disks, switch to a column store) without changing the conceptual schema or any query. Almost every DBMS achieves this.
-- **Logical data independence**: change the conceptual schema (split a table, add a column) without changing external schemas or applications — usually by redefining a view to present the old shape. Harder, and only partly achieved in practice.
+- **Logical data independence**: change the conceptual schema (split a table, add a column) without changing external schemas or applications. It's usually done by redefining a view to present the old shape. Harder, and only partly achieved in practice.
 
 Two concrete cases:
 
@@ -105,7 +106,7 @@ Two concrete cases:
 | **DCL** (data control) | permissions | `GRANT`, `REVOKE` |
 | **TCL** (transaction control) | transaction boundaries | `BEGIN`/`START TRANSACTION`, `COMMIT`, `ROLLBACK`, `SAVEPOINT` |
 
-(Some books file `SELECT` separately as DQL.) The categories matter in practice: in MySQL and Oracle most DDL **commits implicitly**, so a `ROLLBACK` after an `ALTER TABLE` does nothing; in PostgreSQL DDL is transactional.
+(Some books file `SELECT` separately as DQL.) The categories matter in practice. In MySQL and Oracle most DDL **commits implicitly**, so a `ROLLBACK` after an `ALTER TABLE` does nothing; in PostgreSQL DDL is transactional.
 
 ### Where the DBMS sits: tiers
 
@@ -129,14 +130,16 @@ The OS already provides files, a page cache and journaling ([Filesystems](lesson
 
 The same question, both ways:
 
-```python
-# Without a database: read everything, filter in code, hope nobody is writing.
-total = 0
-with open("orders.csv") as f:
-    for line in f:
-        cid, city, amount, status = line.rstrip().split(",")
-        if city == "Pune" and status == "unpaid":
-            total += float(amount)
+```java
+// Without a database: read everything, filter in code, and hope nobody is writing the file.
+double total = 0;
+try (BufferedReader in = Files.newBufferedReader(Path.of("orders.csv"))) {
+    String line;
+    while ((line = in.readLine()) != null) {
+        String[] f = line.split(",");                  // customer_id, city, amount, status
+        if (f[1].equals("Pune") && f[3].equals("unpaid")) total += Double.parseDouble(f[2]);
+    }
+}
 ```
 
 ```sql
@@ -217,6 +220,10 @@ A DBMS is any system that manages stored data (hierarchical, network, document, 
 
 Security (database credentials and the database port are never exposed; the app tier enforces authorization per request), connection management (thousands of browsers would need thousands of database connections; the app tier pools a few), and logic placement (validation, business rules and caching live in one place that can be scaled horizontally). The database stays a private, protected resource behind the application.
 
+### [L2 · why] Why not keep the data in a Java `HashMap` (or in files) instead of a database?
+
+A map lives in one JVM. It disappears when the process restarts unless you build persistence, and then you need a log and crash recovery. A second application instance has its own copy, so the two disagree, and making them agree needs locking or a shared store. There are no transactions across several changes, no constraints, and every new question ("unpaid orders in Pune") is new code that scans everything. A database provides all of these once, for every instance and every program. In-memory maps are still the right tool for *derived* data that can be rebuilt, such as a cache in front of the database.
+
 ## Practice
 
 ### [mcq] A web app stores orders in a JSON file. Two requests append orders at the same moment and one order disappears. Which DBMS capability addresses this?
@@ -281,6 +288,14 @@ Without an index the whole file may have to be read: 10,000 MB ÷ 500 MB/s = **2
 Others worth naming: access control (roles and GRANT instead of file permissions), backups and point-in-time recovery, and data independence (changing the format without rewriting every reader).
 :::
 
+### [exercise] In the [Query Plan lab](lab:query-plan), run the "Point lookup" query before and after adding its suggested index. How many rows does each plan read to find one customer's orders among 200,000, and which row of this lesson's "requirements" table does that show?
+
+:::solution
+Without the index, the plan is a sequential scan: PostgreSQL reads all 200,000 orders and the filter throws away all but the handful belonging to customer 4242 (about ten). With the index on `customer_id`, the plan uses it (an index or bitmap scan) and reads only those few rows plus a few index pages.
+
+That is the first row of the table: "find one order among 50 million". A file forces the full scan every time; a database keeps an index up to date on every write, so lookups cost O(log n) page reads instead of O(n).
+:::
+
 ## Quick Revision
 
 - A DBMS solves once what every application would otherwise solve badly: fast access, concurrency, atomicity, durability, integrity, security, evolution.
@@ -290,3 +305,4 @@ Others worth naming: access control (roles and GRANT instead of file permissions
 - Three-schema architecture: external (views) → conceptual (logical) → internal (physical). Physical independence is easy; logical independence is partial (views help).
 - DDL (`CREATE/ALTER/DROP/TRUNCATE`) · DML (`SELECT/INSERT/UPDATE/DELETE`) · DCL (`GRANT/REVOKE`) · TCL (`COMMIT/ROLLBACK/SAVEPOINT`). DDL auto-commits in MySQL/Oracle.
 - Web systems are 3-tier: the app server owns credentials, pooling and business rules.
+- A JVM map or a file is one process's private copy: no crash recovery, no sharing between instances, no transactions, no ad-hoc queries.

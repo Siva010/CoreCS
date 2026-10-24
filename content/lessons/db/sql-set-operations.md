@@ -47,7 +47,7 @@ Rules:
 
 ## Why It Exists
 
-**The problem.** Some questions are naturally about combining result sets: "all contacts, from customers and from suppliers", "users active in both January and February", "products in the catalog but never sold". These aren't about pairing rows (joins) but about comparing or stacking whole lists.
+**The problem.** Some questions are naturally about combining result sets. Examples are "all contacts, from customers and from suppliers", "users active in both January and February" and "products in the catalog but never sold". These aren't about pairing rows (joins) but about comparing or stacking whole lists.
 
 **The idea.** Tables are sets of rows, so borrow the set operations everyone already knows — union, intersection, difference — and apply them to whole rows. Set operations express them directly.
 
@@ -94,6 +94,26 @@ flowchart TD
     AP -->|"UNION, INTERSECT, EXCEPT"| H["hash or sort it all,<br/>count each row per branch"]
     H --> R2["keep rows by the rule:<br/>either · both · A only"]
 ```
+
+### Reconciling two tables after a migration
+
+A common production use of `EXCEPT` is proving that a copy is exact. After copying `orders` into a new `orders_v2`, matching row counts prove little: one missing row and one extra row cancel out. Compare the rows themselves, in both directions:
+
+```sql
+SELECT 'missing in v2' AS problem, * FROM (
+  SELECT id, customer_id, status, total FROM orders
+  EXCEPT
+  SELECT id, customer_id, status, total FROM orders_v2) missing
+UNION ALL
+SELECT 'extra in v2', * FROM (
+  SELECT id, customer_id, status, total FROM orders_v2
+  EXCEPT
+  SELECT id, customer_id, status, total FROM orders) extra;
+```
+
+An empty result means the two tables hold the same set of rows. A row changed in transit shows up twice: once as "missing" with the old values and once as "extra" with the new. Because `EXCEPT` treats NULLs as equal, a NULL `customer_id` (a guest order) matches correctly; a `NOT EXISTS` with `=` would report it as different. If the source can hold exact duplicate rows, use `EXCEPT ALL` so a lost copy shows up too.
+
+On hundreds of millions of rows, first compare a hash per chunk of ids, for example `md5(string_agg(t::text, ',' ORDER BY id))` grouped by `id / 100000`. Then run the `EXCEPT` only on the chunks whose hashes differ.
 
 ## Internal Mechanism
 
@@ -191,6 +211,10 @@ UNION must deduplicate the combined result, which means sorting or hashing every
 
 They work on **multisets**: UNION ALL keeps every row from both inputs; INTERSECT ALL keeps each row min(count in A, count in B) times; EXCEPT ALL keeps each row max(count in A − count in B, 0) times. With A = (1, 1, 2) and B = (1, 3): UNION ALL → 1, 1, 2, 1, 3; INTERSECT ALL → 1; EXCEPT ALL → 1, 2. The non-ALL versions first remove duplicates. (MySQL added INTERSECT and EXCEPT only in 8.0.31.)
 
+### [L2 · scenario] You migrated 50 million rows into a new table. How do you show that nothing was lost or changed?
+
+Counts are a first check only, since a missing row and an extra row cancel out. Compare the rows: `old EXCEPT new` finds rows lost or changed, and `new EXCEPT old` finds rows added or changed. Run both in one query with a label column. `EXCEPT` treats NULLs as equal, so nullable columns compare correctly, unlike a join on `=`. Use `EXCEPT ALL` if exact duplicates are legal. At this size, hash chunks of ids on both sides first and run the `EXCEPT` only on chunks that differ. If the old table still takes writes, compare up to a cut-off, such as an id or timestamp both copies have passed.
+
 ## Practice
 
 ### [numeric 6] A has rows 1, 1, 2 and B has rows 2, 3, 3. How many rows does A UNION ALL B return?
@@ -250,6 +274,12 @@ ORDER BY city;
 UNION removes duplicates across both inputs; UNION ALL would keep them (and is cheaper when duplicates are impossible or wanted). The final ORDER BY sorts the combined result and uses the first query's column name. Graded in the [SQL Playground](lab:sql-playground#all-cities).
 :::
 
+### [numeric 3 unit=rows] Table `a` holds (1, 'x'), (2, NULL), (3, 'z'). Table `b` holds (1, 'x'), (2, NULL), (3, 'Z'), (4, 'w'). How many rows does the two-way reconciliation return: `a EXCEPT b`, plus `b EXCEPT a`?
+
+:::answer
+`a EXCEPT b` returns (3, 'z'), because text comparison is case-sensitive. `b EXCEPT a` returns (3, 'Z') and (4, 'w'). That makes **3** rows. Row 2 matches, because `EXCEPT` treats the two NULLs as equal. The same check written with `NOT EXISTS` and `b.code = a.code` reports row 2 from both sides as well, 5 rows in all, which was checked in PostgreSQL.
+:::
+
 ## Quick Revision
 
 - Set operations stack or compare whole rows; columns match by position; names come from the first query.
@@ -259,3 +289,4 @@ UNION removes duplicates across both inputs; UNION ALL would keep them (and is c
 - Use EXISTS/NOT EXISTS when you need to compare on keys and return other columns.
 - Union-compatible = same column count, compatible types, matched by position; names come from the first query.
 - INTERSECT/EXCEPT compare whole rows (NULL-equal, deduped); joins/EXISTS compare by condition and keep columns.
+- Reconcile a copy with `EXCEPT` both ways (labelled, `UNION ALL`); NULL-safe by design; `EXCEPT ALL` if duplicates matter; hash chunks first on huge tables.

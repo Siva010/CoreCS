@@ -115,6 +115,22 @@ SELECT customer_id FROM orders;
 
 `EXCEPT` compares whole rows and treats NULLs as equal, removing duplicates. Handy for IDs, less so when you need other columns ([Set Operations](lesson:sql-set-operations)).
 
+### Passing a list from Java
+
+"Customers among these 5,000 ids" is a semi join against a list that comes from the application. Building `IN (?, ?, ..., ?)` with one placeholder per id makes a different statement for every list size, which defeats plan caching, and very long lists are slow to parse. Pass the list as one array parameter instead:
+
+```java
+String sql = "SELECT id, name FROM customers WHERE id = ANY (?)";
+try (PreparedStatement ps = c.prepareStatement(sql)) {
+    ps.setArray(1, c.createArrayOf("bigint", ids.toArray()));   // one parameter, any number of ids
+    try (ResultSet rs = ps.executeQuery()) {
+        // ...
+    }
+}
+```
+
+For tens of thousands of ids, or for an anti join ("which of these ids don't exist?"), load them into a temporary table or join a `VALUES` list. The planner can then treat them as a real relation.
+
 ## Internal Mechanism
 
 :::depth{level=advanced}
@@ -253,6 +269,10 @@ WHERE EXISTS (SELECT 1 FROM orders o
 A semi join and an anti join on the same table. `IN (…) AND NOT IN (…)` would break the moment `orders.customer_id` contains a NULL (guest checkouts).
 :::
 
+### [L2 · how] How do you pass a list of 10,000 ids from Java into a query?
+
+As one array parameter: `WHERE id = ANY (?)` with `ps.setArray(1, conn.createArrayOf("bigint", ids))`. The statement text is the same for any list size, so its plan can be reused, and you avoid parsing a 10,000-placeholder IN list. Spring's `NamedParameterJdbcTemplate` can expand `IN (:ids)` from a collection, which is convenient for short lists but produces a different statement per size. For very large sets, or to find ids that *don't* exist, copy them into a temporary table and join.
+
 ## Practice
 
 ### [mcq] orders.customer_id contains some NULLs. What does `SELECT count(*) FROM customers WHERE id NOT IN (SELECT customer_id FROM orders)` return?
@@ -317,6 +337,15 @@ WHERE NOT EXISTS (
 "Bought every toy" = "there is no toy they didn't buy": an anti join inside an anti join. The counting alternative — group by customer and compare `count(DISTINCT product_id)` with the number of toys — works too, as long as you count distinct products. Graded in the [SQL Playground](lab:sql-playground#all-toys).
 :::
 
+### [mcq] A Java method builds `WHERE id IN (?, ?, ..., ?)` with one placeholder per id, and lists range from 1 to 5,000 ids. What is the main cost compared with `WHERE id = ANY (?)` and an array parameter?
+
+- [ ] The IN version returns different rows
+- [x] Every list size is a different statement text, so plans and prepared statements can't be reused, and long lists are slow to parse
+- [ ] `= ANY` can't use an index
+- [ ] The IN version can't contain more than 100 ids
+
+Both return the same rows and both can use an index on `id`. The array form keeps one statement for all sizes.
+
 ## Quick Revision
 
 - Semi join = "has a match" (EXISTS/IN), anti join = "has no match" (NOT EXISTS / LEFT JOIN … key IS NULL).
@@ -325,3 +354,4 @@ WHERE NOT EXISTS (
 - Optimizers plan EXISTS/NOT EXISTS as hash/merge/nested-loop semi/anti joins; index the correlated column.
 - Relational division ("bought all") = double NOT EXISTS or count comparison.
 - `NOT EXISTS` runs as a Hash/Nested-Loop **Anti Join**; "in A but not B" = EXISTS + NOT EXISTS.
+- From Java, pass lists as one array: `WHERE id = ANY (?)` + `createArrayOf`. Huge lists or anti joins → temporary table or `VALUES`.

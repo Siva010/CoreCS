@@ -17,7 +17,7 @@ tags: [subquery, scalar subquery, correlated subquery, derived table, cte, with 
 
 ## Mental Model
 
-A subquery is **a query used as a value, a list or a table inside another query**. A CTE (`WITH name AS (…)`) is the same thing given a name and moved to the top, so a complex query reads as a sequence of steps. A **recursive** CTE is a loop: start with some rows, repeatedly derive new rows from the previous ones, stop when nothing new appears — which is how SQL walks trees and graphs.
+A subquery is **a query used as a value, a list or a table inside another query**. A CTE (`WITH name AS (…)`) is the same thing given a name and moved to the top, so a complex query reads as a sequence of steps. A **recursive** CTE is a loop: start with some rows, repeatedly derive new rows from the previous ones, and stop when nothing new appears. That's how SQL walks trees and graphs.
 
 ## Definition
 
@@ -136,7 +136,7 @@ Each iteration only looks at the rows the *previous* iteration found, so the que
 
 ### LATERAL: a subquery per row that can return several rows and columns
 
-A gap the other forms leave: a scalar subquery can depend on the outer row but returns only one value; a derived table can return many rows but can't see the outer row. LATERAL gives you both. "Each customer's 3 most recent orders":
+The other forms leave a gap. A scalar subquery can depend on the outer row but returns only one value; a derived table can return many rows but can't see the outer row. LATERAL gives you both. "Each customer's 3 most recent orders":
 
 ```sql
 SELECT c.name, o.id, o.order_date, o.total
@@ -151,6 +151,45 @@ CROSS JOIN LATERAL (
 ```
 
 `LATERAL` lets the subquery in `FROM` reference `c`. With an index on `orders(customer_id, order_date DESC)` each customer costs one short index scan. (SQL Server: `CROSS APPLY`.)
+
+### Loading a tree into Java
+
+An ORM entity with a `reports` collection loads each node's children lazily, with one query per node. For an org chart of 500 people, walking the tree runs 500 queries. One recursive CTE returns the whole subtree, and a map links the rows in memory:
+
+```java
+static final class Node {
+    final long id; final String name; final List<Node> reports = new ArrayList<>();
+    Node(long id, String name) { this.id = id; this.name = name; }
+}
+
+static Node loadTree(Connection c, long rootId) throws SQLException {
+    String sql = """
+        WITH RECURSIVE t AS (
+          SELECT id, name, manager_id, 0 AS depth FROM employees WHERE id = ?
+          UNION ALL
+          SELECT e.id, e.name, e.manager_id, t.depth + 1
+          FROM employees e JOIN t ON e.manager_id = t.id
+        )
+        SELECT id, name, manager_id FROM t ORDER BY depth""";
+    Map<Long, Node> byId = new HashMap<>();
+    Node root = null;
+    try (PreparedStatement ps = c.prepareStatement(sql)) {
+        ps.setLong(1, rootId);
+        try (ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                Node n = new Node(rs.getLong("id"), rs.getString("name"));
+                byId.put(n.id, n);
+                if (root == null) root = n;            // depth 0 comes first
+                // the parent is one level up, so it is already in the map
+                else byId.get(rs.getLong("manager_id")).reports.add(n);
+            }
+        }
+    }
+    return root;
+}
+```
+
+`ORDER BY depth` is what makes the single pass work: every row's manager has a smaller depth, so it is already in the map. The same idea serves comment threads and folder trees.
 
 ## Internal Mechanism
 
@@ -298,6 +337,10 @@ WHERE 2 = (SELECT count(DISTINCT e2.salary)      -- N − 1 distinct salaries ar
 A correlated subquery counts how many distinct salaries beat each one; the Nth highest is beaten by exactly N − 1. It's O(n²) without help — an index on salary or the `dense_rank()` version is what you'd ship — but it's the classic answer when window functions are "not allowed".
 :::
 
+### [L2 · how] How do you load a whole comment thread or org chart into Java objects without one query per node?
+
+Fetch the subtree with one recursive CTE, ordered by depth, and link the rows in memory: put each node in a `Map` by id and add it to its parent's children list. Ordering by depth guarantees every parent is read before its children. The lazy alternative, an entity whose `@OneToMany` children load on first access, runs one query per node, which is the N+1 problem at tree scale. For a very large tree, add a depth limit to the CTE, or load one level at a time with one query per *level* (`WHERE manager_id = ANY (?)`), not per node.
+
 ## Practice
 
 ### [mcq] A scalar subquery in a SELECT list returns zero rows for some outer row. What happens?
@@ -370,6 +413,12 @@ SELECT id, path FROM r;
 The anchor starts at the root; each iteration adds the next level by joining employees to the rows produced so far, extending the path string. It stops when an iteration adds no rows. A cycle in `manager_id` would loop forever — guard with a depth limit or `CYCLE` clause. Graded in the [SQL Playground](lab:sql-playground#org-paths).
 :::
 
+### [numeric 121 unit=queries] Java code holds the root of a tree and loads each node's children with one query per node. Every node has 3 children, and the leaves are 4 levels below the root. How many queries does walking the whole tree run? (Leaves need a query too, to find out they have none.)
+
+:::answer
+The tree has 1 + 3 + 9 + 27 + 81 = **121** nodes, one query each. One recursive CTE returns the same 121 rows in a single query. Loading one level at a time with `= ANY (?)` would take 5.
+:::
+
 ## Quick Revision
 
 - Subquery kinds: scalar (one value; >1 row = error; 0 rows = NULL), list (IN/EXISTS), table (FROM), correlated (per outer row).
@@ -379,3 +428,4 @@ The anchor starts at the root; each iteration adds the next level by joining emp
 - Subquery shapes: scalar · list (`IN/ANY/ALL/EXISTS`) · table (`FROM`); correlated vs non-correlated.
 - `> ANY` ≈ `> min`, `> ALL` ≈ `> max`; over an empty set ANY is false and ALL is true.
 - Nth highest without windows: `N−1 = (SELECT count(DISTINCT s2) … WHERE s2 > s1)`.
+- Trees into Java: one recursive CTE `ORDER BY depth`, then link by id in a map. Lazy children = one query per node.

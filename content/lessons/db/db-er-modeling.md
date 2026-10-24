@@ -11,12 +11,13 @@ relevance: high
 stage: 1
 prerequisites: [db-keys-constraints]
 related: [db-functional-dependencies, db-normalization, db-schema-design, sql-joins]
+labs: [sql-playground]
 tags: [er diagram, entity relationship, entity, attribute, relationship, cardinality, one to many, many to many, junction table, weak entity, participation, crow's foot, associative entity]
 ---
 
 ## Mental Model
 
-An ER model is a **picture of the nouns and verbs of a domain**, drawn before thinking about tables. Nouns with identity become **entities** (Customer, Product); verbs that connect them become **relationships** (Customer *places* Order); the numbers on each relationship (**cardinality**: one or many) decide where the foreign keys go.
+An ER model is a **picture of the nouns and verbs of a domain**, drawn before thinking about tables. Nouns with identity become **entities** (Customer, Product), and verbs that connect them become **relationships** (Customer *places* Order). The numbers on each relationship (**cardinality**: one or many) decide where the foreign keys go.
 
 Get the cardinalities right and the tables almost write themselves.
 
@@ -67,7 +68,7 @@ erDiagram
 
 **The problem.** Jumping straight to tables mixes two decisions: *what the domain is* and *how to store it*. ER modeling makes the domain explicit and reviewable with non-engineers ("can an order have no items?"), then a mechanical mapping produces a correct first schema.
 
-**Why cardinality is the key question.** A table cell holds one value. So the only real question for each relationship is "on which side is there exactly one?" — that side's key can be stored as a single column on the other side. When neither side has "exactly one" (many-to-many), the relationship needs a table of its own.
+**Why cardinality is the key question.** A table cell holds one value. So for each relationship, the only real question is which side has exactly one. That side's key can be stored as a single column on the other side. When neither side has "exactly one" (many-to-many), the relationship needs a table of its own.
 
 :::callout[That's all it is]{type=insight}
 Draw the things (entities) and how they relate (with one/many on each end). Each entity becomes a table; each one-to-many becomes a foreign key on the "many" side; each many-to-many becomes a junction table.
@@ -119,7 +120,7 @@ Three "extended ER" ideas that textbooks and campus interviews ask about by name
 
 - **Specialization** (top-down): split an entity into subtypes with extra attributes — `Employee` → `Engineer` (skills), `Manager` (budget). **Generalization** (bottom-up) is the same relationship discovered the other way: `Car` and `Truck` share attributes, so factor out `Vehicle`. Subtypes inherit the parent's attributes and key.
 - Two constraints describe the hierarchy: **disjoint vs overlapping** (can an employee be both an engineer and a manager?) and **total vs partial** (must every employee belong to some subtype?). They decide whether a `type` column suffices and whether it may be NULL.
-- **Aggregation** treats a relationship as an entity so that another relationship can point at it: `Employee works-on Project` is aggregated, and `Manager monitors (works-on)` relates to the *assignment*, not to the employee or project alone. In tables, the aggregated relationship becomes an associative table with its own key, and the outer relationship references that key:
+- **Aggregation** treats a relationship as an entity, so that another relationship can point at it. For example, `Employee works-on Project` is aggregated, and `Manager monitors (works-on)` relates to the *assignment*, not to the employee or project alone. In tables, the aggregated relationship becomes an associative table with its own key, and the outer relationship references that key:
 
 ```sql
 CREATE TABLE works_on (
@@ -151,6 +152,44 @@ CREATE TABLE monitors (
 | Weak entity | 1 — its key includes the owner's key; the identifying relationship needs no table |
 
 Example: `Customer` 1:N `Order`, `Order` M:N `Product`, `Customer` has a multivalued `phone`. Tables: Customer, Order (with `customer_id`), Product, OrderProduct (junction), CustomerPhone → **5**.
+
+### The same mapping in JPA
+
+Each ER construct has a direct JPA counterpart, and the table design underneath is the one this lesson derives:
+
+| ER construct | Tables | JPA |
+|---|---|---|
+| 1:N (customer has orders) | FK on the "many" side | `@ManyToOne` + `@JoinColumn` on `Order` (the owning side), `@OneToMany(mappedBy = "customer")` on `Customer` |
+| M:N without attributes | a junction table | `@ManyToMany` + `@JoinTable` |
+| M:N with attributes (a grade per enrollment) | a junction table with columns | its own `@Entity` (`Enrollment`) with two `@ManyToOne` fields |
+| Specialization: one table | a `type` column | `@Inheritance(strategy = SINGLE_TABLE)` + `@DiscriminatorColumn` |
+| Specialization: table per subtype | parent table + child tables sharing its key | `@Inheritance(strategy = JOINED)` |
+| Specialization: table per concrete type | duplicated common columns | `@Inheritance(strategy = TABLE_PER_CLASS)` |
+
+The trap is the third row. A relationship that starts as a plain M:N almost always grows an attribute (the enrollment's grade, the date a user followed another). `@ManyToMany` can't hold it, so model it as an entity from the start:
+
+```java
+@Entity
+@Table(name = "enrollments", uniqueConstraints =
+       @UniqueConstraint(columnNames = {"student_id", "course_id"}))
+class Enrollment {
+    @Id @GeneratedValue(strategy = GenerationType.SEQUENCE)
+    Long id;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "student_id")
+    Student student;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "course_id")
+    Course course;
+
+    String grade;               // @ManyToMany had no place for this
+    LocalDate enrolledOn;
+}
+```
+
+The unique constraint keeps the ER rule "a student enrolls in a course once". A composite key (`@EmbeddedId` holding both ids) would say the same thing; a surrogate id is simply easier to reference. `FetchType.LAZY` matters because JPA's default for `@ManyToOne` is eager, so loading 1,000 enrollments would otherwise also load their students and courses.
 
 ## Internal Mechanism
 
@@ -254,6 +293,14 @@ Specialization splits an entity into subtypes with extra attributes (top-down: E
 
 Cardinality decides **where** the foreign key goes (the N side of 1:N; a junction table for M:N). Participation decides whether it can be **NULL**: total participation of the FK side (every order must have a customer) becomes `NOT NULL`; partial participation leaves it nullable. Total participation on the *parent* side ("every customer must have at least one order") can't be expressed with a plain FK — it needs deferred constraints, triggers or application logic.
 
+### [L2 · how] How do you map a many-to-many relationship that has its own attributes in JPA, and why not use `@ManyToMany`?
+
+`@ManyToMany` maps only the pair of foreign keys in the junction table; there is nowhere to put a grade, a role or a "joined at" date. Model the junction table as an entity of its own, such as `Enrollment(student, course, grade)`, with two `@ManyToOne` fields and a composite or surrogate key, plus `@OneToMany(mappedBy = ...)` collections on each side if you need them. This is the ER rule "an M:N relationship with attributes becomes a table", applied in Java.
+
+### [L2 · compare] Which JPA inheritance strategy would you pick for `Payment` with `CardPayment` and `UpiPayment` subtypes, and why?
+
+`SINGLE_TABLE` is fastest: one table, no joins, polymorphic queries are simple. But subtype columns must be nullable, so their rules need CHECK constraints. `JOINED` keeps clean, NOT NULL subtype columns at the cost of a join to load each payment. `TABLE_PER_CLASS` avoids joins for one type but makes "all payments" a UNION. For a handful of subtypes with a few distinct columns, SINGLE_TABLE with per-type CHECKs is the usual choice; JOINED fits when subtypes have many columns or their own constraints.
+
 ## Practice
 
 ### [mcq] Students and courses have a many-to-many relationship with a grade per enrollment. Where is `grade` stored?
@@ -304,6 +351,17 @@ A weak entity's key is its owner's key plus its partial key: room 101 exists in 
 (A third option — only `cars` and `trucks` with no parent table — works for a total, disjoint specialization but makes "all vehicles" a UNION and VIN uniqueness across both tables hard to enforce.)
 :::
 
+### [exercise] Open the [SQL Playground](lab:sql-playground) and read its schema (customers, orders, order_items, products, departments, employees). Identify each relationship's cardinality and how it is implemented, including the associative entity and the recursive relationship.
+
+:::solution
+- **Customer 1:N Order**: `orders.customer_id` references `customers`. It is nullable, for guest checkouts, so a customer's participation is partial.
+- **Order M:N Product**: through `order_items(order_id, product_id, quantity, unit_price)`, an associative entity. It carries attributes of the relationship itself, the quantity and the price at the time of sale, which is why it must be a table, and in JPA an entity.
+- **Department 1:N Employee**: `employees.department_id` references `departments`.
+- **Employee manages Employee**: a recursive 1:N relationship, `employees.manager_id` referencing `employees.id`. It is nullable for the top of the hierarchy.
+
+Each foreign key sits on the "many" side, exactly as the mapping rules say.
+:::
+
 ## Quick Revision
 
 - Entities (nouns with identity), attributes, relationships (verbs), cardinality (max), participation (min).
@@ -313,3 +371,4 @@ A weak entity's key is its owner's key plus its partial key: room 101 exists in 
 - Ask about cardinalities, optionality and history — that's the design conversation.
 - Specialization (top-down) / generalization (bottom-up) form subtype hierarchies: disjoint vs overlapping, total vs partial. Aggregation = relationship treated as an entity.
 - Minimum tables: 1 per strong/weak entity, +1 per M:N, +1 per multivalued attribute, 0 for 1:1 and 1:N (FK).
+- JPA: 1:N = `@ManyToOne` (owning side) + `@OneToMany(mappedBy)`; M:N with attributes = its own entity; specialization = SINGLE_TABLE, JOINED or TABLE_PER_CLASS.

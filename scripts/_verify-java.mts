@@ -45,6 +45,7 @@ const IMPORTS = [
   "javax.crypto.spec.*",
   "javax.net.ssl.*",
   "java.util.zip.*",
+  "java.math.*",
   "java.sql.*",
   "javax.sql.*",
 ]
